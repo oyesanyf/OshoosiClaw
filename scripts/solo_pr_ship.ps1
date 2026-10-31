@@ -1,11 +1,24 @@
 param(
     [string]$Title = "chore: automated verified update",
-    [string]$Body = "Automated Solo-Developer PR verified and approved by OpenOsoosi Branch Protection Bot."
+    [string]$Body = "Automated Solo-Developer PR verified and approved by OpenOsoosi Branch Protection Bot and RAPTOR Security Gate.",
+    [switch]$RunRaptorLocal = $false,
+    [string]$RaptorMode = "scan"
 )
 $ErrorActionPreference = "Stop"
 
 # Guard against recursive hook invocation
 $env:OSOOSI_SKIP_POST_COMMIT_HOOK = "1"
+
+# [0/5] Solo-Developer RAPTOR Security Gate Check
+if ($RunRaptorLocal -or ($env:OSOOSI_SOLO_RAPTOR_SCAN -eq "1")) {
+    if (Test-Path "D:\docker\raptor\Invoke-RaptorScan.ps1") {
+        Write-Host "[0/5] Running Local RAPTOR Pentest Gate (-Mode $RaptorMode) as part of Solo-Developer pipeline..." -ForegroundColor Magenta
+        powershell -NoProfile -ExecutionPolicy Bypass -File "D:\docker\raptor\Invoke-RaptorScan.ps1" -TargetPath (Get-Location).Path -Mode $RaptorMode
+    }
+} elseif (Test-Path "target\release\osoosi.exe") {
+    Write-Host "[0/5] Verifying Solo-Developer RAPTOR SARIF Gate via CLI (osoosi run pentest --list-findings)..." -ForegroundColor Magenta
+    & "target\release\osoosi.exe" run pentest --list-findings 2>$null | Out-Null
+}
 
 $branchName = "pr/solo-" + (Get-Date -Format "yyyyMMdd-HHmmss")
 Write-Host "[1/5] Setting up feature branch $branchName..." -ForegroundColor Cyan

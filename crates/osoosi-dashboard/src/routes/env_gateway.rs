@@ -27,6 +27,10 @@ use crate::{api_error, api_error_json, DashboardState};
 /// Persistent configuration stored at `database/env_seal_config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvSealConfig {
+    #[serde(default = "default_env_protection_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_env_experimental")]
+    pub experimental: bool,
     #[serde(default)]
     pub custom_paths: Vec<String>,
     #[serde(default)]
@@ -47,6 +51,14 @@ pub struct EnvSealConfig {
     pub max_dir_budget_per_drive: usize,
     #[serde(default)]
     pub vault_path: Option<String>,
+}
+
+fn default_env_protection_enabled() -> bool {
+    true
+}
+
+fn default_env_experimental() -> bool {
+    true
 }
 
 fn default_selected_variables() -> Vec<String> {
@@ -74,6 +86,8 @@ fn default_max_budget() -> usize {
 impl Default for EnvSealConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
+            experimental: true,
             custom_paths: Vec::new(),
             all_drives: false,
             auto_seal: false,
@@ -157,6 +171,7 @@ pub fn get_watcher_events() -> Vec<WatcherEventRecord> {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct UpdateEnvSealConfigRequest {
+    pub enabled: Option<bool>,
     pub custom_paths: Option<Vec<String>>,
     pub all_drives: Option<bool>,
     pub auto_seal: Option<bool>,
@@ -167,6 +182,11 @@ pub struct UpdateEnvSealConfigRequest {
     pub max_files_per_drive: Option<usize>,
     pub max_dir_budget_per_drive: Option<usize>,
     pub vault_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ToggleEnvProtectionRequest {
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -253,6 +273,8 @@ pub async fn get_env_gateway_status(State(_state): State<DashboardState>) -> Jso
         if let Some(st) = vault_status {
             json!({
                 "status": "online",
+                "enabled": cfg.enabled,
+                "experimental": true,
                 "vault_exists": st.exists,
                 "vault_path": st.vault_path.to_string_lossy(),
                 "dacl_protected": st.dacl_protected,
@@ -270,6 +292,8 @@ pub async fn get_env_gateway_status(State(_state): State<DashboardState>) -> Jso
         } else {
             json!({
                 "status": "online",
+                "enabled": cfg.enabled,
+                "experimental": true,
                 "vault_exists": false,
                 "vault_path": v_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ProtectedEnvBackupVault::default_vault_path().to_string_lossy().to_string()),
                 "dacl_protected": false,
@@ -311,7 +335,17 @@ pub async fn post_env_gateway_config(
     Json(req): Json<UpdateEnvSealConfigRequest>,
 ) -> (StatusCode, Json<Value>) {
     let mut cfg = EnvSealConfig::load_or_default();
+    let mut should_unseal_all = false;
 
+    if let Some(en) = req.enabled {
+        cfg.enabled = en;
+        if !en {
+            cfg.auto_seal = false;
+            cfg.watcher_enabled = false;
+            WATCHER_RUNNING.store(false, Ordering::SeqCst);
+            should_unseal_all = true;
+        }
+    }
     if let Some(cp) = req.custom_paths {
         cfg.custom_paths = cp;
     }
@@ -319,7 +353,7 @@ pub async fn post_env_gateway_config(
         cfg.all_drives = ad;
     }
     if let Some(as_val) = req.auto_seal {
-        cfg.auto_seal = as_val;
+        cfg.auto_seal = if cfg.enabled { as_val } else { false };
     }
     if let Some(sv) = req.selected_variables {
         // Strict Zero-Touch Validation: Disallow any protected system variables
@@ -333,8 +367,9 @@ pub async fn post_env_gateway_config(
         cfg.excluded_variables = ev;
     }
     if let Some(we) = req.watcher_enabled {
-        cfg.watcher_enabled = we;
-        WATCHER_RUNNING.store(we, Ordering::SeqCst);
+        let effective_we = if cfg.enabled { we } else { false };
+        cfg.watcher_enabled = effective_we;
+        WATCHER_RUNNING.store(effective_we, Ordering::SeqCst);
     }
     if let Some(pi) = req.watcher_poll_interval_secs {
         cfg.watcher_poll_interval_secs = pi.max(1);
@@ -360,10 +395,94 @@ pub async fn post_env_gateway_config(
         );
     }
 
+    if should_unseal_all {
+        let vp_opt = cfg.vault_path.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+                vp_opt.as_deref().map(Path::new),
+            );
+            push_watcher_event(WatcherEventRecord {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                file_path: "all".to_string(),
+                magika_label: Some("experimental".to_string()),
+                magika_mime_type: None,
+                magika_score: None,
+                action_taken: "env_protection_disabled_and_unsealed_all".to_string(),
+            });
+        })
+        .await;
+    }
+
     (
         StatusCode::OK,
         Json(json!({
             "status": "success",
+            "enabled": cfg.enabled,
+            "experimental": true,
+            "config": cfg,
+        })),
+    )
+}
+
+/// 3b. POST /api/env-gateway/toggle
+/// Dedicated master toggle endpoint allowing the user to enable or disable the Experimental Protect .env feature.
+pub async fn post_env_gateway_toggle(
+    Json(req): Json<ToggleEnvProtectionRequest>,
+) -> (StatusCode, Json<Value>) {
+    let mut cfg = EnvSealConfig::load_or_default();
+    let new_enabled = req.enabled.unwrap_or(!cfg.enabled);
+    cfg.enabled = new_enabled;
+
+    if !new_enabled {
+        cfg.auto_seal = false;
+        cfg.watcher_enabled = false;
+        WATCHER_RUNNING.store(false, Ordering::SeqCst);
+    }
+
+    if let Err(e) = cfg.save(None) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            api_error_json(
+                "TOGGLE_SAVE_FAILED",
+                format!("Failed to persist Protect .env toggle: {}", e),
+                "Check file system permissions on database/ directory.",
+            ),
+        );
+    }
+
+    let vp_opt = cfg.vault_path.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if !new_enabled {
+            let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+                vp_opt.as_deref().map(Path::new),
+            );
+        }
+        push_watcher_event(WatcherEventRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            file_path: "master_toggle".to_string(),
+            magika_label: Some("experimental".to_string()),
+            magika_mime_type: None,
+            magika_score: None,
+            action_taken: if new_enabled {
+                "env_protection_enabled".to_string()
+            } else {
+                "env_protection_disabled_and_unsealed_all".to_string()
+            },
+        });
+    })
+    .await;
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "enabled": new_enabled,
+            "experimental": true,
+            "message": if new_enabled {
+                "Protect .env (Experimental) ENABLED."
+            } else {
+                "Protect .env (Experimental) DISABLED — all sealed .env files have been automatically restored to original plaintext."
+            },
             "config": cfg,
         })),
     )
@@ -495,6 +614,9 @@ pub async fn post_env_gateway_seal(
 ) -> (StatusCode, Json<Value>) {
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let cfg = EnvSealConfig::load_or_default();
+        if !cfg.enabled {
+            return Err("Protect .env (Experimental) is currently DISABLED in UI settings. Enable Protect .env first before sealing files.".to_string());
+        }
         let vault_path = req
             .vault_path
             .as_deref()
@@ -1255,7 +1377,7 @@ pub fn routes() -> Router<DashboardState> {
         // 1. Status
         .route("/api/env-gateway/status", get(get_env_gateway_status))
         .route("/env-gateway/status", get(get_env_gateway_status))
-        // 2 & 3. Config
+        // 2 & 3. Config & Master Experimental Toggle
         .route(
             "/api/env-gateway/config",
             get(get_env_gateway_config).post(post_env_gateway_config),
@@ -1264,6 +1386,13 @@ pub fn routes() -> Router<DashboardState> {
             "/env-gateway/config",
             get(get_env_gateway_config).post(post_env_gateway_config),
         )
+        .route("/api/env-gateway/toggle", post(post_env_gateway_toggle))
+        .route("/env-gateway/toggle", post(post_env_gateway_toggle))
+        .route(
+            "/api/env-gateway/toggle-enabled",
+            post(post_env_gateway_toggle),
+        )
+        .route("/env-gateway/toggle-enabled", post(post_env_gateway_toggle))
         // 4. Scan files
         .route(
             "/api/env-gateway/scan-files",
@@ -1390,5 +1519,34 @@ mod tests {
         assert_eq!(serialized["confidence_score"], 1.0);
         assert_eq!(serialized["active_physical_nics"], 2);
         assert_eq!(serialized["mac_rotation_count"], 3);
+    }
+
+    #[test]
+    fn test_experimental_protect_env_enable_disable_toggle() {
+        let mut cfg = EnvSealConfig::default();
+        assert!(cfg.enabled, "Protect .env must default to enabled");
+        assert!(
+            cfg.experimental,
+            "Protect .env must be marked experimental in config"
+        );
+
+        let cfg_path = std::env::temp_dir().join(format!(
+            "test_env_seal_config_{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+
+        // Disable Protect .env and persist
+        cfg.enabled = false;
+        cfg.auto_seal = false;
+        cfg.watcher_enabled = false;
+        cfg.save(Some(&cfg_path)).expect("save disabled config");
+
+        let bytes = std::fs::read(&cfg_path).expect("read config");
+        let loaded: EnvSealConfig = serde_json::from_slice(&bytes).expect("parse config");
+        let _ = std::fs::remove_file(&cfg_path);
+        assert!(!loaded.enabled);
+        assert!(loaded.experimental);
+        assert!(!loaded.auto_seal);
+        assert!(!loaded.watcher_enabled);
     }
 }

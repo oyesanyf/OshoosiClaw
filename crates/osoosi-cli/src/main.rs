@@ -455,6 +455,48 @@ enum Commands {
         #[command(subcommand)]
         action: EnvGatewayAction,
     },
+    /// Execute RAPTOR Autonomous Source-Code Pentesting, SAST (Semgrep/Coccinelle), Post-Quantum Crypto, SCA & LLM Exploit Triage
+    #[command(
+        name = "pentest",
+        alias = "raptor",
+        alias = "run-pentest",
+        alias = "run_pentest",
+        alias = "raptor-pentest",
+        alias = "raptor-scan",
+        about = "Execute RAPTOR Autonomous Source-Code Pentesting, SAST, Crypto, SCA & Agentic Triage"
+    )]
+    Pentest {
+        /// Target repository directory or URL to scan (defaults to current working directory)
+        #[arg(default_value = ".")]
+        target: String,
+        /// Scan mode: all, scan, agentic, crypto, sca, openant, describe, web
+        #[arg(short, long, default_value = "all")]
+        mode: String,
+        /// Optional target URL for web mode
+        #[arg(long)]
+        url: Option<String>,
+        /// LLM model for agentic / all mode
+        #[arg(long, default_value = "ollama/fenkohq/foundation-sec-8b:latest")]
+        model: String,
+        /// Optional comma-separated policy groups (e.g. secrets,owasp,crypto)
+        #[arg(long)]
+        policy_groups: Option<String>,
+        /// Include deep CodeQL taint analysis
+        #[arg(long, default_value_t = false)]
+        include_codeql: bool,
+        /// Path to local RAPTOR root directory
+        #[arg(long, default_value = "D:\\docker\\raptor")]
+        raptor_root: String,
+        /// Only list and summarize existing SARIF findings from RAPTOR output directory without running a new scan
+        #[arg(long, default_value_t = false)]
+        list_findings: bool,
+        /// Fail with exit code 1 if any CRITICAL/ERROR severity SARIF findings are detected (CI / Pre-push Gate)
+        #[arg(long, default_value_t = false)]
+        gate: bool,
+        /// Output summary report as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -955,7 +997,7 @@ fn main() -> anyhow::Result<()> {
     // Ultra-forgiving argument normalization:
     // Seamlessly map common PowerShell/Windows CMD single-dash forms (-no-browser, -lite, -no-ai, -no-dashboard, -headless, -detach)
     // to their standard clap long flag representations.
-    let normalized_args: Vec<String> = std::env::args()
+    let mut normalized_args: Vec<String> = std::env::args()
         .map(|arg| {
             if arg == "-no-browser"
                 || arg == "-no-broswer"
@@ -985,6 +1027,16 @@ fn main() -> anyhow::Result<()> {
             }
         })
         .collect();
+
+    // Support natural two-word CLI invocations: `osoosi run pentest ...` and `osoosi run raptor ...`
+    if normalized_args.len() >= 3
+        && normalized_args[1].eq_ignore_ascii_case("run")
+        && (normalized_args[2].eq_ignore_ascii_case("pentest")
+            || normalized_args[2].eq_ignore_ascii_case("raptor"))
+    {
+        normalized_args.remove(1);
+        normalized_args[1] = "pentest".to_string();
+    }
 
     let cli = Cli::parse_from(normalized_args);
     if let Some(_uuid_str) = cli.canary_probe.as_ref() {
@@ -3505,6 +3557,295 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                 }
+            }
+        }
+        Some(Commands::Pentest {
+            ref target,
+            ref mode,
+            ref url,
+            ref model,
+            ref policy_groups,
+            include_codeql,
+            ref raptor_root,
+            list_findings,
+            gate,
+            json,
+        }) => {
+            let resolved_target = if target == "." {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                PathBuf::from(target)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(target))
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+                    .to_string()
+            };
+
+            let raptor_dir = PathBuf::from(raptor_root);
+            let out_base = raptor_dir.join("out");
+
+            if !list_findings {
+                if !json {
+                    println!("=========================================================================================");
+                    println!("  OpenỌ̀ṣọ́ọ̀sì × RAPTOR Autonomous Penetration Testing & SAST/Crypto/SCA Engine");
+                    println!("=========================================================================================");
+                    println!("  Target Path   : {}", resolved_target);
+                    println!("  Scan Mode     : {}", mode);
+                    println!("  LLM Model     : {}", model);
+                    println!("  RAPTOR Root   : {}", raptor_dir.display());
+                    println!("=========================================================================================");
+                }
+
+                let ps_script = raptor_dir.join("Invoke-RaptorScan.ps1");
+                if cfg!(windows) && ps_script.is_file() {
+                    let mut cmd = std::process::Command::new("powershell");
+                    cmd.args([
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        &ps_script.to_string_lossy(),
+                        "-TargetPath",
+                        &resolved_target,
+                        "-Mode",
+                        mode,
+                        "-Model",
+                        model,
+                        "-RaptorRoot",
+                        raptor_root,
+                    ]);
+                    if let Some(u) = url {
+                        if !u.trim().is_empty() {
+                            cmd.args(["-Url", u]);
+                        }
+                    }
+                    if let Some(pg) = policy_groups {
+                        if !pg.trim().is_empty() {
+                            cmd.args(["-PolicyGroups", pg]);
+                        }
+                    }
+                    if include_codeql {
+                        cmd.arg("-IncludeCodeQL");
+                    }
+                    let status = cmd.status()?;
+                    if !status.success() && !json {
+                        eprintln!(
+                            "[!] RAPTOR scan exited with status {:?}; inspecting generated SARIF reports...",
+                            status.code()
+                        );
+                    }
+                } else {
+                    // Direct cross-platform Docker execution against danielcuthbert/raptor:latest
+                    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                    let host_out = out_base.join(format!("cli_{}_{}", mode, ts));
+                    let _ = std::fs::create_dir_all(&host_out);
+                    let container_tmp = format!("/tmp/raptor_cli_{}", ts);
+                    let container_repo = format!("/tmp/raptor_repo_{}", ts);
+                    let stage_cmd = format!(
+                        "mkdir -p '{}' && tar -C /workspaces/target --exclude='./target' --exclude='./.git' --exclude='./node_modules' --exclude='./database' --exclude='./models' -cf - . | tar -C '{}' -xf -",
+                        container_repo, container_repo
+                    );
+                    let inner_cmd = match mode.as_str() {
+                        "crypto" => format!(
+                            "{} ; python3 raptor.py scan --repo {} --policy-groups crypto --out {}",
+                            stage_cmd, container_repo, container_tmp
+                        ),
+                        "sca" => format!(
+                            "{} ; python3 raptor.py sca --repo {} --out {}",
+                            stage_cmd, container_repo, container_tmp
+                        ),
+                        "describe" => format!(
+                            "{} ; python3 raptor.py describe --target {}",
+                            stage_cmd, container_repo
+                        ),
+                        "scan" => format!(
+                            "{} ; python3 raptor.py scan --repo {} --out {}",
+                            stage_cmd, container_repo, container_tmp
+                        ),
+                        _ => format!(
+                            "{} ; python3 raptor.py scan --repo {} --out {}/scan ; python3 raptor.py scan --repo {} --policy-groups crypto --out {}/crypto || true ; python3 raptor.py sca --repo {} --out {}/sca || true",
+                            stage_cmd, container_repo, container_tmp, container_repo, container_tmp, container_repo, container_tmp
+                        ),
+                    };
+                    let bash_cmd = format!(
+                        "mkdir -p '{}' ; {} ; cp -r {}/* /workspaces/out/ 2>/dev/null || true",
+                        container_tmp, inner_cmd, container_tmp
+                    );
+                    let _ = std::process::Command::new("docker")
+                        .args([
+                            "run",
+                            "--rm",
+                            "--add-host=host.docker.internal:host-gateway",
+                            "-v",
+                            &format!("{}:/workspaces/target", resolved_target),
+                            "-v",
+                            &format!("{}:/workspaces/out", host_out.display()),
+                            "-e",
+                            "OLLAMA_HOST=http://host.docker.internal:11434",
+                            "-e",
+                            "RAPTOR_ALLOW_DEGRADED_UNTRUSTED=1",
+                            "danielcuthbert/raptor:latest",
+                            "bash",
+                            "-c",
+                            &bash_cmd,
+                        ])
+                        .status();
+                }
+            }
+
+            // Parse latest SARIF reports in out_base
+            let mut latest_dir: Option<(std::time::SystemTime, PathBuf)> = None;
+            if out_base.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&out_base) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_dir() {
+                            let mtime = entry
+                                .metadata()
+                                .and_then(|m| m.modified())
+                                .unwrap_or(std::time::UNIX_EPOCH);
+                            if latest_dir.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                                latest_dir = Some((mtime, p));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut total_findings = 0usize;
+            let mut error_findings = 0usize;
+            let mut warning_findings = 0usize;
+            let mut note_findings = 0usize;
+            let mut findings_list = Vec::new();
+            let scan_dir = latest_dir.map(|(_, p)| p);
+
+            if let Some(ref dir) = scan_dir {
+                for entry in walkdir::WalkDir::new(dir)
+                    .max_depth(4)
+                    .into_iter()
+                    .flatten()
+                {
+                    let p = entry.path();
+                    if p.is_file()
+                        && p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.eq_ignore_ascii_case("sarif"))
+                            .unwrap_or(false)
+                    {
+                        if let Ok(bytes) = std::fs::read(p) {
+                            if let Ok(sarif) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                if let Some(runs) = sarif.get("runs").and_then(|r| r.as_array()) {
+                                    for run in runs {
+                                        if let Some(results) =
+                                            run.get("results").and_then(|r| r.as_array())
+                                        {
+                                            for res in results {
+                                                total_findings += 1;
+                                                let level = res
+                                                    .get("level")
+                                                    .and_then(|l| l.as_str())
+                                                    .unwrap_or("warning")
+                                                    .to_ascii_lowercase();
+                                                match level.as_str() {
+                                                    "error" | "critical" => error_findings += 1,
+                                                    "warning" => warning_findings += 1,
+                                                    _ => note_findings += 1,
+                                                }
+                                                let rule_id = res
+                                                    .get("ruleId")
+                                                    .and_then(|r| r.as_str())
+                                                    .unwrap_or("unknown");
+                                                let msg = res
+                                                    .get("message")
+                                                    .and_then(|m| m.get("text"))
+                                                    .and_then(|t| t.as_str())
+                                                    .unwrap_or("");
+                                                let loc = res
+                                                    .get("locations")
+                                                    .and_then(|l| l.as_array())
+                                                    .and_then(|a| a.first())
+                                                    .and_then(|first| {
+                                                        first.get("physicalLocation")
+                                                    });
+                                                let uri = loc
+                                                    .and_then(|pl| pl.get("artifactLocation"))
+                                                    .and_then(|al| al.get("uri"))
+                                                    .and_then(|u| u.as_str())
+                                                    .unwrap_or("unknown");
+                                                let line = loc
+                                                    .and_then(|pl| pl.get("region"))
+                                                    .and_then(|r| r.get("startLine"))
+                                                    .and_then(|l| l.as_u64())
+                                                    .unwrap_or(0);
+                                                findings_list.push(serde_json::json!({
+                                                    "level": level,
+                                                    "rule_id": rule_id,
+                                                    "file": uri,
+                                                    "line": line,
+                                                    "message": msg,
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": if gate && error_findings > 0 { "failed_gate" } else { "completed" },
+                        "target": resolved_target,
+                        "mode": mode,
+                        "scan_output_dir": scan_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+                        "total_findings": total_findings,
+                        "error_or_critical_count": error_findings,
+                        "warning_count": warning_findings,
+                        "note_count": note_findings,
+                        "findings": findings_list,
+                    }))?
+                );
+            } else {
+                println!("-----------------------------------------------------------------------------------------");
+                println!(
+                    "  RAPTOR SARIF Summary (Dir: {})",
+                    scan_dir
+                        .as_ref()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!(
+                    "  Total Findings: {}  |  Critical/Error: {}  |  Warning: {}  |  Note: {}",
+                    total_findings, error_findings, warning_findings, note_findings
+                );
+                println!("-----------------------------------------------------------------------------------------");
+                for f in findings_list.iter().take(25) {
+                    println!(
+                        "  [{}] {}:{} ({}) — {}",
+                        f["level"].as_str().unwrap_or("warn").to_ascii_uppercase(),
+                        f["file"].as_str().unwrap_or(""),
+                        f["line"].as_u64().unwrap_or(0),
+                        f["rule_id"].as_str().unwrap_or(""),
+                        f["message"].as_str().unwrap_or("")
+                    );
+                }
+                println!("=========================================================================================");
+            }
+
+            if gate && error_findings > 0 {
+                eprintln!(
+                    "[-] RAPTOR Security Gate FAILED: {} critical/error finding(s) detected.",
+                    error_findings
+                );
+                std::process::exit(1);
             }
         }
         None => {

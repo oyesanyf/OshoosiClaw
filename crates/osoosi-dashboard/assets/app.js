@@ -11347,17 +11347,132 @@ function renderEnvGatewayStatusData(data) {
         statWatcherState.style.color = data.watcher_running ? 'var(--accent-cyan, #06b6d4)' : 'var(--text-muted)';
     }
 
-    // Checkbox sync
+    // Checkbox & Master Enable/Disable sync
+    const isMasterEnabled = typeof data.enabled === 'boolean'
+        ? data.enabled
+        : (localStorage.getItem('oshoosi_env_protection_enabled') !== 'false');
+    if (state && state.envGateway) {
+        state.envGateway.enabled = isMasterEnabled;
+    }
+    syncProtectEnvMasterUiState(isMasterEnabled);
+
     const watcherToggle = document.getElementById('env-config-watcher-enabled');
     if (watcherToggle && typeof data.watcher_running === 'boolean') {
-        watcherToggle.checked = data.watcher_running;
+        watcherToggle.checked = isMasterEnabled && data.watcher_running;
+        watcherToggle.disabled = !isMasterEnabled;
     }
     const autoSealToggle = document.getElementById('env-config-auto-seal');
     if (autoSealToggle && typeof data.watcher_auto_seal === 'boolean') {
-        autoSealToggle.checked = data.watcher_auto_seal;
+        autoSealToggle.checked = isMasterEnabled && data.watcher_auto_seal;
+        autoSealToggle.disabled = !isMasterEnabled;
     }
 
     if (window.lucide) window.lucide.createIcons();
+}
+
+function syncProtectEnvMasterUiState(enabled) {
+    const isEnabled = !!enabled;
+    try { localStorage.setItem('oshoosi_env_protection_enabled', isEnabled ? 'true' : 'false'); } catch (_) {}
+    const navBadge = document.getElementById('nav-env-protection-badge');
+    if (navBadge) {
+        navBadge.className = isEnabled ? 'badge green' : 'badge yellow';
+        navBadge.innerText = isEnabled ? 'ON' : 'OFF';
+        navBadge.title = isEnabled
+            ? 'Protect .env (Experimental) is ENABLED — Click to Disable & Unseal All'
+            : 'Protect .env (Experimental) is DISABLED — Click to Enable';
+    }
+    const cardEnabledBadge = document.getElementById('env-gateway-enabled-badge');
+    if (cardEnabledBadge) {
+        cardEnabledBadge.className = isEnabled ? 'badge green' : 'badge yellow';
+        cardEnabledBadge.innerText = isEnabled ? 'ENABLED' : 'DISABLED (UNSEALED)';
+    }
+    const masterCheck = document.getElementById('env-config-master-enabled');
+    if (masterCheck) {
+        masterCheck.checked = isEnabled;
+    }
+    const masterBtn = document.getElementById('btn-toggle-env-protection-master');
+    if (masterBtn) {
+        if (isEnabled) {
+            masterBtn.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+            masterBtn.style.color = '#fbbf24';
+            masterBtn.innerHTML = '<i data-lucide="power" style="width:13px; height:13px;"></i> <span>Disable Protect .env</span>';
+        } else {
+            masterBtn.style.borderColor = 'rgba(16, 185, 129, 0.6)';
+            masterBtn.style.color = '#10b981';
+            masterBtn.innerHTML = '<i data-lucide="power" style="width:13px; height:13px;"></i> <span>Enable Protect .env</span>';
+        }
+    }
+    const sealBtn = document.getElementById('btn-seal-env-secrets');
+    if (sealBtn) {
+        sealBtn.disabled = !isEnabled;
+        sealBtn.style.opacity = isEnabled ? '1' : '0.45';
+        sealBtn.title = isEnabled
+            ? 'Back up environment files and replace selected secrets with OSHOOSI_STANDIN_* tokens'
+            : 'Protect .env (Experimental) is currently DISABLED. Click Enable Protect .env first.';
+    }
+    const banner = document.getElementById('env-gateway-banner');
+    if (banner) {
+        if (!isEnabled) {
+            banner.style.display = 'block';
+            banner.style.background = 'rgba(245, 158, 11, 0.12)';
+            banner.style.border = '1px solid rgba(245, 158, 11, 0.35)';
+            banner.style.color = '#fcd34d';
+            banner.innerHTML = '<strong>⚪ Protect .env (Experimental) is DISABLED:</strong> All sealed <code>.env</code> files have been restored to original plaintext and background secret sealing is paused. Click <strong>Enable Protect .env</strong> above to re-arm out-of-band DPAPI vault sealing.';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+}
+
+function openProtectEnvMenu(event) {
+    if (event) event.preventDefault();
+    if (typeof switchView === 'function') {
+        switchView('utilities');
+    } else {
+        window.location.hash = '#utilities';
+    }
+    setTimeout(() => {
+        const card = document.getElementById('env-gateway-seal-card');
+        if (card && typeof card.scrollIntoView === 'function') {
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        loadEnvGatewayStatus(true);
+    }, 100);
+}
+
+async function toggleEnvProtectionMaster(explicitEnabled) {
+    const currentEnabled = (state && state.envGateway && typeof state.envGateway.enabled === 'boolean')
+        ? state.envGateway.enabled
+        : (localStorage.getItem('oshoosi_env_protection_enabled') !== 'false');
+    const targetEnabled = typeof explicitEnabled === 'boolean' ? explicitEnabled : !currentEnabled;
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: targetEnabled })
+        });
+        const data = resp ? await resp.json().catch(() => null) : null;
+        if (!resp || !resp.ok || (data && data.status === 'error')) {
+            showUserError('Protect .env Toggle', data || `HTTP ${resp ? resp.status : 'error'}`);
+            return;
+        }
+        const confirmedEnabled = typeof data?.enabled === 'boolean' ? data.enabled : targetEnabled;
+        if (state && state.envGateway) {
+            state.envGateway.enabled = confirmedEnabled;
+        }
+        syncProtectEnvMasterUiState(confirmedEnabled);
+        showToast(
+            data?.message || (confirmedEnabled
+                ? 'Protect .env (Experimental) ENABLED.'
+                : 'Protect .env (Experimental) DISABLED — all .env files restored to original plaintext.'),
+            confirmedEnabled ? 'success' : 'info'
+        );
+        loadEnvGatewayStatus(true);
+    } catch (err) {
+        console.error('[toggleEnvProtectionMaster] Error:', err);
+        showUserError('Protect .env Toggle', err);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -11501,6 +11616,9 @@ async function loadEnvGatewayConfig() {
                 autoSealCheck.checked = cfg.auto_seal;
             }
 
+            if (typeof cfg.enabled === 'boolean') {
+                syncProtectEnvMasterUiState(cfg.enabled);
+            }
             const watcherCheck = document.getElementById('env-config-watcher-enabled');
             if (watcherCheck && typeof cfg.watcher_enabled === 'boolean') {
                 watcherCheck.checked = cfg.watcher_enabled;
@@ -11531,7 +11649,9 @@ async function saveEnvGatewayConfig() {
         selectedVars.push(cb.value);
     });
 
+    const masterEnabledCheck = document.getElementById('env-config-master-enabled');
     const payload = {
+        enabled: masterEnabledCheck ? masterEnabledCheck.checked : true,
         custom_paths: customPaths,
         all_drives: allDrivesCheck ? allDrivesCheck.checked : false,
         auto_seal: autoSealCheck ? autoSealCheck.checked : false,
@@ -12075,6 +12195,9 @@ window.renderEnvWatcherEvents = renderEnvWatcherEvents;
 window.loadMachineBindingStatus = loadMachineBindingStatus;
 window.renderMachineBindingStatusData = renderMachineBindingStatusData;
 window.refreshMachineBinding = refreshMachineBinding;
+window.toggleEnvProtectionMaster = toggleEnvProtectionMaster;
+window.openProtectEnvMenu = openProtectEnvMenu;
+window.syncProtectEnvMasterUiState = syncProtectEnvMasterUiState;
 
 // ==========================================
 // Siquery-RS Live EDR SQL Console (98-Table Parity)

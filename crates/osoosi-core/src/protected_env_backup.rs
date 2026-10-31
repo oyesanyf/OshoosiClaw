@@ -1386,7 +1386,8 @@ impl ProtectedEnvBackupVault {
         let mut backed_up_files: Vec<BackedUpEnvFile> = Vec::new();
 
         let norm_path = |p: &Path| -> String {
-            let s = p.to_string_lossy();
+            let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+            let s = canon.to_string_lossy();
             let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
             stripped.replace('/', "\\").to_ascii_lowercase()
         };
@@ -1400,11 +1401,18 @@ impl ProtectedEnvBackupVault {
                 .to_string();
 
             let norm_current = norm_path(file_path);
+            let norm_canonical = norm_path(Path::new(&canonical_str));
 
-            let (orig_bytes, orig_sha, was_existed) = if let Some(old_f) = prev_files
-                .iter()
-                .find(|f| norm_path(Path::new(&f.path)) == norm_current)
-            {
+            let (orig_bytes, orig_sha, was_existed) = if let Some(old_f) =
+                prev_files.iter().find(|f| {
+                    let nf = norm_path(Path::new(&f.path));
+                    nf == norm_current
+                        || nf == norm_canonical
+                        || f.path == canonical_str
+                        || (Path::new(&f.path).file_name() == file_path.file_name()
+                            && prev_files.len() == 1
+                            && discovered_files.len() == 1)
+                }) {
                 (
                     old_f.original_bytes.clone(),
                     old_f.original_sha256.clone(),
@@ -1413,7 +1421,12 @@ impl ProtectedEnvBackupVault {
             } else if existing_vault
                 .as_ref()
                 .map(|ex| {
-                    norm_path(Path::new(&ex.target_path)) == norm_current
+                    let ntarget = norm_path(Path::new(&ex.target_path));
+                    (ntarget == norm_current
+                        || ntarget == norm_canonical
+                        || (Path::new(&ex.target_path).file_name() == file_path.file_name()
+                            && prev_files.len() <= 1
+                            && discovered_files.len() <= 1))
                         && ex.target_existed_before
                 })
                 .unwrap_or(false)
@@ -1425,7 +1438,38 @@ impl ProtectedEnvBackupVault {
                     ex.target_existed_before,
                 )
             } else if existed {
-                let bytes = std::fs::read(file_path).unwrap_or_default();
+                let mut bytes = std::fs::read(file_path).unwrap_or_default();
+                if bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                    if let Some(ref ex) = existing_vault {
+                        if let Some(old_f) = prev_files.iter().find(|f| {
+                            Path::new(&f.path).file_name() == file_path.file_name()
+                                && !f
+                                    .original_bytes
+                                    .windows(16)
+                                    .any(|w| w == b"OSHOOSI_STANDIN_")
+                                && !f.original_bytes.is_empty()
+                        }) {
+                            bytes = old_f.original_bytes.clone();
+                        } else if !ex.original_bytes.is_empty()
+                            && !ex
+                                .original_bytes
+                                .windows(16)
+                                .any(|w| w == b"OSHOOSI_STANDIN_")
+                        {
+                            bytes = ex.original_bytes.clone();
+                        } else if let Ok(s) = std::str::from_utf8(&bytes) {
+                            let mut reconstructed = s.to_string();
+                            for (k, orig_v) in &ex.original_env_vars {
+                                if let Some((_, standin)) =
+                                    ex.standin_mappings.iter().find(|(sk, _)| sk == k)
+                                {
+                                    reconstructed = reconstructed.replace(standin, orig_v);
+                                }
+                            }
+                            bytes = reconstructed.into_bytes();
+                        }
+                    }
+                }
                 let mut hasher = Sha256::new();
                 hasher.update(&bytes);
                 let sha = format!("{:x}", hasher.finalize());
@@ -1473,14 +1517,36 @@ impl ProtectedEnvBackupVault {
         };
 
         let vault_original_bytes = if let Some(ref ex) = existing_vault {
+            let ntarget = norm_path(Path::new(&ex.target_path));
+            let nenv = norm_path(env_path);
+            let ntarget_file = Path::new(&ex.target_path).file_name();
+            let nenv_file = env_path.file_name();
+
             if ex.target_existed_before
-                && norm_path(Path::new(&ex.target_path)) == norm_path(env_path)
+                && (ntarget == nenv
+                    || (ntarget_file.is_some()
+                        && ntarget_file == nenv_file
+                        && prev_files.len() <= 1))
             {
-                if !ex.original_bytes.is_empty() {
+                if !ex.original_bytes.is_empty()
+                    && !ex
+                        .original_bytes
+                        .windows(16)
+                        .any(|w| w == b"OSHOOSI_STANDIN_")
+                {
                     ex.original_bytes.clone()
-                } else {
+                } else if !original_bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
                     original_bytes.clone()
+                } else {
+                    ex.original_bytes.clone()
                 }
+            } else if !ex.original_bytes.is_empty()
+                && !ex
+                    .original_bytes
+                    .windows(16)
+                    .any(|w| w == b"OSHOOSI_STANDIN_")
+            {
+                ex.original_bytes.clone()
             } else {
                 original_bytes.clone()
             }

@@ -114,6 +114,11 @@
                             <span>CI/CD Protection</span>
                             <span id="nav-cicd-protection-badge" class="badge yellow" style="margin-left: auto; font-size: 9.5px; padding: 1px 6px; border-radius: 999px;">OFF</span>
                         </a>
+                        <a href="#utilities" class="nav-item" id="nav-item-protect-env" data-shortcut="protect-env" onclick="openProtectEnvMenu(event)" title="Protect .env Files (Experimental DPAPI Stand-In Vault — Click to Configure or Enable/Disable)">
+                            <i data-lucide="key-round"></i>
+                            <span>Protect .env <span class="badge purple" style="font-size: 8.5px; padding: 1px 4px; margin-left: 2px; vertical-align: middle;">EXPERIMENTAL</span></span>
+                            <span id="nav-env-protection-badge" class="badge green" onclick="event.preventDefault(); event.stopPropagation(); toggleEnvProtectionMaster();" style="margin-left: auto; font-size: 9.5px; padding: 1px 6px; border-radius: 999px; cursor: pointer;" title="Click to Enable or Disable Protect .env (Experimental)">ON</span>
+                        </a>
                     </div>
                 </details>
 
@@ -1962,7 +1967,9 @@
                             </div>
                             <div>
                                 <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                    <span>Multi-File Environment Gateway, Magika Drive Scanner &amp; Secret Watcher</span>
+                                    <span>Protect .env — Multi-File Environment Gateway, Magika Drive Scanner &amp; Secret Watcher</span>
+                                    <span id="env-gateway-experimental-badge" class="badge purple" style="background:rgba(168, 85, 247, 0.18); color:#c084fc; border:1px solid rgba(168, 85, 247, 0.45); font-weight:700; letter-spacing:0.5px;">EXPERIMENTAL</span>
+                                    <span id="env-gateway-enabled-badge" class="badge green">ENABLED</span>
                                     <span id="env-gateway-status-badge" class="badge gray">Checking Gateway...</span>
                                     <span id="env-gateway-watcher-badge" class="badge gray">WATCHER IDLE</span>
                                     <span id="env-gateway-dacl-badge" class="badge blue">DACL: Protected</span>
@@ -1976,6 +1983,10 @@
                             </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn-secondary" id="btn-toggle-env-protection-master" onclick="toggleEnvProtectionMaster()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; border-color:rgba(245, 158, 11, 0.5); color:#fbbf24; font-weight:600; cursor:pointer;" title="Enable or Disable Experimental Protect .env Function (Disabling automatically unseals all .env files back to plaintext)">
+                                <i data-lucide="power" style="width:13px; height:13px;"></i>
+                                <span>Disable Protect .env</span>
+                            </button>
                             <button type="button" class="btn-primary" id="btn-scan-env-all-drives" onclick="scanEnvFiles(true)" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; cursor:pointer;" title="Discover physical drives via sysinfo::Disks and classify candidate .env files with Google Magika">
                                 <i data-lucide="hard-drive" style="width:13px; height:13px;"></i>
                                 <span>Scan All Physical Drives (Google Magika)</span>
@@ -2066,6 +2077,10 @@
                             </summary>
                             <div style="margin-top:14px; display:flex; flex-direction:column; gap:12px;">
                                 <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center;">
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer; font-weight:600; color:#c084fc;">
+                                        <input type="checkbox" id="env-config-master-enabled" checked onchange="toggleEnvProtectionMaster(this.checked)">
+                                        <span>Enable Protect .env Function (Experimental)</span>
+                                    </label>
                                     <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;">
                                         <input type="checkbox" id="env-config-watcher-enabled" onchange="toggleEnvWatcher(this.checked)">
                                         <span>Enable Real-Time Magika File Watcher</span>

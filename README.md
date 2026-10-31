@@ -280,7 +280,33 @@ osoosi-cli query "SELECT pid, name, path, ppid FROM processes LIMIT 10;"
 
 # Run autonomous reverse engineering on an unknown binary
 osoosi-cli rea --target suspicious_payload.exe
+
+# Execute RAPTOR autonomous penetration testing, SAST, Post-Quantum Crypto & SCA from the CLI
+osoosi run pentest --mode all
+osoosi pentest --mode scan --gate
 ```
+
+---
+
+<a id="raptor-pentest-and-protect-env-experimental"></a>
+## 🦅 RAPTOR Autonomous Pentest Gate (`osoosi run pentest`) & Experimental `Protect .env` UI Controls
+
+```mermaid
+flowchart LR
+    Dev["Developer / Operator"] --> CLI["CLI: osoosi run pentest<br/>(all | scan | crypto | sca | agentic)"]
+    Dev --> SoloPR["scripts/solo_pr_ship.ps1<br/>(Pre-Push RAPTOR SARIF Gate)"]
+    Dev --> WebUI["WebUI: Protect .env [EXPERIMENTAL]<br/>(Sidebar & Utilities Toggle ON/OFF)"]
+    CLI --> Raptor["danielcuthbert/raptor:latest<br/>+ Local Ollama Foundation-Sec-8B"]
+    SoloPR --> GHA[".github/workflows/raptor-security.yml<br/>(Required Check on main)"]
+    Raptor --> Sarif["SARIF Aggregator & Gate<br/>(0 Unmitigated Critical Blockers)"]
+    GHA --> Sarif
+    WebUI -- "Disable (OFF)" --> Unseal["Auto-Unseal All .env Vaults<br/>+ Stop Magika Watcher"]
+    WebUI -- "Enable (ON)" --> Seal["DPAPI + ChaCha20Poly1305 Vault<br/>+ OSHOOSI_STANDIN_* Tokens"]
+```
+
+1. **CLI Autonomous Pentesting (`osoosi run pentest` / `osoosi pentest` / `osoosi raptor`)**: Invokes the RAPTOR offensive/defensive framework (`Invoke-RaptorScan.ps1` / `danielcuthbert/raptor:latest`) across `all`, `scan`, `crypto`, `sca`, `openant`, `describe`, and `agentic` suites, aggregates `.sarif` reports, and supports `--gate` (`exit 1` on critical/error findings) and `--list-findings`.
+2. **Required GitHub Actions Check & Solo-Developer Pipeline Integration**: `.github/workflows/raptor-security.yml` (`RAPTOR Security Audit (SAST + Crypto + SCA)`) and `scripts/solo_pr_ship.ps1` enforce SAST, Post-Quantum Cryptography, and Software Composition Analysis checks on every Pull Request.
+3. **Experimental `Protect .env` Menu & Master Enable/Disable Toggle**: Labeled `EXPERIMENTAL` in both the `🛡️ Agent Security` sidebar menu (`Protect .env [EXPERIMENTAL] [ON/OFF]`) and `#env-gateway-seal-card` in `#utilities`. Operators can disable `.env` protection at any time (`POST /api/env-gateway/toggle`), which persists to SQLite (`oshoosi_env_protection_enabled`) and `database/env_seal_config.json`, stops the background watcher, and automatically unseals all `.env` files back to original plaintext.
 
 ---
 
