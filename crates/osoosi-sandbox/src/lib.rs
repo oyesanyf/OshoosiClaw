@@ -31,6 +31,7 @@ use wasmtime::*;
 pub mod command_line;
 pub mod executable_identity;
 pub mod hidden_process_ledger;
+pub mod host_capability_gate;
 pub mod host_interface;
 pub mod kill_switch;
 pub mod memory_limiter;
@@ -39,6 +40,7 @@ pub mod open_confined;
 pub mod security;
 pub mod tiered_executor;
 pub mod token_posture;
+pub mod wasm_supervisor;
 pub mod wasm_tier1;
 pub mod windows;
 
@@ -77,6 +79,13 @@ pub use wasm_tier1::{
     WasmExecutionReceipt, WasmHostState, WasmSandboxLimits, WasmTier1Executor,
     ZeroMiProjectionResult, ZeroMutualInformationProjector, WASM_DOC_EXTRACTOR_WAT,
     WASM_LEDGER_VALIDATOR_WAT,
+};
+pub use host_capability_gate::{
+    GateError, HardenedSealedGrant, HostCapabilityGate, SecretSwapProvider, ZeroizingLockedSecret,
+};
+pub use wasm_supervisor::{
+    build_metered_engine, build_zero_overhead_engine, EpochTicker, P2pFrameHostState,
+    ValidatedP2pFrameReceipt, WasmSupervisor, WasmSupervisorConfig, WasmSupervisorError,
 };
 
 /// Configuration for a sandbox execution.

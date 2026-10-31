@@ -1,0 +1,40 @@
+package osoosi:capability@1.2.0;
+
+interface http-gate {
+    enum http-method {
+        get,
+        post,
+        head,
+    }
+
+    record http-request {
+        method: http-method,
+        uri: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+    }
+
+    record http-response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    enum gate-error {
+        domain-denied,
+        ssrf-blocked,
+        dns-rebinding-blocked,
+        credential-identity-denied,
+        rate-limited,
+        network-error,
+        timeout,
+    }
+
+    /// Fetches an allowed external endpoint via the host-mediated capability gate.
+    /// Injects credentials outside guest linear memory and enforces strict SSRF guards.
+    fetch: func(req: http-request) -> result<http-response, gate-error>;
+}
+
+world sandbox-guest {
+    import http-gate;
+}

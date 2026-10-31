@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-wasmtime = { workspace = true }
+wasmtime = { workspace = true, features = ["component-model", "async", "pooling-allocator", "wat"] }
 tokio = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -18,7 +18,7 @@ osoosi-model = { path = "../osoosi-model" }
 chrono = { workspace = true }
 uuid = { workspace = true }
 walkdir = { workspace = true }
-wasmtime-wasi = { workspace = true }
+wasmtime-wasi = { workspace = true, features = ["p1", "p2"] }
 cap-std = "3"
 blake3 = { workspace = true }
 sha2 = { workspace = true }

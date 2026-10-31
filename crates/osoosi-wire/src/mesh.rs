@@ -74,6 +74,51 @@ pub struct OsoosiBehavior {
     pub relay_server: libp2p::relay::Behaviour,
     pub dcutr: libp2p::dcutr::Behaviour,
 }
+
+/// Global or per-node split-plane wire frame validator closure.
+pub type WireFrameValidator = Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
+
+static GLOBAL_FRAME_VALIDATOR: std::sync::RwLock<Option<WireFrameValidator>> = std::sync::RwLock::new(None);
+
+/// Sets the global split-plane frame validator (e.g. backed by WasmSupervisor hot-path guest pool).
+pub fn set_global_wire_frame_validator<F>(validator: F)
+where
+    F: Fn(&str, &[u8]) -> Result<(), String> + Send + Sync + 'static,
+{
+    let mut lock = GLOBAL_FRAME_VALIDATOR.write().unwrap_or_else(|p| p.into_inner());
+    *lock = Some(Arc::new(validator));
+}
+
+/// Validates a raw inbound wire frame before any host-side serde deserialization.
+pub fn validate_wire_frame(topic: &str, raw_data: &[u8]) -> Result<(), String> {
+    if let Some(ref validator) = *GLOBAL_FRAME_VALIDATOR.read().unwrap_or_else(|p| p.into_inner()) {
+        return validator(topic, raw_data);
+    }
+
+    // Default built-in split-plane validator:
+    // 1. Check max frame size <= 512 KiB
+    if raw_data.len() > 524_288 {
+        return Err(format!("Payload oversized ({} bytes > 512 KiB)", raw_data.len()));
+    }
+    // 2. Check min payload size
+    if raw_data.len() < 2 {
+        return Err("Payload truncated (len < 2)".to_string());
+    }
+    // 3. Envelope check: Must start with '{' or '[' (unless audit proof which is UTF-8)
+    let first = raw_data[0];
+    let last = raw_data[raw_data.len() - 1];
+    if (first == b'{' && last == b'}') || (first == b'[' && last == b']') {
+        return Ok(());
+    }
+    // Allow valid UTF-8 for text topics like audit proofs
+    if topic.contains("audit-proof") {
+        if std::str::from_utf8(raw_data).is_ok() {
+            return Ok(());
+        }
+    }
+    Err("Wire frame rejected: invalid envelope or malformed payload".to_string())
+}
+
 pub struct MeshNode {
     pub swarm: libp2p::Swarm<OsoosiBehavior>,
     pub threat_topic: gossipsub::IdentTopic,
@@ -97,6 +142,7 @@ pub struct MeshNode {
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
     pub last_audit_proof: Option<String>,
     pub last_stix_manifest: Option<super::StixManifest>,
+    pub frame_validator: Option<WireFrameValidator>,
 }
 
 impl MeshNode {
@@ -432,7 +478,19 @@ impl MeshNode {
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
             last_audit_proof: None,
             last_stix_manifest: None,
+            frame_validator: None,
         })
+    }
+
+    /// Attaches a split-plane wire frame validator to this mesh node.
+    pub fn with_frame_validator(mut self, validator: WireFrameValidator) -> Self {
+        self.frame_validator = Some(validator);
+        self
+    }
+
+    /// Sets the split-plane wire frame validator on this mesh node.
+    pub fn set_frame_validator(&mut self, validator: WireFrameValidator) {
+        self.frame_validator = Some(validator);
     }
 
     /// [NEW] Native Neighbor Discovery: Scrapes the OS ARP/Neighbor cache and
@@ -835,6 +893,26 @@ impl MeshNode {
                             debug!("Dropping gossip message from low-reputation peer: {}", propagation_source);
                             continue;
                         }
+
+                        // SPLIT-PLANE WASM WIRE FRAME VALIDATION GATE
+                        // Untrusted raw network bytes are routed through the split-plane validator
+                        // before attempting host serde deserialization.
+                        let topic_str = message.topic.as_str();
+                        let validation_result = if let Some(ref validator) = self.frame_validator {
+                            validator(topic_str, &message.data)
+                        } else {
+                            validate_wire_frame(topic_str, &message.data)
+                        };
+
+                        if let Err(reason) = validation_result {
+                            warn!(
+                                "[mesh-wasm-gate] Dropped malformed or rejected gossip packet from peer {}: topic={}, error={}",
+                                propagation_source, message.topic, reason
+                            );
+                            let _ = self.memory.update_reputation(&propagation_source.to_string(), -0.15);
+                            continue;
+                        }
+
                         if message.topic == self.threat_topic.hash() {
                             match serde_json::from_slice::<ThreatSignature>(&message.data) {
                                 Ok(sig) => {
