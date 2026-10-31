@@ -1226,7 +1226,7 @@ pub fn is_valid_loopback_referer(referer: &str) -> bool {
     if trimmed.is_empty() {
         return true;
     }
-    if let Ok(parsed) = url::Url::parse(trimmed) {
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
         if let Some(host) = parsed.host_str() {
             if host.eq_ignore_ascii_case("localhost") {
                 return true;
@@ -1508,7 +1508,7 @@ pub fn is_valid_loopback_origin(trimmed: &str) -> bool {
     if trimmed == "null" {
         return true;
     }
-    if let Ok(parsed) = url::Url::parse(trimmed) {
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
         if let Some(host) = parsed.host_str() {
             if host.eq_ignore_ascii_case("localhost") {
                 return true;
