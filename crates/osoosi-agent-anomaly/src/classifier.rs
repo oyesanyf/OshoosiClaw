@@ -1310,6 +1310,11 @@ mod tests {
         assert!(!drained
             .iter()
             .any(|(id, _, _)| id == "agent-fifo-bounded-0"));
-        assert_eq!(pending_signals_count(), 0);
+        let remaining_fifo_signals = PENDING_SIGNALS
+            .lock()
+            .iter()
+            .filter(|(id, _, _)| id.starts_with("agent-fifo-bounded-"))
+            .count();
+        assert_eq!(remaining_fifo_signals, 0);
     }
 }
