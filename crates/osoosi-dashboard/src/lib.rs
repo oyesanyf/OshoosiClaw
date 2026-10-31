@@ -5211,7 +5211,9 @@ pub fn init_ui_settings_sqlite() {
                 [],
             );
         }
-        let _ = harden_file_ntfs_dacl(std::path::Path::new(db_path));
+        if !is_test_binary {
+            let _ = harden_file_ntfs_dacl(std::path::Path::new(db_path));
+        }
     }
 }
 
@@ -5295,7 +5297,9 @@ pub fn load_ui_setting_sqlite(key: &str) -> Option<Value> {
                 rusqlite::params![clean_key],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             ) {
-                if !tag.is_empty() && !verify_row_integrity_tag("ui_settings_kv", clean_key, &raw, &tag) {
+                if !tag.is_empty()
+                    && !verify_row_integrity_tag("ui_settings_kv", clean_key, &raw, &tag)
+                {
                     tracing::error!(
                         "SQLite row integrity verification failed for ui_settings_kv key '{}': tampering rejected",
                         clean_key
@@ -12964,7 +12968,7 @@ mod tests {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*")
+            Some("http://127.0.0.1:5500")
         );
         assert!(resp.headers().contains_key("access-control-allow-methods"));
         assert!(resp.headers().contains_key("access-control-allow-headers"));
@@ -12984,7 +12988,7 @@ mod tests {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*")
+            Some("null")
         );
         assert!(resp.headers().contains_key("access-control-allow-methods"));
         assert!(resp.headers().contains_key("access-control-allow-headers"));
@@ -13002,7 +13006,7 @@ mod tests {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*")
+            Some("http://127.0.0.1:5500")
         );
 
         // 4. GET request to /mesh/bootstrap-peers without /api prefix
@@ -13018,7 +13022,7 @@ mod tests {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*")
+            Some("null")
         );
 
         // 5. POST request to /mesh/bootstrap-peers with Origin header
@@ -13037,7 +13041,7 @@ mod tests {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*")
+            Some("null")
         );
 
         std::env::remove_var("OSOOSI_CONFIG");
@@ -14997,13 +15001,14 @@ mod tests {
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
         let expected_token = get_or_init_dashboard_api_token();
-        let test_client_ip = format!("198.51.100.{}", (rand::random::<u8>() % 250) + 1);
+        let test_client_ip = format!("127.0.0.{}", (rand::random::<u8>() % 250) + 2);
 
         // Send 10 rapid login requests with valid credentials (burst capacity = 10)
         for _ in 0..10 {
             let req = axum::http::Request::builder()
                 .uri("/api/auth/login")
                 .method(axum::http::Method::POST)
+                .header(axum::http::header::HOST, "127.0.0.1:3030")
                 .header("x-test-client-ip", &test_client_ip)
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body(axum::body::Body::from(format!(
@@ -15019,6 +15024,7 @@ mod tests {
         let req_burst = axum::http::Request::builder()
             .uri("/api/auth/login")
             .method(axum::http::Method::POST)
+            .header(axum::http::header::HOST, "127.0.0.1:3030")
             .header("x-test-client-ip", &test_client_ip)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
             .body(axum::body::Body::from(format!(
