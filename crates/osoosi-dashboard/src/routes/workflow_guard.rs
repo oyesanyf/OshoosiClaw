@@ -2705,8 +2705,13 @@ mod tests {
         }
     }
 
+    static TEST_UI_SQLITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_ui_settings_and_unsettings_persist_to_sqlite() {
+        let _guard = TEST_UI_SQLITE_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OSOOSI_TEST_UI_SQLITE", "1");
         let test_key = "oshoosi_test_toggle_persistence_v1";
         crate::save_ui_setting_sqlite(test_key, &json!(true));
@@ -2751,6 +2756,9 @@ mod tests {
 
     #[test]
     fn test_cicd_protection_vault_and_ui_setting_sync() {
+        let _guard = TEST_UI_SQLITE_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OSOOSI_TEST_UI_SQLITE", "1");
         sync_workflow_guard_from_ui_setting("oshoosi_cicd_master_enabled", &json!(true));
         {

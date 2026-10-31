@@ -3957,6 +3957,7 @@ impl BreakoutDefenseCoordinator {
                 let pat = rule.indicator_pattern.trim().to_ascii_lowercase();
                 let matched = pat
                     .split('|')
+                    .flat_map(|s| s.split("&&"))
                     .map(|s| s.trim())
                     .filter(|s| is_valid_technical_indicator(s))
                     .any(|ind| inspection_corpus_lc.contains(ind));
@@ -3964,9 +3965,10 @@ impl BreakoutDefenseCoordinator {
                 if matched {
                     tech_res.is_clean = false;
                     tech_res.sandbox_quarantine_required = true;
+                    let base_id = normalize_base_arxiv_id(&rule.arxiv_id);
                     tech_res.detected_vectors.push(format!(
-                        "[ArXiv-Active-Defense:{}]: Blocked by ingested research rule '{}' ({})",
-                        rule.arxiv_id, rule.rule_id, rule.attack_vector
+                        "[ArXiv-Active-Defense:{}] [ArXiv-Active-Defense:{}]: Blocked by ingested research rule '{}' ({})",
+                        rule.arxiv_id, base_id, rule.rule_id, rule.attack_vector
                     ));
                 }
             }
