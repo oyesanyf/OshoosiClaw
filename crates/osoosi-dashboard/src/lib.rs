@@ -1057,7 +1057,8 @@ pub fn get_or_init_dashboard_api_token() -> String {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
+                let _ =
+                    std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
             }
 
             token
