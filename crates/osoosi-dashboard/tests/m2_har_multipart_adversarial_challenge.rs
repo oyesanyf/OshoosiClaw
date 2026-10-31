@@ -29,6 +29,18 @@ static HAR_ADVERSARIAL_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 fn ensure_test_pipeline_ready() {
     let _ = osoosi_core::rea::global_rea_engine();
     ensure_har_dlp_pipeline_started(None);
+    osoosi_types::set_strict_lockdown_override(false);
+    global_lineage_tracker().reset_for_tests();
+    {
+        let mut state = osoosi_dashboard::routes::dlp::get_global_dlp_state().write();
+        state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+        state.min_phi_threshold = 0.50;
+        state.quarantine_threshold = 0.80;
+        state.auto_quarantine = true;
+        state.auto_zk_scrub = true;
+        state.redactx_detection_mode = "zero_leakage".to_string();
+        state.redactx_containment_mode = "balanced_utility".to_string();
+    }
 }
 
 #[tokio::test]
@@ -387,6 +399,10 @@ async fn test_adversarial_har_benign_multipart_upload_allowed() {
     assert_eq!(events.len(), 1);
     assert!(
         events[0].allowed,
-        "Clean benign multipart upload must be allowed (0 false positives)"
+        "Clean benign multipart upload must be allowed (0 false positives). Decision: {}, dlp_response: {}, rationale: {}, categories: {:?}",
+        events[0].authorization_decision,
+        events[0].dlp_response,
+        events[0].rationale,
+        events[0].detected_categories
     );
 }

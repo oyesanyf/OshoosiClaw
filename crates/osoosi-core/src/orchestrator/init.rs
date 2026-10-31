@@ -369,6 +369,29 @@ impl EdrOrchestrator {
             }
         }
 
+        // Background watcher: periodically check if any user Environment hive has newly added/unsealed API keys
+        let watcher_vault_path = default_vault_path.clone();
+        let watcher_gateway = env_gateway.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                if crate::protected_env_backup::ProtectedEnvBackupVault::has_unsealed_user_api_keys(
+                ) {
+                    if let Ok(res) = crate::protected_env_backup::ProtectedEnvBackupVault::seal_and_register_with_gateway(
+                        std::path::Path::new(".env"),
+                        &watcher_vault_path,
+                        &watcher_gateway,
+                    ) {
+                        info!(
+                            "EdrOrchestrator: Background watcher sealed {} unsealed user API keys into vault.",
+                            res.total_selected
+                        );
+                    }
+                }
+            }
+        });
+
         info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let mesh_node_opt = match MeshNode::new(memory.clone()).await {

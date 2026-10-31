@@ -120,6 +120,23 @@ pub fn is_running_under_service_control() -> bool {
 /// Resolve the application root directory from the current executable path.
 /// Walks up to 5 levels looking for workspace/installation indicators (`osoosi.toml`, `config/`, `yara/`, `Cargo.toml`).
 pub fn resolve_app_root_from_exe(exe: &std::path::Path) -> std::path::PathBuf {
+    if let Some(exe_dir) = exe.parent() {
+        if let Some(workspace_root) = exe_dir.parent().and_then(|p| p.parent()) {
+            let dir_name = exe_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let parent_name = exe_dir
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if parent_name.eq_ignore_ascii_case("target")
+                && (dir_name.eq_ignore_ascii_case("release")
+                    || dir_name.eq_ignore_ascii_case("debug"))
+                && workspace_root.join("Cargo.toml").exists()
+            {
+                return workspace_root.to_path_buf();
+            }
+        }
+    }
     let mut current = exe.parent();
     for _ in 0..5 {
         if let Some(dir) = current {

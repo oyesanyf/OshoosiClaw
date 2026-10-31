@@ -1668,11 +1668,8 @@ pub fn extract_requests_from_har(
             }
         }
 
-        // Resolve candidate file from disk if present or if multipart / body-less POST targeting dlptest.com / upload sink
+        // Resolve candidate file from disk if present or if body-less POST targeting dlptest.com / upload sink
         let should_resolve_file = candidate_file.is_some()
-            || mime_type
-                .to_ascii_lowercase()
-                .contains("multipart/form-data")
             || (method == "POST" && body_text.is_empty() && params.is_empty());
         if should_resolve_file {
             if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {

@@ -203,6 +203,11 @@ impl ProtectedEnvBackupVault {
             let _ = std::fs::create_dir_all(parent);
         }
 
+        // If vault file already exists with a protected NTFS DACL, unlock it before overwriting
+        if vault_path.exists() {
+            let _ = unlock_protected_ntfs_dacl(vault_path);
+        }
+
         // Write vault file
         let mut f = File::create(vault_path)?;
         f.write_all(&envelope)?;
@@ -709,6 +714,13 @@ impl ProtectedEnvBackupVault {
         Self::write_vault_payload(vault_path, &payload)?;
         let (verified_payload, _) = Self::read_vault_payload(vault_path)?;
 
+        // Rewrite verified API keys (e.g. GEMINI_API_KEY, HF_TOKEN, NVD_API_KEY, OTX_API_KEY) in
+        // HKEY_USERS\<SID>\Environment and HKCU\Environment FIRST (before optional .env write)
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) && !verified_payload.original_hkcu_vars.is_empty() {
+            write_hkcu_standin_vars(&standin_mappings, &verified_payload)?;
+        }
+
         // If .env file needs writing/updating
         if modified_env_file || !target_existed_before {
             if let Some(parent) = env_path.parent() {
@@ -716,15 +728,17 @@ impl ProtectedEnvBackupVault {
                     let _ = std::fs::create_dir_all(parent);
                 }
             }
-            let mut env_file = File::create(env_path)?;
-            env_file.write_all(content_str.as_bytes())?;
-            env_file.sync_all()?;
-        }
-
-        // Rewrite verified API keys (e.g. GEMINI_API_KEY, HF_TOKEN) in HKCU\Environment to stand-in tokens
-        #[cfg(windows)]
-        if is_production_vault_path(vault_path) && !verified_payload.original_hkcu_vars.is_empty() {
-            write_hkcu_standin_vars(&standin_mappings, &verified_payload)?;
+            match File::create(env_path) {
+                Ok(mut env_file) => {
+                    env_file.write_all(content_str.as_bytes())?;
+                    env_file.sync_all()?;
+                }
+                Err(e) => {
+                    if target_existed_before || !is_production_vault_path(vault_path) {
+                        return Err(VaultError::Io(e));
+                    }
+                }
+            }
         }
 
         Ok(result)
@@ -830,6 +844,26 @@ impl ProtectedEnvBackupVault {
         gateway: &crate::rea_voter_env_gateway::ReaVoterEnvGateway,
     ) -> Result<LlmFusionEnumerationResult, VaultError> {
         Self::seal_and_register_internal(env_path, vault_path, Some(gateway))
+    }
+
+    /// Checks whether any user environment variable in `HKEY_USERS\S-1-5-21-*\Environment` or `HKCU\Environment`
+    /// is an unsealed API key (`selected && !val.starts_with("OSHOOSI_STANDIN_")`).
+    pub fn has_unsealed_user_api_keys() -> bool {
+        #[cfg(windows)]
+        {
+            for (k, v) in read_hkcu_environment_vars() {
+                if !v.starts_with("OSHOOSI_STANDIN_") && !is_hard_protected_non_secret_key(&k, &v) {
+                    let eval = LlmFusionApiKeyEnumerator::evaluate_variable(&k, &v);
+                    if eval.selected
+                        && !eval.vetoed_by_safety_guard
+                        && eval.fusion_confidence_bp >= 8500
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -997,6 +1031,8 @@ impl LlmFusionApiKeyEnumerator {
         // Arm 1: SemanticKeyNameAndLlmClassifier
         let arm1_semantic_score = if key_upper == "GEMINI_API_KEY"
             || key_upper == "HF_TOKEN"
+            || key_upper == "NVD_API_KEY"
+            || key_upper == "OTX_API_KEY"
             || key_upper == "OPENAI_API_KEY"
             || key_upper == "ANTHROPIC_API_KEY"
             || key_upper.ends_with("_API_KEY")
@@ -1004,6 +1040,8 @@ impl LlmFusionApiKeyEnumerator {
             || key_upper.ends_with("_ACCESS_TOKEN")
             || key_upper.ends_with("_SECRET_KEY")
             || key_upper.ends_with("_PRIVATE_KEY")
+            || key_upper.ends_with("_TOKEN")
+            || key_upper.ends_with("_SECRET")
         {
             100.0
         } else if key_upper.contains("API_KEY")
@@ -1028,14 +1066,21 @@ impl LlmFusionApiKeyEnumerator {
             || clean_val.starts_with("gho_")                // GitHub OAuth Token
             || clean_val.starts_with("AKIA"); // AWS Access Key ID
 
+        let is_hex_or_uuid_secret = clean_val.len() >= 24
+            && clean_val
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() || b == b'-');
+
         let entropy = Self::shannon_entropy(clean_val);
 
-        let arm2_entropy_score = if has_known_prefix {
+        let arm2_entropy_score = if has_known_prefix || is_hex_or_uuid_secret {
             100.0
-        } else if clean_val.len() >= 20 && entropy >= 3.6 {
+        } else if clean_val.len() >= 20 && entropy >= 3.2 {
             95.0
-        } else if clean_val.len() >= 16 && entropy >= 3.0 {
-            80.0
+        } else if clean_val.len() >= 12 && entropy >= 2.5 {
+            90.0
+        } else if arm1_semantic_score >= 100.0 && clean_val.len() >= 8 {
+            85.0
         } else if entropy >= 2.5 {
             50.0
         } else {
@@ -1125,7 +1170,7 @@ pub fn apply_protected_ntfs_dacl(path: &Path) -> Result<(), VaultError> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)";
+    let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)(A;;GA;;;IU)(A;;GA;;;SU)";
     let wide_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 
     #[link(name = "advapi32")]
@@ -1324,7 +1369,7 @@ pub fn is_production_vault_path(vault_path: &Path) -> bool {
     #[cfg(test)]
     {
         let _ = vault_path;
-        return false;
+        false
     }
     #[cfg(not(test))]
     {
@@ -1422,17 +1467,47 @@ pub fn is_hard_protected_non_secret_key(key: &str, val: &str) -> bool {
     false
 }
 
+/// Opens all interactive user `Environment` registry hives (`HKEY_USERS\S-1-5-21-*\Environment`,
+/// skipping `*_Classes`) as well as `HKEY_CURRENT_USER\Environment` so that `seal`, `status`,
+/// and `revert` work identically whether invoked from the Windows Service (`NT AUTHORITY\SYSTEM`
+/// in Session 0) or an interactive user terminal (`Session 1+`).
+#[cfg(windows)]
+fn open_user_environment_hives(flags: u32) -> Vec<winreg::RegKey> {
+    let mut hives = Vec::new();
+    let hku = winreg::RegKey::predef(winreg::enums::HKEY_USERS);
+    for sid in hku.enum_keys().flatten() {
+        if sid.starts_with("S-1-5-21-") && !sid.ends_with("_Classes") {
+            let sub_path = format!("{}\\Environment", sid);
+            if let Ok(env_key) = hku.open_subkey_with_flags(&sub_path, flags) {
+                hives.push(env_key);
+            }
+        }
+    }
+    if let Ok(hkcu_env) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey_with_flags("Environment", flags)
+    {
+        hives.push(hkcu_env);
+    }
+    hives
+}
+
 #[cfg(windows)]
 fn read_hkcu_environment_vars() -> Vec<(String, String)> {
     use winreg::types::FromRegValue;
-    let mut out = Vec::new();
-    if let Ok(env_key) =
-        winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey("Environment")
-    {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for env_key in open_user_environment_hives(winreg::enums::KEY_READ) {
         for item in env_key.enum_values().flatten() {
             let (k, reg_val) = item;
             if let Ok(s) = String::from_reg_value(&reg_val) {
-                out.push((k, s));
+                if let Some(existing) = out.iter_mut().find(|(ek, _)| ek.eq_ignore_ascii_case(&k)) {
+                    if existing.1.starts_with("OSHOOSI_STANDIN_")
+                        && !s.starts_with("OSHOOSI_STANDIN_")
+                    {
+                        existing.1 = s;
+                    }
+                } else {
+                    out.push((k, s));
+                }
             }
         }
     }
@@ -1444,12 +1519,13 @@ fn write_hkcu_standin_vars(
     standin_mappings: &[(String, String)],
     verified_vault: &VaultPayload,
 ) -> Result<(), VaultError> {
-    let env_key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey_with_flags(
-            "Environment",
-            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
-        )
-        .map_err(VaultError::Io)?;
+    let hives = open_user_environment_hives(winreg::enums::KEY_READ | winreg::enums::KEY_WRITE);
+    if hives.is_empty() {
+        return Err(VaultError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No writable user Environment registry hive found",
+        )));
+    }
 
     let mut any_updated = false;
     for (k, standin) in standin_mappings {
@@ -1457,7 +1533,7 @@ fn write_hkcu_standin_vars(
         if k.eq_ignore_ascii_case("PATH") || is_hard_protected_non_secret_key(k, "") {
             continue;
         }
-        // Only rewrite if this key originally existed in HKCU\Environment and its true secret
+        // Only rewrite if this key originally existed in a user Environment hive and its true secret
         // is confirmed backed up in `verified_vault.original_hkcu_vars`
         let backed_up = verified_vault
             .original_hkcu_vars
@@ -1469,8 +1545,12 @@ fn write_hkcu_standin_vars(
                     && !is_hard_protected_non_secret_key(hk, orig_v)
             });
         if backed_up {
-            env_key.set_value(k, standin).map_err(VaultError::Io)?;
-            any_updated = true;
+            for env_key in &hives {
+                if env_key.get_raw_value(k).is_ok() {
+                    env_key.set_value(k, standin).map_err(VaultError::Io)?;
+                    any_updated = true;
+                }
+            }
         }
     }
 
@@ -1482,12 +1562,13 @@ fn write_hkcu_standin_vars(
 
 #[cfg(windows)]
 fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result<(), VaultError> {
-    let env_key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey_with_flags(
-            "Environment",
-            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
-        )
-        .map_err(VaultError::Io)?;
+    let hives = open_user_environment_hives(winreg::enums::KEY_READ | winreg::enums::KEY_WRITE);
+    if hives.is_empty() {
+        return Err(VaultError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No writable user Environment registry hive found",
+        )));
+    }
 
     let mut any_restored = false;
     for (k, orig_v) in original_hkcu_vars {
@@ -1498,8 +1579,12 @@ fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result
         {
             continue;
         }
-        env_key.set_value(k, orig_v).map_err(VaultError::Io)?;
-        any_restored = true;
+        for env_key in &hives {
+            if env_key.get_raw_value(k).is_ok() {
+                env_key.set_value(k, orig_v).map_err(VaultError::Io)?;
+                any_restored = true;
+            }
+        }
     }
 
     if any_restored {
@@ -1858,5 +1943,74 @@ mod tests {
 
         // Clean up process env
         std::env::remove_var(test_key);
+    }
+
+    #[test]
+    fn test_user_exact_env_profile_hf_nvd_otx_selected_and_non_secrets_vetoed() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let user_vars = vec![
+            (
+                "HF_TOKEN".to_string(),
+                "hf_synthetic_test_token_not_real_key_12345".to_string(),
+            ),
+            (
+                "NVD_API_KEY".to_string(),
+                "a1b2c3d4-e5f6-4789-a012-3456789abcde".to_string(),
+            ),
+            ("OLLAMA_ORIGINS".to_string(), "*".to_string()),
+            (
+                "OneDrive".to_string(),
+                r"C:\Users\oyesanyf\OneDrive".to_string(),
+            ),
+            (
+                "OTX_API_KEY".to_string(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            ),
+            (
+                "Path".to_string(),
+                r"C:\Users\oyesanyf\.cargo\bin;C:\Users\oyesanyf\AppData\Local\Microsoft\WindowsApps".to_string(),
+            ),
+            (
+                "TEMP".to_string(),
+                r"C:\Users\oyesanyf\AppData\Local\Temp".to_string(),
+            ),
+        ];
+
+        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&user_vars);
+        assert_eq!(
+            result.total_selected, 3,
+            "HF_TOKEN, NVD_API_KEY, and OTX_API_KEY must all be selected"
+        );
+        assert_eq!(
+            result.total_vetoed, 4,
+            "OLLAMA_ORIGINS, OneDrive, Path, and TEMP must all be vetoed"
+        );
+
+        for secret_key in &["HF_TOKEN", "NVD_API_KEY", "OTX_API_KEY"] {
+            let cand = result
+                .candidates
+                .iter()
+                .find(|c| c.key == *secret_key)
+                .unwrap();
+            assert!(cand.selected, "{} must be selected", secret_key);
+            assert!(!cand.vetoed_by_safety_guard);
+            assert!(cand.fusion_confidence_bp >= 8500);
+            assert!(cand
+                .standin_token
+                .as_ref()
+                .unwrap()
+                .starts_with(&format!("OSHOOSI_STANDIN_{}_", secret_key)));
+        }
+
+        for safe_key in &["OLLAMA_ORIGINS", "OneDrive", "Path", "TEMP"] {
+            let cand = result
+                .candidates
+                .iter()
+                .find(|c| c.key == *safe_key)
+                .unwrap();
+            assert!(!cand.selected, "{} must NOT be selected", safe_key);
+            assert!(cand.vetoed_by_safety_guard, "{} must be vetoed", safe_key);
+            assert_eq!(cand.fusion_confidence_bp, 0);
+        }
     }
 }
