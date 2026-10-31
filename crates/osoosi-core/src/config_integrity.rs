@@ -14,9 +14,30 @@ const SIG_EXTENSION: &str = ".sign";
 
 /// EMBEDDED MASTER PUBLIC KEY (OpenOdidere Default)
 /// This key must sign all critical .toml and .yar files.
-#[allow(dead_code)]
-const MASTER_PUBLIC_KEY_HEX: &str =
+pub const MASTER_PUBLIC_KEY_HEX: &str =
     "7297e682662c5bda2e3c08922cfb8098c2578a0678d781b499882269c9973273";
+
+/// Verify an Ed25519 digital signature against MASTER_PUBLIC_KEY_HEX.
+pub fn verify_ed25519_config_signature(path: &Path, sig_bytes: &[u8]) -> anyhow::Result<bool> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let key_bytes = hex::decode(MASTER_PUBLIC_KEY_HEX)
+        .map_err(|e| anyhow::anyhow!("Invalid MASTER_PUBLIC_KEY_HEX: {}", e))?;
+    let key_array: [u8; 32] = key_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("MASTER_PUBLIC_KEY_HEX must be 32 bytes"))?;
+    let verifying_key = VerifyingKey::from_bytes(&key_array)
+        .map_err(|e| anyhow::anyhow!("Invalid VerifyingKey: {}", e))?;
+
+    let sig_array: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Ed25519 signature must be 64 bytes"))?;
+    let signature = Signature::from_bytes(&sig_array);
+
+    let data = std::fs::read(path)?;
+    Ok(verifying_key.verify(&data, &signature).is_ok())
+}
 
 /// Compute the SHA-256 digest of a file's contents.
 fn file_sha256(path: &Path) -> anyhow::Result<String> {
@@ -85,6 +106,38 @@ pub async fn sign_config_with_ed25519(
 ///
 /// Returns `Ok(true)` if the file is correctly signed by the Master Key.
 pub fn verify_config_integrity(path: &Path) -> anyhow::Result<bool> {
+    let ed25519_sig_path = path.with_extension(format!(
+        "{}{}.ed25519",
+        path.extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        SIG_EXTENSION
+    ));
+
+    if ed25519_sig_path.exists() {
+        let sig_bytes = std::fs::read(&ed25519_sig_path)?;
+        match verify_ed25519_config_signature(path, &sig_bytes) {
+            Ok(true) => {
+                info!(
+                    "Integrity OK: {:?} (Ed25519 digital signature verified)",
+                    path
+                );
+                return Ok(true);
+            }
+            Ok(false) => {
+                error!(
+                    "CRITICAL SECURITY FAILURE: Ed25519 signature verification failed for {:?}",
+                    path
+                );
+                return Ok(false);
+            }
+            Err(e) => {
+                error!("Ed25519 signature verification error for {:?}: {}", path, e);
+                return Ok(false);
+            }
+        }
+    }
+
     let sig_path = path.with_extension(format!(
         "{}{}",
         path.extension()

@@ -5647,8 +5647,109 @@ flowchart TD
 
 ---
 
+### 7. Multi-Ring Database, CI/CD Posture & Running EDR Executable Tamper Protection (`CedarMySqlGuard`, `LocalMySqlTamperGuard`, `EdrExecutableTamperGuard`)
+
+OpenỌ̀ṣọ́ọ̀sì enforces a zero-blindspot local self-protection architecture across its SQLite/MySQL databases, CI/CD Protection (`cicd`) posture, and running `osoosi.exe` / `osoosi` executable so that a hostile actor deleting database files, dropping tables, or attempting to rename/replace the running EDR binary can never strip endpoint protection:
+
+```mermaid
+flowchart TD
+    subgraph PEP["1. Immutable Cedar Policy Enforcement Point (CedarMySqlGuard)"]
+        C1["@id('OSOOSI-MYSQL-FS-TAMPER-GUARD')<br/>Blocks fs_unlink / fs_write / fs_rename / fs_truncate on /var/lib/mysql & database/osoosi.db"]
+        C2["@id('OSOOSI-MYSQL-SQL-TAMPER-GUARD')<br/>Blocks DROP / DELETE / TRUNCATE / ALTER on osoosi_edr & enforced_research_rules"]
+        C3["@id('OSOOSI-MYSQL-PROC-TAMPER-GUARD')<br/>Blocks SIGKILL / SIGTERM / SIGSTOP targeting mysqld_verified"]
+        C4["@id('OSOOSI-EDR-EXE-TAMPER-GUARD')<br/>Blocks unlink / rename / overwrite / process termination targeting running osoosi.exe"]
+    end
+
+    subgraph DB_RINGS["2. 5-Ring Database & CI/CD Posture Self-Healing (LocalMySqlTamperGuard)"]
+        R1["Ring 1: Pinned In-Memory Shadow Cache<br/>(research_defense_registry() + GLOBAL_WORKFLOW_GUARD)"]
+        R2["Ring 2: Kernel Anti-Deletion File Lock<br/>(FILE_SHARE_READ | FILE_SHARE_WRITE without FILE_SHARE_DELETE on osoosi.db)"]
+        R3["Ring 3: System Enclave & Immutable Snapshot<br/>(C:\ProgramData\OshoosiClaw\database\osoosi.db + FS_IMMUTABLE_FL +i / Protected NTFS DACL)"]
+        R4["Ring 4: Hardware-Bound Encrypted Posture Vault<br/>(database/protected_security_posture.vault keyed by BLAKE3 host seal)"]
+        R5["Ring 5: 4-Gate Maintenance Immunity + Fail-Closed KillSwitch<br/>(MaintenanceLeaseGuard + #sql-*.ibd OPTIMIZE TABLE + VACUUM immunity)"]
+    end
+
+    subgraph EXE_RING["3. Running EDR Executable Tamper Guard (EdrExecutableTamperGuard)"]
+        E1["Kernel Process DACL Hardening<br/>(SE_KERNEL_OBJECT strips PROCESS_TERMINATE & PROCESS_VM_WRITE; prctl PR_SET_DUMPABLE=0)"]
+        E2["Kernel FILE_SHARE_READ-Only Image Lock (0x00000001)<br/>(Blocks both DeleteFileW & MoveFileW rename-while-running with ERROR_SHARING_VIOLATION)"]
+        E3["Startup BLAKE3 Digest Pinning + Golden Mirror (osoosi.exe.golden)<br/>(Continuous verify_running_exe_integrity_tick() + automatic binary restoration)"]
+    end
+
+    PEP -->|"Decision::Deny"| R5
+    R1 & R2 & R3 & R4 --> R5
+    EXE_RING -->|"Integrity Mismatch"| R5
+```
+
+1. **Deterministic CI/CD Protection (`cicd`) Multi-Ring Persistence (`crates/osoosi-dashboard/src/routes/workflow_guard.rs` & `crates/osoosi-dashboard/src/lib.rs`)**:
+   - Toggling **CI/CD Protection (`ON` / `OFF`)** in the WebUI (`#cicd-protection`) persists synchronously across all local SQLite database rings (`database/osoosi.db`, `target/release/database/osoosi.db`, and `C:\ProgramData\OshoosiClaw\database\osoosi.db`), `config/workflow_guard_state.json`, and the BLAKE3 hardware-bound encrypted posture vault (`database/protected_security_posture.vault`), and re-hydrates automatically on WebUI startup.
+   - If a hostile actor deletes `database/osoosi.db` or wipes `ui_settings_kv` outside an authorized maintenance window, `verify_and_heal_workflow_guard_db()` immediately locks `master_enabled = true` (`ENFORCE_FAIL_CLOSED`), records a `TAMPER_DETECTED_FAIL_CLOSED` forensic event, and reconstructs all SQLite rings from pinned memory and the encrypted vault.
+2. **Cryptographic `BEFORE DELETE` Triggers & 4-Gate Maintenance Immunity (`crates/osoosi-agent-anomaly/src/breakout_defense.rs`)**:
+   - Both SQLite (`trg_block_enforced_research_rules_delete`) and MySQL (`trg_block_defense_rule_delete`) enforce `BEFORE DELETE` triggers keyed by a one-shot 64-hex hardware-bound HMAC maintenance seal (`compute_maintenance_auth_token`) rather than predictable `@@hostname` hashes.
+   - Routine database maintenance (`VACUUM`, `PRAGMA wal_checkpoint(TRUNCATE)`, `OPTIMIZE TABLE` temporary `#sql-*.ibd` tablespace swaps, `ALTER TABLE`, and operator rule management wrapped in `MaintenanceLeaseGuard` / `with_sqlite_maintenance_seal`) executes with **zero false-positive KillSwitch alerts**.
+3. **Running EDR Executable Tamper Protection (`EdrExecutableTamperGuard`)**:
+   - Hardens the live `osoosi.exe` / `osoosi` process DACL (`SE_KERNEL_OBJECT` denying `PROCESS_TERMINATE`, `PROCESS_VM_WRITE`, `PROCESS_VM_OPERATION`, `PROCESS_SUSPEND_RESUME` on Windows; `prctl(PR_SET_DUMPABLE, 0)` on Linux), holds a kernel `FILE_SHARE_READ`-only handle (`share_mode(0x00000001)`) so Windows blocks both `DeleteFileW` and `MoveFileW` (rename-while-running), and continuously verifies the on-disk binary against its startup BLAKE3 digest and `.exe.golden` mirror.
+4. **Immutable Cedar Policy Enforcement Point (`CedarMySqlGuard` in `crates/osoosi-agent-anomaly/src/cedar_engine.rs`)**:
+   - Evaluates every filesystem, SQL, shell, and process signal action in `BreakoutDefenseCoordinator::evaluate_action` against four immutable `@id("OSOOSI-*")` Cedar `forbid` policies (`local_mysql_protection_cedar_policies()`), triggering `KILLSWITCH_ACTIVE` and in-memory self-healing whenever `Authorizer::is_authorized` returns `Decision::Deny`.
+
+---
+
+### 8. Multi-File Magika Environment Gateway, DPAPI Vault, Auto-Unseal & Adaptive Machine Binding (`ProtectedEnvBackup`, `EnvironmentGateway`, `MachineBinding`)
+
+OpenỌ̀ṣọ́ọ̀sì features an enterprise-grade Environment Variable Gateway and Secret Protection engine designed to safeguard application secrets, API keys, and sensitive environment variables against extraction, unauthorized memory scraping, and process environment tampering:
+
+```mermaid
+flowchart TD
+    subgraph SENSORS["1. Real-Time Directory & File Watcher (Notify / Inotify)"]
+        W1[".env / .env.vault / .env.production / config/secrets.yaml / *.secret"]
+        W2["Magika Neural Deep Content-Type Classifier<br/>(Rejects PE, ELF, Shellcode, Polyglot Payloads)"]
+        W3["NTFS Protected DACL + Linux 0600 Permissions<br/>(SYSTEM / Administrators Only)"]
+    end
+
+    subgraph VAULT["2. Dual-Layer Hardware-Bound DPAPI Vault (ProtectedEnvBackup)"]
+        V1["Primary Storage: Windows CryptProtectData / Linux ChaCha20-Poly1305 + BLAKE3 Machine Seal"]
+        V2["Fallback Encrypted JSON Enclave with Hardware-Sealed Key derivation"]
+        V3["Atomic Write via Temporary Files + fsync to Prevent Zero-Byte Corruption"]
+    end
+
+    subgraph LIFECYCLE["3. Graceful Service Lifecycle & Auto-Unseal (OsoosiEDR)"]
+        L1["Service Start: Detect Encrypted Vault & Auto-Unseal Protected Variables into Process Memory"]
+        L2["Service Stop (SIGINT/SIGTERM): Immediate Re-Sealing to DPAPI Disk Vault + Memory Zeroization"]
+        L3["WebUI Emergency Re-Anchor & Refresh: POST /api/env-gateway/machine-binding/refresh"]
+    end
+
+    subgraph BINDING["4. Adaptive Hardware Machine Binding Quorum (MachineBinding)"]
+        B1["Hardware Component Probes:<br/>CPU Brand/Features, BIOS Serial/Vendor, Motherboard UUID, MAC List, Disk Serial, TPM 2.0 Endorsement"]
+        B2["Quorum Threshold: 3-of-5 Valid Components for Unseal<br/>(Dynamic MAC Adaptation on NIC Disconnect / USB Dongle Removal)"]
+        B3["SkyRL Decay Mitigation: Past Learning Decay via Dynamic Horizon + Conformal Verification"]
+    end
+
+    W1 --> W2 --> W3 --> V1
+    V1 --> V2 --> V3
+    V3 --> L1
+    L2 --> V1
+    B1 --> B2 --> L1
+    B3 --> B2
+```
+
+1. **Multi-File Real-Time Environment Gateway (`EnvironmentGateway` in `crates/osoosi-core/src/rea_voter_env_gateway.rs`)**:
+   - Continuously monitors `.env`, `.env.vault`, `.env.production`, `.env.local`, and custom secrets files using kernel `notify` events.
+   - Evaluates all content through Google Magika deep learning content-type classification to instantly detect and reject polyglot binaries, shellcode injections, or executable masquerading.
+   - Enforces strict NTFS DACLs (`SYSTEM` and `BUILTIN\Administrators` only) and POSIX `0600` file permissions to prevent unprivileged cross-process access.
+2. **Dual-Layer Hardware-Anchored Vault (`ProtectedEnvBackup` in `crates/osoosi-core/src/protected_env_backup.rs`)**:
+   - Secures environment variables on disk using Windows Data Protection API (`CryptProtectData`) with machine-scoped entropy or ChaCha20-Poly1305 with BLAKE3 hardware fingerprints on Linux.
+   - Writes atomically through temporary staging files and explicit `fsync` barriers to prevent zero-byte corruptions during unexpected power-loss or system halts.
+3. **Graceful Service Lifecycle & Autonomous Unsealing (`crates/osoosi-cli/src/service.rs`)**:
+   - Automatically unseals protected environment variables into process memory upon service boot if machine binding verification succeeds.
+   - Zeroizes sensitive memory regions and verifies disk-sealed state upon service termination or receipt of `SIGINT` / `SIGTERM`.
+4. **Adaptive Machine Binding Quorum & REST Control (`crates/osoosi-core/src/machine_binding.rs` & `crates/osoosi-dashboard/src/routes/env_gateway.rs`)**:
+   - Evaluates endpoint hardware authenticity across 5 independent telemetry rings: CPU identity, Motherboard/BIOS UUID, System MAC addresses, Physical Drive serials, and TPM 2.0 NV endorsement credentials.
+   - Employs a fault-tolerant 3-of-5 quorum algorithm that tolerates network interface hot-plugging, VPN adapter creation, and dynamic MAC address changes while firmly rejecting hardware relocation, hypervisor cloning, or cross-machine disk transplantation.
+   - Exposes authenticated management endpoints (`GET /api/env-gateway/machine-binding` and `POST /api/env-gateway/machine-binding/refresh`) surfaced directly in the WebUI with real-time status badges, MAC re-anchoring, and dynamic quorum verification.
+
+---
+
 <p align="center">
   <strong>Built with ❤️ in Rust for the next generation of decentralized security.</strong>
   <br/>
   <em>"Like Ọ̀ṣọ́ọ̀sì, it is both patient and decisive."</em>
 </p>
+

@@ -533,6 +533,8 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
     }
     let _ = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
     let _ = crate::firewall::remove_all_autoblock_rules();
+    let _ =
+        crate::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(None);
 
     let (was_isolated, frozen_pids_snapshot) = {
         let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
@@ -2069,6 +2071,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_killchain_lifecycle_state() {
         let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // 1. Storage Isolation: Create isolated temporary directory for test database
@@ -2184,6 +2187,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_clean_state_reset_and_reload() {
         let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -2391,6 +2395,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_intermediate_health_probe_and_early_rollback_window() {
         let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = tempfile::tempdir().expect("Failed to create isolated temp database dir");

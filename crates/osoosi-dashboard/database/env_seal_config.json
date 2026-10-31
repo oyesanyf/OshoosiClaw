@@ -1,0 +1,15 @@
+{
+  "custom_paths": [],
+  "all_drives": false,
+  "auto_seal": false,
+  "selected_variables": [
+    "GEMINI_API_KEY",
+    "HF_TOKEN"
+  ],
+  "excluded_variables": [],
+  "watcher_enabled": false,
+  "watcher_poll_interval_secs": 5,
+  "max_files_per_drive": 500,
+  "max_dir_budget_per_drive": 2000,
+  "vault_path": null
+}

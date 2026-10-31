@@ -909,7 +909,9 @@ impl PolicyEngine {
                 {
                     local_path
                 } else {
-                    std::path::PathBuf::from("C:\\ProgramData\\OshoosiClaw\\nvd_cache.db")
+                    osoosi_types::config::resolve_base_dir()
+                        .join("database")
+                        .join("nvd_cache.db")
                 };
                 if let Some(parent) = db_path.parent() {
                     let _ = std::fs::create_dir_all(parent);

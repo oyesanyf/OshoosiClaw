@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, fs, time::Duration};
+use std::{collections::HashMap, fs, time::Duration};
 use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -143,7 +143,11 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let target_count = 100000;
     let batch_size = 2000;
-    let nvd_api_key = env::var("NVD_API_KEY").ok();
+    let nvd_api_key =
+        osoosi_core::protected_env_backup::ProtectedEnvBackupVault::resolve_env_var_verified(
+            "NVD_API_KEY",
+            Some("services.nvd.nist.gov"),
+        );
     let client = Client::builder()
         .user_agent("oshoosi-bulk-trainer/0.1")
         .timeout(Duration::from_secs(60))

@@ -15,11 +15,7 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::manual_flatten)]
-#![allow(
-    clippy::manual_is_multiple_of,
-    clippy::await_holding_lock,
-    clippy::assertions_on_constants
-)]
+#![allow(clippy::manual_is_multiple_of, clippy::assertions_on_constants)]
 #![allow(ambiguous_glob_reexports)]
 
 pub use osoosi_audit;
@@ -61,6 +57,7 @@ pub mod hybrid_runtime;
 pub mod killchain;
 pub mod landlock;
 pub mod log_retention;
+pub mod machine_binding;
 pub mod memory_watchdog;
 pub mod military;
 pub mod mitre;

@@ -730,30 +730,168 @@ static GLOBAL_WORKFLOW_GUARD: std::sync::OnceLock<
     osoosi_core::parking_lot::RwLock<WorkflowGuardState>,
 > = std::sync::OnceLock::new();
 
-fn load_or_init_state() -> WorkflowGuardState {
-    if let Some(sql_val) = crate::load_ui_setting_sqlite("workflow_guard_state") {
-        if let Ok(parsed) = serde_json::from_value::<WorkflowGuardState>(sql_val) {
+const POSTURE_VAULT_PATHS: &[&str] = &[
+    "database/protected_security_posture.vault",
+    "target/release/database/protected_security_posture.vault",
+    #[cfg(target_os = "windows")]
+    r"C:\ProgramData\OshoosiClaw\database\protected_security_posture.vault",
+    #[cfg(not(target_os = "windows"))]
+    "/var/lib/osoosi/database/protected_security_posture.vault",
+];
+
+fn derive_posture_vault_key() -> [u8; 32] {
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "oshoosi-local-node".to_string());
+    let mut hasher = blake3::Hasher::new_keyed(b"OSHOOSI_POSTURE_VAULT_KEY_V1_32B");
+    hasher.update(host.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+fn seal_posture_vault(state: &WorkflowGuardState) {
+    let Ok(plaintext) = serde_json::to_vec(state) else {
+        return;
+    };
+    let key = derive_posture_vault_key();
+    let mut stream_hasher = blake3::Hasher::new_keyed(&key);
+    stream_hasher.update(b"OSHOOSI_POSTURE_STREAM_V1");
+    let mut xof = stream_hasher.finalize_xof();
+    let mut keystream = vec![0u8; plaintext.len()];
+    xof.fill(&mut keystream);
+    let ciphertext: Vec<u8> = plaintext
+        .iter()
+        .zip(keystream.iter())
+        .map(|(p, k)| p ^ k)
+        .collect();
+
+    let mut mac_hasher = blake3::Hasher::new_keyed(&key);
+    mac_hasher.update(&ciphertext);
+    let tag = mac_hasher.finalize().to_hex().to_string();
+
+    let envelope = json!({
+        "schema": "oshoosi_posture_vault_v1",
+        "master_enabled": state.master_enabled,
+        "tag_blake3": tag,
+        "ciphertext_hex": hex::encode(&ciphertext),
+        "sealed_at": chrono::Utc::now().to_rfc3339()
+    });
+    let Ok(serialized) = serde_json::to_string_pretty(&envelope) else {
+        return;
+    };
+    for vault_path in POSTURE_VAULT_PATHS {
+        let p = Path::new(vault_path);
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(p, &serialized);
+    }
+}
+
+fn unseal_posture_vault() -> Option<WorkflowGuardState> {
+    let key = derive_posture_vault_key();
+    for vault_path in POSTURE_VAULT_PATHS {
+        let Ok(raw) = std::fs::read_to_string(vault_path) else {
+            continue;
+        };
+        let Ok(env) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
+        let Some(tag_expected) = env.get("tag_blake3").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(ct_hex) = env.get("ciphertext_hex").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(ciphertext) = hex::decode(ct_hex) else {
+            continue;
+        };
+        let mut mac_hasher = blake3::Hasher::new_keyed(&key);
+        mac_hasher.update(&ciphertext);
+        let computed_tag = mac_hasher.finalize().to_hex().to_string();
+        if computed_tag != tag_expected {
+            continue;
+        }
+        let mut stream_hasher = blake3::Hasher::new_keyed(&key);
+        stream_hasher.update(b"OSHOOSI_POSTURE_STREAM_V1");
+        let mut xof = stream_hasher.finalize_xof();
+        let mut keystream = vec![0u8; ciphertext.len()];
+        xof.fill(&mut keystream);
+        let plaintext: Vec<u8> = ciphertext
+            .iter()
+            .zip(keystream.iter())
+            .map(|(c, k)| c ^ k)
+            .collect();
+        if let Ok(parsed) = serde_json::from_slice::<WorkflowGuardState>(&plaintext) {
             if parsed.state_schema_version == 2
                 && parsed.workflow_modes.len() == 3
                 && parsed.supply_chain_protections.len() == 6
                 && parsed.breakout_vectors.len() == 8
             {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+fn is_valid_guard_state(parsed: &WorkflowGuardState) -> bool {
+    parsed.state_schema_version == 2
+        && parsed.workflow_modes.len() == 3
+        && parsed.supply_chain_protections.len() == 6
+        && parsed.breakout_vectors.len() == 8
+}
+
+fn load_or_init_state() -> WorkflowGuardState {
+    let mut explicit_master_on: Option<bool> = None;
+    if let Some(m_val) = crate::load_ui_setting_sqlite("cicd_master_enabled")
+        .or_else(|| crate::load_ui_setting_sqlite("oshoosi_cicd_master_enabled"))
+    {
+        if let Some(b) = m_val.as_bool() {
+            explicit_master_on = Some(b);
+        } else if let Some(s) = m_val.as_str() {
+            explicit_master_on =
+                Some(s.eq_ignore_ascii_case("true") || s == "1" || s.eq_ignore_ascii_case("on"));
+        }
+    }
+
+    if let Some(sql_val) = crate::load_ui_setting_sqlite("workflow_guard_state")
+        .or_else(|| crate::load_ui_setting_sqlite("oshoosi_cicd_protection_state"))
+    {
+        if let Ok(mut parsed) = serde_json::from_value::<WorkflowGuardState>(sql_val) {
+            if is_valid_guard_state(&parsed) {
+                if let Some(m) = explicit_master_on {
+                    parsed.master_enabled = m;
+                    sync_statuses_for_master_state(&mut parsed);
+                }
+                persist_state(&parsed);
                 return parsed;
             }
         }
     }
+    if let Some(mut vaulted) = unseal_posture_vault() {
+        if let Some(m) = explicit_master_on {
+            vaulted.master_enabled = m;
+            sync_statuses_for_master_state(&mut vaulted);
+        }
+        persist_state(&vaulted);
+        return vaulted;
+    }
     if let Ok(raw) = std::fs::read_to_string(WORKFLOW_GUARD_STATE_PATH) {
-        if let Ok(parsed) = serde_json::from_str::<WorkflowGuardState>(&raw) {
-            if parsed.state_schema_version == 2
-                && parsed.workflow_modes.len() == 3
-                && parsed.supply_chain_protections.len() == 6
-                && parsed.breakout_vectors.len() == 8
-            {
+        if let Ok(mut parsed) = serde_json::from_str::<WorkflowGuardState>(&raw) {
+            if is_valid_guard_state(&parsed) {
+                if let Some(m) = explicit_master_on {
+                    parsed.master_enabled = m;
+                    sync_statuses_for_master_state(&mut parsed);
+                }
+                persist_state(&parsed);
                 return parsed;
             }
         }
     }
     let mut state = WorkflowGuardState::default();
+    if let Some(m) = explicit_master_on {
+        state.master_enabled = m;
+    }
     let _ = run_live_verification_on_state(&mut state);
     persist_state(&state);
     state
@@ -762,13 +900,116 @@ fn load_or_init_state() -> WorkflowGuardState {
 fn persist_state(state: &WorkflowGuardState) {
     if let Ok(val) = serde_json::to_value(state) {
         crate::save_ui_setting_sqlite("workflow_guard_state", &val);
+        crate::save_ui_setting_sqlite("oshoosi_cicd_protection_state", &val);
     }
+    crate::save_ui_setting_sqlite("cicd_master_enabled", &json!(state.master_enabled));
+    crate::save_ui_setting_sqlite("oshoosi_cicd_master_enabled", &json!(state.master_enabled));
+    seal_posture_vault(state);
     if let Some(parent) = Path::new(WORKFLOW_GUARD_STATE_PATH).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(serialized) = serde_json::to_string_pretty(state) {
         let _ = std::fs::write(WORKFLOW_GUARD_STATE_PATH, serialized);
     }
+}
+
+/// Synchronizes `/api/settings/ui` writes for `cicd_master_enabled` / `oshoosi_cicd_master_enabled`
+/// or `workflow_guard_state` directly into the in-memory `GLOBAL_WORKFLOW_GUARD` and multi-ring persistence.
+pub fn sync_workflow_guard_from_ui_setting(key: &str, value: &Value) {
+    if key == "cicd_master_enabled" || key == "oshoosi_cicd_master_enabled" {
+        let enabled = value
+            .as_bool()
+            .or_else(|| {
+                value.as_str().map(|s| {
+                    s.eq_ignore_ascii_case("true") || s == "1" || s.eq_ignore_ascii_case("on")
+                })
+            })
+            .unwrap_or(false);
+        let lock = get_global_workflow_guard_state();
+        let mut state = lock.write();
+        if state.master_enabled != enabled {
+            state.master_enabled = enabled;
+            sync_statuses_for_master_state(&mut state);
+        }
+        persist_state(&state);
+    } else if key == "workflow_guard_state" || key == "oshoosi_cicd_protection_state" {
+        if let Ok(mut parsed) = serde_json::from_value::<WorkflowGuardState>(value.clone()) {
+            if is_valid_guard_state(&parsed) {
+                sync_statuses_for_master_state(&mut parsed);
+                let lock = get_global_workflow_guard_state();
+                let mut state = lock.write();
+                *state = parsed.clone();
+                drop(state);
+                persist_state(&parsed);
+            }
+        }
+    }
+}
+
+/// Detects hostile deletion or tampering of `database/osoosi.db` or `ui_settings_kv` rows.
+/// When detected outside a maintenance window, locks `master_enabled = true` (`ENFORCE_FAIL_CLOSED`),
+/// logs a `[TAMPER_DETECTED_FAIL_CLOSED]` event, and self-heals all SQLite rings and the vault from memory.
+pub fn verify_and_heal_workflow_guard_db() -> bool {
+    if osoosi_agent_anomaly::is_maintenance_window_active() {
+        return false;
+    }
+    let primary_db = Path::new("database/osoosi.db");
+    let db_missing = !primary_db.exists();
+    let row_missing = if !db_missing {
+        rusqlite::Connection::open(primary_db)
+            .ok()
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT value_json FROM ui_settings_kv WHERE key = 'workflow_guard_state'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .is_none()
+    } else {
+        true
+    };
+
+    if db_missing || row_missing {
+        let lock = get_global_workflow_guard_state();
+        let mut state = lock.write();
+        state.master_enabled = true;
+        sync_statuses_for_master_state(&mut state);
+        state.recent_events.insert(
+            0,
+            WorkflowGuardAuditEvent {
+                id: format!("ev-tamper-{}", chrono::Utc::now().timestamp_millis()),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                target_id: "database/osoosi.db".to_string(),
+                action: "TAMPER_DETECTED_FAIL_CLOSED".to_string(),
+                enabled: true,
+                summary: "Hostile database deletion or table wipe detected! Fail-closed CI/CD Protection locked ON and database reconstructed from pinned memory.".to_string(),
+            },
+        );
+        if state.recent_events.len() > 50 {
+            state.recent_events.truncate(50);
+        }
+        persist_state(&state);
+        return true;
+    }
+    false
+}
+
+pub fn start_workflow_guard_self_healing_watchdog() {
+    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    STARTED.get_or_init(|| {
+        let _ = get_global_workflow_guard_state();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    let _ = verify_and_heal_workflow_guard_db();
+                }
+            });
+        }
+    });
 }
 
 pub fn get_global_workflow_guard_state(
@@ -2506,5 +2747,32 @@ mod tests {
             report.get("edr_compromise_passed").and_then(|v| v.as_u64()),
             Some(8)
         );
+    }
+
+    #[test]
+    fn test_cicd_protection_vault_and_ui_setting_sync() {
+        std::env::set_var("OSOOSI_TEST_UI_SQLITE", "1");
+        sync_workflow_guard_from_ui_setting("oshoosi_cicd_master_enabled", &json!(true));
+        {
+            let lock = get_global_workflow_guard_state();
+            let state = lock.read();
+            assert!(
+                state.master_enabled,
+                "Toggling oshoosi_cicd_master_enabled ON must enable master_enabled in GLOBAL_WORKFLOW_GUARD"
+            );
+        }
+        assert_eq!(
+            crate::load_ui_setting_sqlite("oshoosi_cicd_master_enabled"),
+            Some(json!(true))
+        );
+        let unsealed = unseal_posture_vault().expect("Posture vault must unseal validly");
+        assert!(
+            unsealed.master_enabled,
+            "Hardware-bound posture vault must preserve master_enabled = true"
+        );
+
+        // Restore default OFF for subsequent tests
+        sync_workflow_guard_from_ui_setting("oshoosi_cicd_master_enabled", &json!(false));
+        std::env::remove_var("OSOOSI_TEST_UI_SQLITE");
     }
 }

@@ -270,6 +270,32 @@ impl EdrOrchestrator {
 
         // Ensures hybrid Tokio+Rayon is wired even when the agent is not started via `osoosi` CLI (tests, embedders).
         crate::init_hybrid_concurrency();
+
+        info!("EdrOrchestrator: Verifying hardware identity and machine binding anchors...");
+        let machine_binding_status = match crate::machine_binding::verify_default_machine_binding()
+        {
+            Ok(status) => {
+                info!(
+                    verdict = %status.verdict,
+                    confidence = status.confidence_score,
+                    non_mac_matches = status.non_mac_anchor_matches,
+                    "Machine binding anchor quorum verified"
+                );
+                Some(status)
+            }
+            Err(crate::machine_binding::MachineBindingError::ForeignHostDetected(reason)) => {
+                error!(
+                    "CRITICAL: Foreign host detected in EdrOrchestrator::new: {}",
+                    reason
+                );
+                return Err(anyhow::anyhow!("Foreign host detected: {}", reason));
+            }
+            Err(e) => {
+                warn!("Machine binding verification non-fatal warning: {}", e);
+                None
+            }
+        };
+
         info!("EdrOrchestrator: Loading runtime configuration...");
         let runtime_config = load_runtime_config();
 
@@ -337,7 +363,12 @@ impl EdrOrchestrator {
         let mut policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
 
         // Initialize ReaVoterEnvGateway and wire voter quorum alert sink
-        let default_vault_path = std::path::PathBuf::from("database/protected_env_backup.vault");
+        crate::protected_env_backup::ProtectedEnvBackupVault::ensure_resolver_registered();
+        let default_vault_path =
+            crate::protected_env_backup::ProtectedEnvBackupVault::locate_active_vault_path(None)
+                .unwrap_or_else(
+                    crate::protected_env_backup::ProtectedEnvBackupVault::default_vault_path,
+                );
         let env_gateway = Arc::new(
             crate::rea_voter_env_gateway::ReaVoterEnvGateway::with_vault(
                 Duration::from_secs(300),
@@ -1126,6 +1157,8 @@ impl EdrOrchestrator {
             ai_feed_collector,
             rl_controller,
             env_gateway,
+            machine_binding_status,
+            shutdown_sentinel: Arc::new(()),
         };
 
         // Start background log retention loop (hourly rotation and pruning)

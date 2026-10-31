@@ -845,6 +845,11 @@ pub fn resolve_base_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+/// Resolve the persistent data directory for databases and runtime state.
+pub fn resolve_data_dir() -> PathBuf {
+    resolve_base_dir()
+}
+
 /// Resolve the bin directory for tools (ClamAV, etc.). Uses project root when found.
 /// Env overrides: OSOOSI_BIN or OSOOSI_SIGCHECK_INSTALL_DIR (legacy, same as OSOOSI_BIN).
 pub fn resolve_bin_dir() -> PathBuf {
@@ -2547,12 +2552,56 @@ pub fn load_external_api_config() -> ExternalApiConfig {
     ExternalApiConfig::default()
 }
 
-/// OTX API key: `OTX_API_KEY` overrides `[external_api].otx_api_key` in `osoosi.toml`.
-pub fn resolve_otx_api_key() -> Option<String> {
-    if let Ok(v) = std::env::var("OTX_API_KEY") {
+/// Callback registered by `osoosi-core::protected_env_backup::ProtectedEnvBackupVault`
+/// to verify caller composite identity and swap `OSHOOSI_STANDIN_*` tokens back to
+/// their sealed secrets at the point of outbound request construction.
+pub type StandinResolverFn = fn(&str, &str) -> Option<String>;
+
+static STANDIN_RESOLVER: std::sync::OnceLock<StandinResolverFn> = std::sync::OnceLock::new();
+
+/// Registers the active `ProtectedEnvBackupVault` / `ReaVoterEnvGateway` stand-in token resolver.
+pub fn register_standin_resolver(resolver: StandinResolverFn) {
+    let _ = STANDIN_RESOLVER.set(resolver);
+}
+
+/// Resolves a string that may be an `OSHOOSI_STANDIN_*` token via the registered
+/// `ReaVoterEnvGateway` / `ProtectedEnvBackupVault` verifier without mutating `std::env`.
+pub fn resolve_value_or_standin(key: &str, raw_val: &str) -> String {
+    let t = raw_val.trim();
+    if t.starts_with("OSHOOSI_STANDIN_") {
+        if let Some(resolver) = STANDIN_RESOLVER.get() {
+            if let Some(resolved) = resolver(key, t) {
+                return resolved;
+            }
+        }
+    }
+    t.to_string()
+}
+
+/// Reads environment variable `key`, and if its value is an `OSHOOSI_STANDIN_*` token,
+/// resolves it through the registered `ReaVoterEnvGateway` / `ProtectedEnvBackupVault` verifier.
+pub fn resolve_env_or_standin(key: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(key) {
         let t = v.trim();
         if !t.is_empty() {
-            return Some(t.to_string());
+            return Some(resolve_value_or_standin(key, t));
+        }
+    }
+    if let Some(resolver) = STANDIN_RESOLVER.get() {
+        if let Some(resolved) = resolver(key, "") {
+            if !resolved.is_empty() {
+                return Some(resolved);
+            }
+        }
+    }
+    None
+}
+
+/// OTX API key: `OTX_API_KEY` overrides `[external_api].otx_api_key` in `osoosi.toml`.
+pub fn resolve_otx_api_key() -> Option<String> {
+    if let Some(v) = resolve_env_or_standin("OTX_API_KEY") {
+        if !v.is_empty() {
+            return Some(v);
         }
     }
     load_external_api_config().otx_api_key.and_then(|s| {
@@ -2560,17 +2609,16 @@ pub fn resolve_otx_api_key() -> Option<String> {
         if t.is_empty() {
             None
         } else {
-            Some(t.to_string())
+            Some(resolve_value_or_standin("OTX_API_KEY", t))
         }
     })
 }
 
 /// NVD API key: `NVD_API_KEY` overrides `[external_api].nvd_api_key` in `osoosi.toml`.
 pub fn resolve_nvd_api_key() -> Option<String> {
-    if let Ok(v) = std::env::var("NVD_API_KEY") {
-        let t = v.trim();
-        if !t.is_empty() {
-            return Some(t.to_string());
+    if let Some(v) = resolve_env_or_standin("NVD_API_KEY") {
+        if !v.is_empty() {
+            return Some(v);
         }
     }
     load_external_api_config().nvd_api_key.and_then(|s| {
@@ -2578,7 +2626,7 @@ pub fn resolve_nvd_api_key() -> Option<String> {
         if t.is_empty() {
             None
         } else {
-            Some(t.to_string())
+            Some(resolve_value_or_standin("NVD_API_KEY", t))
         }
     })
 }
@@ -2988,7 +3036,7 @@ pub fn load_decision_model_config() -> DecisionModelConfig {
             cfg.cloudflare_account_id = Some(trimmed.to_string());
         }
     }
-    if let Ok(val) = std::env::var("CLOUDFLARE_API_TOKEN") {
+    if let Some(val) = resolve_env_or_standin("CLOUDFLARE_API_TOKEN") {
         let trimmed = val.trim();
         if !trimmed.is_empty() {
             cfg.cloudflare_api_token = Some(trimmed.to_string());
@@ -3034,9 +3082,9 @@ pub fn load_decision_model_config() -> DecisionModelConfig {
             cfg.openjev_model = trimmed.to_string();
         }
     }
-    if let Ok(val) = std::env::var("OPENJEV_API_KEY")
-        .or_else(|_| std::env::var("TYPESAFE_API_KEY"))
-        .or_else(|_| std::env::var("OSOOSI_OPENJEV_API_KEY"))
+    if let Some(val) = resolve_env_or_standin("OPENJEV_API_KEY")
+        .or_else(|| resolve_env_or_standin("TYPESAFE_API_KEY"))
+        .or_else(|| resolve_env_or_standin("OSOOSI_OPENJEV_API_KEY"))
     {
         let trimmed = val.trim();
         if !trimmed.is_empty() {

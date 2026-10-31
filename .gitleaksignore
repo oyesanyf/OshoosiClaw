@@ -9,3 +9,12 @@ crates/osoosi-agent-anomaly/src/agentjacking_guard.rs:generic-api-key:581
 browser-extension/manifest.json:generic-api-key:7
 # Synthetic credential isolation tests for M13 Wasmtime sandbox
 crates/osoosi-sandbox/tests/challenger_m13_empirical_tests.rs
+# Synthetic credential and environment isolation adversarial test fixtures
+crates/osoosi-core/tests/m1_challenger1_multi_file_and_formatting_stress.rs
+crates/osoosi-core/tests/m1_challenger_dacl_and_roundtrip_test.rs
+crates/osoosi-core/tests/m1_r2_dpapi_adversarial_tests.rs
+crates/osoosi-core/tests/m4_challenger1_auto_unseal_stress.rs
+crates/osoosi-core/tests/m4_service_stop_auto_unseal_and_binding_tests.rs
+crates/osoosi-core/tests/m5_reavoter_empirical_stress_tests.rs
+crates/osoosi-dashboard/tests/m2_challenger_h13_env_gateway_adversarial_suite.rs
+dashboard/tests/m3_challenger_adversarial_suite.test.mjs

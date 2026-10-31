@@ -5,6 +5,21 @@ use std::process::Output;
 use tokio::process::Command;
 use tracing::info;
 
+/// Checks if a given URL is a secure HTTPS request to Hugging Face or its subdomains.
+pub fn is_huggingface_https_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https" {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host_lc = host.to_ascii_lowercase();
+    host_lc == "huggingface.co" || host_lc.ends_with(".huggingface.co")
+}
+
 /// Default implementation: executes directly on the host system.
 pub struct DirectExecutor {
     client: reqwest::Client,
@@ -70,11 +85,11 @@ impl SecuredExecutor for DirectExecutor {
             }
         }
 
-        // Support HF_TOKEN for Hugging Face downloads
-        if url.contains("huggingface.co") {
-            if let Ok(token) = std::env::var("HF_TOKEN") {
-                request = request.header("Authorization", format!("Bearer {}", token));
-            } else if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
+        // Support HF_TOKEN for Hugging Face downloads (resolving OSHOOSI_STANDIN_* via REA Voter Env Gateway)
+        if is_huggingface_https_url(url) {
+            if let Some(token) = osoosi_types::resolve_env_or_standin("HF_TOKEN")
+                .or_else(|| osoosi_types::resolve_env_or_standin("HUGGING_FACE_HUB_TOKEN"))
+            {
                 request = request.header("Authorization", format!("Bearer {}", token));
             }
         }
@@ -261,12 +276,10 @@ impl SecuredExecutor for OpenShellExecutor {
             wrapped.arg("-C").arg("-");
         }
 
-        if url.contains("huggingface.co") {
-            if let Ok(token) = std::env::var("HF_TOKEN") {
-                wrapped
-                    .arg("-H")
-                    .arg(format!("Authorization: Bearer {}", token));
-            } else if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
+        if is_huggingface_https_url(url) {
+            if let Some(token) = osoosi_types::resolve_env_or_standin("HF_TOKEN")
+                .or_else(|| osoosi_types::resolve_env_or_standin("HUGGING_FACE_HUB_TOKEN"))
+            {
                 wrapped
                     .arg("-H")
                     .arg(format!("Authorization: Bearer {}", token));
@@ -327,10 +340,8 @@ impl SecuredExecutor for HardenedSmolExecutor {
             ));
         }
 
-        // [FUTURE] Integrate with Windows AppContainer to bind process to Wintun interface.
-        let mut tokio_cmd = Command::from(cmd);
-        let output = tokio_cmd.output().await?;
-        Ok(output)
+        let openshell = OpenShellExecutor::new("osoosi-forensic", None);
+        openshell.execute(cmd).await
     }
 
     async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {

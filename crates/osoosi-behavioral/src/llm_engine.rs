@@ -370,6 +370,15 @@ impl Gemma4Analyzer {
             } else {
                 ai_cfg.reasoning_model.clone()
             };
+            if !installed
+                .iter()
+                .any(|i| crate::hardware_selection::model_matches(&selected_fast_model, i))
+            {
+                crate::hardware_selection::ensure_ollama_model_installed_background(
+                    &ai_cfg.reasoning_url,
+                    &selected_fast_model,
+                );
+            }
             info!(
                 "LLM Cortex initialized in low-memory Ollama mode ({} -> {}) [set OSOOSI_EAGER_GEMMA_ONNX=1 for in-process 13GB ONNX].",
                 ai_cfg.reasoning_url, selected_fast_model
@@ -671,7 +680,44 @@ impl Gemma4Analyzer {
                 .timeout(timeout)
                 .send()
                 .await?;
+            let status = res.status();
             let json: serde_json::Value = res.json().await?;
+            let error_msg = json
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or_default();
+            if status.as_u16() == 404
+                || error_msg.to_lowercase().contains("not found")
+                || error_msg.to_lowercase().contains("pull")
+            {
+                crate::hardware_selection::ensure_ollama_model_installed_background(
+                    endpoint, model,
+                );
+                let installed =
+                    crate::hardware_selection::query_installed_ollama_models(endpoint).await;
+                if let Some(fallback_model) = installed.first() {
+                    if fallback_model != model {
+                        let fallback_payload = serde_json::json!({
+                            "model": fallback_model,
+                            "prompt": query,
+                            "stream": false
+                        });
+                        if let Ok(fb_res) = client
+                            .post(endpoint)
+                            .json(&fallback_payload)
+                            .timeout(timeout)
+                            .send()
+                            .await
+                        {
+                            if let Ok(fb_json) = fb_res.json::<serde_json::Value>().await {
+                                if let Some(resp) = fb_json["response"].as_str() {
+                                    return Ok(resp.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Ok(json["response"].as_str().unwrap_or_default().to_string())
         } else {
             anyhow::bail!("Not an Ollama analyzer")
@@ -809,10 +855,7 @@ impl Gemma4Analyzer {
 
                 Ok(result_text)
             }
-            Self::Ollama { .. } => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.judge_artifact_ollama(prompt))
-            }
+            Self::Ollama { .. } => self.judge_artifact_sync(prompt),
         }
     }
 }
@@ -1339,8 +1382,8 @@ impl FoundationSecAnalyzer {
 
         // Priority 1: Ollama API if enabled and URL is configured
         if ai_cfg.foundation_sec_enabled {
-            let model_name = if let Some(m) = model_override {
-                m.to_string()
+            let (model_name, installed) = if let Some(m) = model_override {
+                (m.to_string(), vec![])
             } else {
                 let res = crate::hardware_selection::get_system_resources();
                 let installed = crate::hardware_selection::query_installed_ollama_models_sync(
@@ -1352,12 +1395,24 @@ impl FoundationSecAnalyzer {
                     &ai_cfg.reasoning_model,
                     &ai_cfg.foundation_sec_model,
                 );
-                if !opt.deep_model.is_empty() {
+                let selected = if !opt.deep_model.is_empty() {
                     opt.deep_model
                 } else {
                     ai_cfg.foundation_sec_model.clone()
-                }
+                };
+                (selected, installed)
             };
+
+            if !installed.is_empty()
+                && !installed
+                    .iter()
+                    .any(|i| crate::hardware_selection::model_matches(&model_name, i))
+            {
+                crate::hardware_selection::ensure_ollama_model_installed_background(
+                    &ai_cfg.reasoning_url,
+                    &model_name,
+                );
+            }
 
             info!(
                 "Trying Foundation-Sec Ollama API at {} with model {}...",
@@ -1551,7 +1606,44 @@ impl FoundationSecAnalyzer {
                 .timeout(timeout)
                 .send()
                 .await?;
+            let status = res.status();
             let json: serde_json::Value = res.json().await?;
+            let error_msg = json
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or_default();
+            if status.as_u16() == 404
+                || error_msg.to_lowercase().contains("not found")
+                || error_msg.to_lowercase().contains("pull")
+            {
+                crate::hardware_selection::ensure_ollama_model_installed_background(
+                    endpoint, model,
+                );
+                let installed =
+                    crate::hardware_selection::query_installed_ollama_models(endpoint).await;
+                if let Some(fallback_model) = installed.first() {
+                    if fallback_model != model {
+                        let fallback_payload = serde_json::json!({
+                            "model": fallback_model,
+                            "prompt": query,
+                            "stream": false
+                        });
+                        if let Ok(fb_res) = client
+                            .post(endpoint)
+                            .json(&fallback_payload)
+                            .timeout(timeout)
+                            .send()
+                            .await
+                        {
+                            if let Ok(fb_json) = fb_res.json::<serde_json::Value>().await {
+                                if let Some(resp) = fb_json["response"].as_str() {
+                                    return Ok(resp.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Ok(json["response"].as_str().unwrap_or_default().to_string())
         } else {
             anyhow::bail!("Not an Ollama analyzer")
@@ -1673,10 +1765,7 @@ impl FoundationSecAnalyzer {
 
                 Ok(result_text)
             }
-            Self::Ollama { .. } => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.judge_artifact_ollama(prompt))
-            }
+            Self::Ollama { .. } => self.judge_artifact_sync(prompt),
         }
     }
 }

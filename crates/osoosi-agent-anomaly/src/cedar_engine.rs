@@ -375,6 +375,381 @@ impl VanishingPolynomialTraceVerifier {
     }
 }
 
+// ============================================================================
+// Law 2 + Local Database & Running EDR Executable Cedar Policy Guard
+// ============================================================================
+
+/// Immutable Cedar Policy Set protecting the local MySQL database (`/var/lib/mysql`),
+/// embedded SQLite databases (`database/osoosi.db`), and running EDR executables (`osoosi.exe`).
+pub fn local_mysql_protection_cedar_policies() -> &'static str {
+    r#"
+    // 1. Block all filesystem unlink, truncate, rename, or write attempts on MySQL & SQLite data and socket paths
+    @id("OSOOSI-MYSQL-FS-TAMPER-GUARD")
+    forbid(
+        principal,
+        action in [
+            Action::"fs_unlink",
+            Action::"fs_rmdir",
+            Action::"fs_rename",
+            Action::"fs_truncate",
+            Action::"fs_write",
+            Action::"shell_exec"
+        ],
+        resource
+    )
+    when {
+        (context.target_path like "/var/lib/mysql*" ||
+         context.target_path like "/var/run/mysqld*" ||
+         context.target_path like "/var/lib/osoosi*" ||
+         context.target_path like "*database/osoosi.db*" ||
+         context.target_path like "*database\\osoosi.db*" ||
+         context.target_path like "*defense_rules.immutable.bin*" ||
+         context.target_path like "*protected_security_posture.vault*") &&
+        principal != Process::"mysqld_verified" &&
+        principal != Process::"osoosi_edr_self_heal"
+    };
+
+    // 2. Block destructive SQL DDL/DML commands against the local EDR database tables
+    @id("OSOOSI-MYSQL-SQL-TAMPER-GUARD")
+    forbid(
+        principal,
+        action == Action::"sql_query",
+        resource == Database::"osoosi_edr"
+    )
+    when {
+        (context.sql_verb == "DROP" ||
+         context.sql_verb == "DELETE" ||
+         context.sql_verb == "TRUNCATE" ||
+         context.sql_verb == "ALTER") &&
+        principal != Process::"osoosi_edr_self_heal"
+    };
+
+    // 3. Block process termination or ptrace attachment targeting the local MySQL daemon or running EDR process
+    @id("OSOOSI-MYSQL-PROC-TAMPER-GUARD")
+    forbid(
+        principal,
+        action in [Action::"proc_kill", Action::"proc_ptrace", Action::"service_stop"],
+        resource == Process::"mysqld_verified"
+    )
+    when {
+        principal != Process::"osoosi_edr_self_heal"
+    };
+
+    // 4. Block rename-while-running (MoveFile), unlink, overwrite, or termination of the running EDR executable
+    @id("OSOOSI-EDR-EXE-TAMPER-GUARD")
+    forbid(
+        principal,
+        action in [
+            Action::"fs_unlink",
+            Action::"fs_rename",
+            Action::"fs_truncate",
+            Action::"fs_write",
+            Action::"proc_kill",
+            Action::"proc_ptrace",
+            Action::"service_stop",
+            Action::"shell_exec"
+        ],
+        resource
+    )
+    when {
+        (context.target_path like "*osoosi.exe*" ||
+         context.target_path like "*/bin/osoosi*" ||
+         context.target_path like "*osoosi_inject.dll*" ||
+         context.target_path like "*osoosi-auditor.exe*") &&
+        principal != Process::"osoosi_edr_self_heal"
+    };
+    "#
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CedarTamperDecision {
+    pub allowed: bool,
+    pub triggered_policy_ids: Vec<String>,
+    pub maintenance_bypass: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CedarMySqlGuard {
+    policy_source: &'static str,
+    policy_ids: Vec<&'static str>,
+}
+
+impl Default for CedarMySqlGuard {
+    fn default() -> Self {
+        Self::new().expect("Default CedarMySqlGuard policies are valid")
+    }
+}
+
+impl CedarMySqlGuard {
+    pub fn new() -> Result<Self, String> {
+        let src = local_mysql_protection_cedar_policies();
+        if !src.contains("@id(\"OSOOSI-MYSQL-FS-TAMPER-GUARD\")")
+            || !src.contains("@id(\"OSOOSI-MYSQL-SQL-TAMPER-GUARD\")")
+            || !src.contains("@id(\"OSOOSI-MYSQL-PROC-TAMPER-GUARD\")")
+            || !src.contains("@id(\"OSOOSI-EDR-EXE-TAMPER-GUARD\")")
+        {
+            return Err("Missing mandatory @id policy annotations in Cedar policy set".to_string());
+        }
+        Ok(Self {
+            policy_source: src,
+            policy_ids: vec![
+                "OSOOSI-MYSQL-FS-TAMPER-GUARD",
+                "OSOOSI-MYSQL-SQL-TAMPER-GUARD",
+                "OSOOSI-MYSQL-PROC-TAMPER-GUARD",
+                "OSOOSI-EDR-EXE-TAMPER-GUARD",
+            ],
+        })
+    }
+
+    pub fn global() -> &'static Self {
+        static GLOBAL_CEDAR_MYSQL_GUARD: std::sync::OnceLock<CedarMySqlGuard> =
+            std::sync::OnceLock::new();
+        GLOBAL_CEDAR_MYSQL_GUARD.get_or_init(Self::default)
+    }
+
+    pub fn policy_source(&self) -> &'static str {
+        self.policy_source
+    }
+
+    pub fn policy_ids(&self) -> &[&'static str] {
+        &self.policy_ids
+    }
+
+    /// Evaluates a filesystem, SQL, or process operation against the 4 immutable Cedar `forbid` rules
+    /// while respecting active `MaintenanceLeaseGuard` windows so routine DB maintenance never false-triggers.
+    pub fn evaluate_protection_request(
+        &self,
+        principal_id: &str,
+        action_id: &str,
+        resource_id: &str,
+        target_path: &str,
+        sql_verb: &str,
+    ) -> CedarTamperDecision {
+        let principal_clean = principal_id.trim();
+        let action_clean = action_id.trim().to_ascii_lowercase();
+        let resource_clean = resource_id.trim();
+        let path_lc = target_path.trim().to_ascii_lowercase().replace('\\', "/");
+        let verb_uc = sql_verb.trim().to_ascii_uppercase();
+
+        // Maintenance Immunity Gate: If an authorized in-process MaintenanceLeaseGuard is active,
+        // and the principal is an authorized maintenance actor or self-heal, permit maintenance.
+        let is_auth_maint_principal = matches!(
+            principal_clean,
+            "osoosi_edr_self_heal"
+                | "osoosi_edr"
+                | "mysqld_verified"
+                | "operator_maintenance"
+                | "maintenance_worker"
+        ) || principal_clean.starts_with("maintenance_");
+        if principal_clean == "osoosi_edr_self_heal"
+            || (crate::breakout_defense::is_maintenance_window_active() && is_auth_maint_principal)
+        {
+            return CedarTamperDecision {
+                allowed: true,
+                triggered_policy_ids: Vec::new(),
+                maintenance_bypass: true,
+                reason: "Permitted by authorized maintenance lease / self-heal principal"
+                    .to_string(),
+            };
+        }
+
+        // Also allow non-destructive routine maintenance SQL verbs (VACUUM, OPTIMIZE, ANALYZE, CHECK, FLUSH)
+        // when executed by mysqld_verified.
+        if principal_clean == "mysqld_verified"
+            && matches!(
+                verb_uc.as_str(),
+                "OPTIMIZE" | "VACUUM" | "ANALYZE" | "CHECK" | "FLUSH" | ""
+            )
+            && !matches!(
+                action_clean.as_str(),
+                "proc_kill" | "proc_ptrace" | "service_stop"
+            )
+            && !Self::matches_edr_exe_path(&path_lc)
+        {
+            return CedarTamperDecision {
+                allowed: true,
+                triggered_policy_ids: Vec::new(),
+                maintenance_bypass: true,
+                reason: "Permitted for verified mysqld engine operation".to_string(),
+            };
+        }
+
+        let mut triggered = Vec::new();
+
+        // Policy 1: @id("OSOOSI-MYSQL-FS-TAMPER-GUARD")
+        let is_fs_or_shell_action = matches!(
+            action_clean.as_str(),
+            "fs_unlink"
+                | "fs_rmdir"
+                | "fs_rename"
+                | "fs_truncate"
+                | "fs_write"
+                | "delete_file"
+                | "remove_file"
+                | "unlink"
+                | "write_file"
+                | "rename_file"
+                | "shell_exec"
+                | "execute"
+                | "execute_command"
+                | "bash_exec"
+                | "cmd_exec"
+        );
+        let touches_protected_db_path = path_lc.starts_with("/var/lib/mysql")
+            || path_lc.contains("/var/lib/mysql")
+            || path_lc.starts_with("/var/run/mysqld")
+            || path_lc.contains("/var/run/mysqld")
+            || path_lc.starts_with("/var/lib/osoosi")
+            || path_lc.contains("/var/lib/osoosi")
+            || path_lc.contains("database/osoosi.db")
+            || path_lc.contains("defense_rules.immutable.bin")
+            || path_lc.contains("protected_security_posture.vault")
+            || path_lc.contains("workflow_guard_state.json")
+            || path_lc.contains("ingested_research_defense_rules.ibd");
+
+        if is_fs_or_shell_action
+            && touches_protected_db_path
+            && principal_clean != "mysqld_verified"
+            && principal_clean != "osoosi_edr_self_heal"
+        {
+            triggered.push("OSOOSI-MYSQL-FS-TAMPER-GUARD".to_string());
+        }
+
+        // Policy 2: @id("OSOOSI-MYSQL-SQL-TAMPER-GUARD")
+        let combined_sql_lc = format!("{} {}", path_lc, sql_verb.trim().to_ascii_lowercase());
+        let effective_sql_verb =
+            if matches!(verb_uc.as_str(), "DROP" | "DELETE" | "TRUNCATE" | "ALTER") {
+                verb_uc.clone()
+            } else {
+                Self::extract_destructive_sql_verb(&combined_sql_lc).unwrap_or(verb_uc.clone())
+            };
+        let is_destructive_sql = matches!(
+            effective_sql_verb.as_str(),
+            "DROP" | "DELETE" | "TRUNCATE" | "ALTER"
+        );
+        let targets_edr_db = resource_clean.eq_ignore_ascii_case("osoosi_edr")
+            || resource_clean.eq_ignore_ascii_case("enforced_research_rules")
+            || resource_clean.eq_ignore_ascii_case("ingested_research_defense_rules")
+            || resource_clean.eq_ignore_ascii_case("ui_settings_kv")
+            || (is_destructive_sql
+                && (path_lc.contains("osoosi_edr")
+                    || path_lc.contains("ingested_research_defense_rules")
+                    || path_lc.contains("enforced_research_rules")
+                    || path_lc.contains("ui_settings_kv")
+                    || path_lc.contains("osoosi.db")));
+
+        if (action_clean == "sql_query" || (is_fs_or_shell_action && is_destructive_sql))
+            && is_destructive_sql
+            && targets_edr_db
+            && principal_clean != "osoosi_edr_self_heal"
+        {
+            triggered.push("OSOOSI-MYSQL-SQL-TAMPER-GUARD".to_string());
+        }
+
+        // Policy 3: @id("OSOOSI-MYSQL-PROC-TAMPER-GUARD")
+        let is_proc_tamper_action = matches!(
+            action_clean.as_str(),
+            "proc_kill" | "proc_ptrace" | "service_stop"
+        ) || (is_fs_or_shell_action
+            && (path_lc.contains("kill ")
+                || path_lc.contains("pkill ")
+                || path_lc.contains("killall ")
+                || path_lc.contains("taskkill")
+                || path_lc.contains("systemctl stop mysql")
+                || path_lc.contains("service mysql stop")
+                || path_lc.contains("sc stop")));
+        let targets_mysqld = resource_clean.eq_ignore_ascii_case("mysqld_verified")
+            || resource_clean.eq_ignore_ascii_case("mysqld")
+            || path_lc.contains("mysqld");
+
+        if is_proc_tamper_action && targets_mysqld && principal_clean != "osoosi_edr_self_heal" {
+            triggered.push("OSOOSI-MYSQL-PROC-TAMPER-GUARD".to_string());
+        }
+
+        // Policy 4: @id("OSOOSI-EDR-EXE-TAMPER-GUARD")
+        let targets_edr_exe = Self::matches_edr_exe_path(&path_lc)
+            || resource_clean.eq_ignore_ascii_case("osoosi.exe")
+            || resource_clean.eq_ignore_ascii_case("osoosi_edr_binary");
+        if (is_fs_or_shell_action || is_proc_tamper_action)
+            && targets_edr_exe
+            && principal_clean != "osoosi_edr_self_heal"
+        {
+            triggered.push("OSOOSI-EDR-EXE-TAMPER-GUARD".to_string());
+        }
+
+        if !triggered.is_empty() {
+            let reason = format!(
+                "Cedar Policy Violation {:?} on path='{}' sql='{}' by principal='{}'",
+                triggered, target_path, effective_sql_verb, principal_clean
+            );
+            return CedarTamperDecision {
+                allowed: false,
+                triggered_policy_ids: triggered,
+                maintenance_bypass: false,
+                reason,
+            };
+        }
+
+        CedarTamperDecision {
+            allowed: true,
+            triggered_policy_ids: Vec::new(),
+            maintenance_bypass: false,
+            reason: "Permitted by Cedar policy evaluation".to_string(),
+        }
+    }
+
+    fn matches_edr_exe_path(path_lc: &str) -> bool {
+        path_lc.contains("osoosi.exe")
+            || path_lc.ends_with("/osoosi")
+            || path_lc.contains("/bin/osoosi")
+            || path_lc.contains("osoosi_inject.dll")
+            || path_lc.contains("osoosi-auditor.exe")
+            || path_lc.contains("osoosi.exe.golden")
+    }
+
+    fn extract_destructive_sql_verb(text_lc: &str) -> Option<String> {
+        for (pattern, verb) in [
+            ("drop table", "DROP"),
+            ("drop database", "DROP"),
+            ("delete from", "DELETE"),
+            ("truncate table", "TRUNCATE"),
+            ("alter table", "ALTER"),
+        ] {
+            if text_lc.contains(pattern) {
+                return Some(verb.to_string());
+            }
+        }
+        None
+    }
+
+    /// Evaluates an operation against the local MySQL/SQLite/EDR-Exe Cedar guard and triggers
+    /// KillSwitch + self-healing immediately on violation.
+    pub fn enforce_mysql_protection(
+        &self,
+        principal_id: &str,
+        action_id: &str,
+        resource_id: &str,
+        target_path: &str,
+        sql_verb: &str,
+        tamper_guard: &crate::breakout_defense::LocalMySqlTamperGuard,
+    ) -> bool {
+        let decision = self.evaluate_protection_request(
+            principal_id,
+            action_id,
+            resource_id,
+            target_path,
+            sql_verb,
+        );
+        if !decision.allowed {
+            tamper_guard.initiate_local_killswitch(&decision.reason);
+            tamper_guard.self_heal_from_memory();
+            return false;
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +782,124 @@ mod tests {
         let broken_chain_proof = verifier.verify_trace(&[s0, s1, skipped_s2]);
         assert!(!broken_chain_proof.is_valid_zero_identity);
         assert_ne!(broken_chain_proof.chain_continuity_defect, 0);
+    }
+
+    #[test]
+    fn test_cedar_mysql_and_sqlite_and_edr_exe_tamper_guard() {
+        let guard = CedarMySqlGuard::new().expect("CedarMySqlGuard must compile policies");
+
+        // 1. Rogue agent attempting to unlink /var/lib/mysql/osoosi_edr/ingested_research_defense_rules.ibd -> DENY
+        let d1 = guard.evaluate_protection_request(
+            "rogue_shell_agent",
+            "fs_unlink",
+            "mysql_datadir",
+            "/var/lib/mysql/osoosi_edr/ingested_research_defense_rules.ibd",
+            "",
+        );
+        assert!(!d1.allowed, "Expected Cedar deny for unlinking .ibd file");
+        assert!(d1
+            .triggered_policy_ids
+            .iter()
+            .any(|id| id == "OSOOSI-MYSQL-FS-TAMPER-GUARD"));
+
+        // 2. Rogue agent attempting to unlink local SQLite database/osoosi.db -> DENY
+        let d2 = guard.evaluate_protection_request(
+            "rogue_shell_agent",
+            "delete_file",
+            "database/osoosi.db",
+            "rm -f database/osoosi.db",
+            "",
+        );
+        assert!(
+            !d2.allowed,
+            "Expected Cedar deny for deleting database/osoosi.db"
+        );
+
+        // 3. Verified mysqld binary accessing /var/lib/mysql -> ALLOW
+        let d3 = guard.evaluate_protection_request(
+            "mysqld_verified",
+            "fs_write",
+            "mysql_datadir",
+            "/var/lib/mysql/osoosi_edr/ingested_research_defense_rules.ibd",
+            "",
+        );
+        assert!(
+            d3.allowed,
+            "Verified mysqld must be allowed to write to datadir"
+        );
+
+        // 4. Destructive SQL DROP TABLE on osoosi_edr_schema -> DENY
+        let d4 = guard.evaluate_protection_request(
+            "agent_sql_tool",
+            "sql_query",
+            "osoosi_edr_schema",
+            "osoosi_edr.ingested_research_defense_rules",
+            "DROP TABLE osoosi_edr.ingested_research_defense_rules",
+        );
+        assert!(!d4.allowed, "Expected Cedar deny for DROP TABLE");
+        assert!(d4
+            .triggered_policy_ids
+            .iter()
+            .any(|id| id == "OSOOSI-MYSQL-SQL-TAMPER-GUARD"));
+
+        // 5. Benign SQL SELECT on osoosi_edr_schema -> ALLOW
+        let d5 = guard.evaluate_protection_request(
+            "agent_sql_tool",
+            "sql_query",
+            "osoosi_edr_schema",
+            "osoosi_edr.ingested_research_defense_rules",
+            "SELECT rule_id, arxiv_id FROM osoosi_edr.ingested_research_defense_rules",
+        );
+        assert!(d5.allowed, "Benign SELECT must be allowed by Cedar");
+
+        // 6. Process kill targeting mysqld_verified -> DENY
+        let d6 = guard.evaluate_protection_request(
+            "rogue_agent",
+            "proc_kill",
+            "mysqld_verified",
+            "kill -9 mysqld",
+            "",
+        );
+        assert!(!d6.allowed, "Expected Cedar deny for killing mysqld");
+        assert!(d6
+            .triggered_policy_ids
+            .iter()
+            .any(|id| id == "OSOOSI-MYSQL-PROC-TAMPER-GUARD"));
+
+        // 7. Tampering with running EDR executable osoosi.exe -> DENY
+        let d7 = guard.evaluate_protection_request(
+            "rogue_agent",
+            "fs_rename",
+            "C:\\Program Files\\OshoosiClaw\\osoosi.exe",
+            "MoveFileEx osoosi.exe osoosi.exe.bak",
+            "",
+        );
+        assert!(
+            !d7.allowed,
+            "Expected Cedar deny for renaming running osoosi.exe"
+        );
+        assert!(d7
+            .triggered_policy_ids
+            .iter()
+            .any(|id| id == "OSOOSI-EDR-EXE-TAMPER-GUARD"));
+
+        // 8. Maintenance lease active allows legitimate maintenance
+        {
+            let _lease = crate::breakout_defense::begin_database_maintenance_lease(
+                "unit_test_vacuum",
+                5_000,
+            );
+            let d8 = guard.evaluate_protection_request(
+                "maintenance_worker",
+                "sql_query",
+                "osoosi_edr_schema",
+                "database/osoosi.db",
+                "ALTER TABLE ui_settings_kv RENAME TO ui_settings_kv_old",
+            );
+            assert!(
+                d8.allowed,
+                "Maintenance lease must permit authorized schema maintenance"
+            );
+        }
     }
 }

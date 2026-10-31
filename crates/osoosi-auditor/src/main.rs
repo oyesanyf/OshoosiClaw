@@ -242,7 +242,11 @@ fn main() -> Result<()> {
 
     let dataset_folder = "dataset";
     let output_path = "models/scored_dataset.json";
-    let nvd_api_key = env::var("NVD_API_KEY").ok();
+    let nvd_api_key =
+        osoosi_core::protected_env_backup::ProtectedEnvBackupVault::resolve_env_var_verified(
+            "NVD_API_KEY",
+            Some("services.nvd.nist.gov"),
+        );
 
     if !Path::new(dataset_folder).exists() {
         fs::create_dir_all(dataset_folder)?;

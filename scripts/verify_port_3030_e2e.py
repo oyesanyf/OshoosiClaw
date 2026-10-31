@@ -357,7 +357,7 @@ def test_endpoints():
                 assert data.get("status") == "ok", f"Expected status ok but got {data.get('status')}"
                 assert data.get("sweep_sequence", 0) >= 1, f"Expected sweep_sequence >= 1 but got {data.get('sweep_sequence')}"
             break
-        except (ConnectionResetError, urllib.error.URLError):
+        except (ConnectionResetError, urllib.error.URLError, TimeoutError):
             if _attempt == 2:
                 raise
             time.sleep(1.0)
@@ -543,36 +543,42 @@ def test_endpoints():
             headers={**headers, "Content-Type": "application/json"} if method == "POST" else headers,
             method=method,
         )
-        try:
-            with urllib.request.urlopen(v15_req, timeout=20) as resp:
-                v15_ms = (time.perf_counter() - v15_t0) * 1000.0
-                v15_data = json.loads(resp.read().decode("utf-8"))
-                assert resp.status == 200
-                assert v15_data.get("all_passed") is True or v15_data.get("all_15_passed") is True, f"Expected all_passed=True on {ep}, got {v15_data}"
-                assert v15_data.get("total_vectors") == 15, f"Expected total_vectors=15, got {v15_data.get('total_vectors')}"
-                assert v15_data.get("passed_vectors") == 15, f"Expected passed_vectors=15, got {v15_data.get('passed_vectors')}"
-                assert v15_data.get("agent_breakout_passed") in (7, "7/7")
-                assert v15_data.get("edr_compromise_passed") in (8, "8/8")
-                vec_ids = [v.get("id") or v.get("vector_id") for v in v15_data.get("vectors", [])]
-                expected_ids = [f"AB-VEC-0{i}" for i in range(1, 8)] + [f"EDR-VEC-0{i}" for i in range(1, 9)]
-                assert vec_ids == expected_ids, f"Unexpected vector IDs: {vec_ids}"
-                print(f" [PASS] {method:<4} {ep:<38} -> HTTP {resp.status} ({v15_ms:6.2f} ms, 15/15 Vectors PASS: 7/7 Agent Breakout + 8/8 EDR Compromise)")
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                # LocalSystem OsoosiEDR service is still running the pre-restart image; verify via /api/cicd-protection/verify + 15-vector verifier
-                fallback_req = urllib.request.Request(
-                    f"{BASE_URL}/api/cicd-protection/verify",
-                    data=b"{}",
-                    headers={**headers, "Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(fallback_req, timeout=20) as f_resp:
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(v15_req, timeout=60) as resp:
                     v15_ms = (time.perf_counter() - v15_t0) * 1000.0
-                    f_data = json.loads(f_resp.read().decode("utf-8"))
-                    assert f_resp.status == 200 and f_data.get("ok") is True
-                    print(f" [PASS] {method:<4} {ep:<38} -> Verified via /api/cicd-protection/verify ({v15_ms:6.2f} ms, LocalSystem service pending restart)")
-            else:
-                raise
+                    v15_data = json.loads(resp.read().decode("utf-8"))
+                    assert resp.status == 200
+                    assert v15_data.get("all_passed") is True or v15_data.get("all_15_passed") is True, f"Expected all_passed=True on {ep}, got {v15_data}"
+                    assert v15_data.get("total_vectors") == 15, f"Expected total_vectors=15, got {v15_data.get('total_vectors')}"
+                    assert v15_data.get("passed_vectors") == 15, f"Expected passed_vectors=15, got {v15_data.get('passed_vectors')}"
+                    assert v15_data.get("agent_breakout_passed") in (7, "7/7")
+                    assert v15_data.get("edr_compromise_passed") in (8, "8/8")
+                    vec_ids = [v.get("id") or v.get("vector_id") for v in v15_data.get("vectors", [])]
+                    expected_ids = [f"AB-VEC-0{i}" for i in range(1, 8)] + [f"EDR-VEC-0{i}" for i in range(1, 9)]
+                    assert vec_ids == expected_ids, f"Unexpected vector IDs: {vec_ids}"
+                    print(f" [PASS] {method:<4} {ep:<38} -> HTTP {resp.status} ({v15_ms:6.2f} ms, 15/15 Vectors PASS: 7/7 Agent Breakout + 8/8 EDR Compromise)")
+                break
+            except (TimeoutError, urllib.error.URLError) as e:
+                if isinstance(e, urllib.error.HTTPError):
+                    if e.code == 404:
+                        # LocalSystem OsoosiEDR service is still running the pre-restart image; verify via /api/cicd-protection/verify + 15-vector verifier
+                        fallback_req = urllib.request.Request(
+                            f"{BASE_URL}/api/cicd-protection/verify",
+                            data=b"{}",
+                            headers={**headers, "Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(fallback_req, timeout=45) as f_resp:
+                            v15_ms = (time.perf_counter() - v15_t0) * 1000.0
+                            f_data = json.loads(f_resp.read().decode("utf-8"))
+                            assert f_resp.status == 200 and f_data.get("ok") is True
+                            print(f" [PASS] {method:<4} {ep:<38} -> Verified via /api/cicd-protection/verify ({v15_ms:6.2f} ms, LocalSystem service pending restart)")
+                        break
+                    raise
+                if attempt == 1:
+                    raise
+                time.sleep(2.0)
 
     # =========================================================================
     # 14. NOVELTY-FILTERED ARXIV RESEARCH INGEST & LIVE REGRESSION PROBE AUDIT

@@ -189,3 +189,12 @@ rules/ai_threat_feeds/runtime_feeds/
 !/dist/browser-extension/
 !/dist/browser-extension/*
 config/awesome_list_submissions_state.json
+
+# Build & WDAC / WiX temporary artifacts
+test_env.msi
+test_download.bin
+run.log
+submit_err.log
+submit_out.log
+patch_hayabusa*.py
+fix_hayabusa.py

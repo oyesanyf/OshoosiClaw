@@ -118,6 +118,16 @@ fn init_protected_local_binary_hashes() -> DashSet<String> {
                     if (ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("dll"))
                         && p.is_file()
                     {
+                        #[cfg(target_os = "windows")]
+                        {
+                            let p_str = p.to_string_lossy();
+                            if osoosi_types::check_authenticode_status(&p_str)
+                                != AuthenticodeStatus::ValidTrusted
+                                && !osoosi_types::verify_windows_catalog_signature(&p_str)
+                            {
+                                continue;
+                            }
+                        }
                         if let Ok(meta) = p.metadata() {
                             if meta.len() > 0 && meta.len() <= 64 * 1024 * 1024 {
                                 if let Ok(bytes) = std::fs::read(&p) {

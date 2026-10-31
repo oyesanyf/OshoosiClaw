@@ -43,26 +43,31 @@ pub use alignment_scanner::{
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use breakout_defense::{
-    approve_ingested_research_rule, clear_all_ingested_research_rules,
+    approve_ingested_research_rule, begin_database_maintenance_lease,
+    clear_all_ingested_research_rules, compute_maintenance_auth_token,
+    install_sqlite_tamper_trigger, is_maintenance_window_active,
     is_research_rule_operator_approved, is_research_rule_pinned, list_ingested_research_rules,
     pin_ingested_research_rule, register_ingested_research_rule, remove_ingested_research_rule,
     restore_default_research_rules, sanitize_and_validate_subprocess_env,
     validate_agent_egress_url, validate_agent_filesystem_access,
-    verify_rule_against_canary_benign_corpus, BehavioralBreakoutGuard, BehavioralBreakoutVerdict,
-    BreakoutDefenseCoordinator, BreakoutDefenseError, EnvironmentInspectionResult,
-    ExecutionEnvironmentGuard, IngestedResearchDefenseRule, TechnicalBreakoutGuard,
-    TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
-    ZeroMutualInformationProjector, CANARY_BENIGN_TELEMETRY_CORPUS,
-    GLOBAL_RESEARCH_DEFENSE_REGISTRY,
+    verify_rule_against_canary_benign_corpus, with_sqlite_maintenance_seal,
+    BehavioralBreakoutGuard, BehavioralBreakoutVerdict, BreakoutDefenseCoordinator,
+    BreakoutDefenseError, EdrExecutableTamperGuard, EnvironmentInspectionResult,
+    ExecutionEnvironmentGuard, IngestedResearchDefenseRule, LocalMySqlTamperGuard,
+    MaintenanceLeaseGuard, TamperCheckOutcome, TechnicalBreakoutGuard, TechnicalBreakoutVerdict,
+    UnifiedBreakoutEvaluation, ZeroMiProjectionResult, ZeroMutualInformationProjector,
+    CANARY_BENIGN_TELEMETRY_CORPUS, GLOBAL_RESEARCH_DEFENSE_REGISTRY, KILLSWITCH_ACTIVE,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{
+    local_mysql_protection_cedar_policies, CedarMySqlGuard, CedarTamperDecision,
     PolicyExecutionStep, VanishingPolynomialProof, VanishingPolynomialTraceVerifier,
     MERSENNE_127_PRIME,
 };
 pub use classifier::{
+    drain_pending_signals, enqueue_pending_signal, pending_signals_count,
     AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
-    SiqueryAgentDetector,
+    SiqueryAgentDetector, MAX_PENDING_SIGNALS, PENDING_SIGNALS,
 };
 pub use cognitive_redteam::{
     global_cognitive_redteam, BlastRadiusDiff, CognitiveRedTeamAssessment,

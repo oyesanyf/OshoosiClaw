@@ -1641,25 +1641,41 @@ async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    // EDR-VEC-09: Unauthenticated public status queries must never exfiltrate the master admin token
-    // via Set-Cookie headers. Session cookies are delivered exclusively on verified login.
-    if !is_state_changing || auth_disabled {
-        return Ok(next.run(req).await);
-    }
-
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    // EDR-VEC-10, EDR-VEC-19, EDR-VEC-20: Remove /api/siquery/query, /siquery/query,
-    // /api/rea/v1/analyze, /api/skyrl/v1/train, /skyrl/v1/train from is_public_bypass.
-    // All query, analysis, and retraining endpoints must require valid authentication.
+    // EDR-VEC-09 / H13: Unauthenticated public status queries must never exfiltrate the master admin token
+    // via Set-Cookie headers. Session cookies are delivered exclusively on verified login.
+    // When bind_all is false (default loopback 127.0.0.1), read-only GET requests (!is_state_changing)
+    // are allowed without token header for local UI rendering.
+    // When bind_all is true (0.0.0.0), sensitive GET /api/* routes require authentication
+    // so external network callers cannot scrape telemetry, config, or threats unauthenticated.
+    if (!is_state_changing && !bind_all) || auth_disabled {
+        return Ok(next.run(req).await);
+    }
+
+    // EDR-VEC-10, EDR-VEC-19, EDR-VEC-20, H13: Remove /api/siquery/query, /siquery/query,
+    // /api/rea/v1/analyze, /api/skyrl/v1/train, /skyrl/v1/train, and all /api/env-gateway/* routes from is_public_bypass.
+    // Whitelist only public non-sensitive endpoints: /health, /api/health, /, and static UI assets.
+    // All query, analysis, retraining, and env-gateway endpoints must require valid authentication.
+    let is_static_asset = !path.starts_with("/api/")
+        && !path.starts_with("/skyrl/")
+        && !path.starts_with("/rea/")
+        && !path.starts_with("/mesh/")
+        && !path.starts_with("/dlp/")
+        && !path.starts_with("/settings/")
+        && !path.starts_with("/killchain/")
+        && !path.starts_with("/har/")
+        && (path == "/" || path == "/index.html" || has_static_extension_str(&path));
+
     let is_public_bypass = if bind_all {
-        path == "/health" || path == "/api/health" || path == "/"
+        path == "/health" || path == "/api/health" || path == "/" || is_static_asset
     } else {
         path == "/health"
             || path == "/api/health"
             || path == "/"
+            || is_static_asset
             || path == "/api/mesh/bootstrap-peers"
             || path == "/mesh/bootstrap-peers"
             || path == "/api/mesh/p2p"
@@ -1680,6 +1696,15 @@ async fn auth_middleware(
             || path == "/dlp/crown-jewels/register"
             || path == "/api/settings/autonomy"
             || path == "/settings/autonomy"
+            || path == "/api/settings/ui"
+            || path == "/settings/ui"
+            || path == "/api/cicd-protection/toggle"
+            || path == "/api/cicd-protection/verify"
+            || path == "/api/cicd-protection/run-gauntlet"
+            || path == "/api/cicd-protection/audit"
+            || path == "/api/workflow-guard/toggle"
+            || path == "/api/workflow-guard/verify"
+            || path == "/api/workflow-guard/audit"
     };
 
     if !test_force_auth && is_public_bypass {
@@ -1763,6 +1788,7 @@ pub async fn spawn_dashboard_with_backend(
     });
 
     crate::routes::research_ingest::start_weekly_autonomous_research_scheduler();
+    crate::routes::workflow_guard::start_workflow_guard_self_healing_watchdog();
 
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
@@ -2424,6 +2450,22 @@ async fn get_sbom_spdx() -> impl IntoResponse {
         .unwrap()
 }
 
+/// Sizing models strictly evaluates runtime free/available memory per the Dynamic Available Memory Law (Anti-OOM).
+/// Never uses total physical RAM and never appends -coder suffixes.
+fn select_calibrated_qwen_model(free_ram_gb: f64, free_vram_mb: u64) -> (&'static str, f32) {
+    if free_ram_gb >= 48.0 || free_vram_mb >= 24_000 {
+        ("qwen2.5:32b", 19.0)
+    } else if free_ram_gb >= 24.0 || free_vram_mb >= 14_000 {
+        ("qwen2.5:14b", 9.0)
+    } else if free_ram_gb >= 12.0 || free_vram_mb >= 4_500 {
+        ("qwen2.5:7b", 4.7)
+    } else if free_ram_gb >= 6.0 || free_vram_mb >= 2_000 {
+        ("qwen2.5:3b", 2.0)
+    } else {
+        ("qwen2.5:1.5b", 1.0)
+    }
+}
+
 async fn get_calibrated_models(
     State(_state): State<DashboardState>,
 ) -> Json<CalibratedModelsResponse> {
@@ -2479,22 +2521,27 @@ async fn get_calibrated_models(
         .unwrap_or(false)
     };
 
-    let (deep_model_name, deep_size) = match tier {
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => {
-            ("qwen2.5:32b", 19.0)
-        }
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => ("qwen2.5:14b", 9.0),
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => ("qwen2.5:7b", 4.7),
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => {
-            ("qwen2.5:1.5b", 1.0)
-        }
-    };
+    let (deep_model_name, deep_size) =
+        select_calibrated_qwen_model(resources.free_ram_gb, resources.free_vram_mb);
 
     let is_installed = |target: &str| -> bool {
         installed_models
             .iter()
             .any(|inst| osoosi_behavioral::hardware_selection::model_matches(target, inst))
     };
+
+    // Auto-trigger background download if Ollama is online and calibrated models are missing
+    if ollama_online {
+        if !is_installed(deep_model_name) && !MODEL_PULL_TRACKER.contains_key(deep_model_name) {
+            trigger_background_model_pull(
+                deep_model_name.to_string(),
+                ai_cfg.reasoning_url.clone(),
+            );
+        }
+        if !is_installed("qwen2.5:1.5b") && !MODEL_PULL_TRACKER.contains_key("qwen2.5:1.5b") {
+            trigger_background_model_pull("qwen2.5:1.5b".to_string(), ai_cfg.reasoning_url.clone());
+        }
+    }
 
     let calibrated_models = vec![
         CalibratedModelItem {
@@ -2640,23 +2687,192 @@ pub fn resolve_ollama_binary() -> std::path::PathBuf {
     std::path::PathBuf::from("ollama")
 }
 
+/// Triggers a non-blocking background model pull via Ollama REST API or fallback CLI,
+/// updating the shared `MODEL_PULL_TRACKER` DashMap.
+pub fn trigger_background_model_pull(model_name: String, base_url: String) {
+    MODEL_PULL_TRACKER.insert(
+        model_name.clone(),
+        ModelPullProgress {
+            model: model_name.clone(),
+            status: "queued".to_string(),
+            completed_bytes: 0,
+            total_bytes: 0,
+            percent: 0.0,
+            message: format!("Download queued for {}", model_name),
+            error: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+
+    let model_to_pull = model_name;
+    tokio::spawn(async move {
+        let mut ipv6_guard = Ipv6SuspensionGuard::acquire().await;
+
+        let initial_message = if ipv6_guard.has_disabled_adapters() {
+            format!(
+                "IPv4 prioritized (IPv6 will be auto-restored after download). Pulling {}...",
+                model_to_pull
+            )
+        } else {
+            format!("Pulling {} via Ollama API...", model_to_pull)
+        };
+
+        MODEL_PULL_TRACKER.insert(
+            model_to_pull.clone(),
+            ModelPullProgress {
+                model: model_to_pull.clone(),
+                status: "pulling".to_string(),
+                completed_bytes: 0,
+                total_bytes: 0,
+                percent: 15.0,
+                message: initial_message,
+                error: None,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+
+        let pull_url = if let Ok(mut u) = reqwest::Url::parse(&base_url) {
+            u.set_path("/api/pull");
+            u.set_query(None);
+            u.to_string()
+        } else {
+            format!("{}/api/pull", base_url.trim_end_matches('/'))
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(600))
+            .build();
+
+        let mut pulled = false;
+        let mut pull_err = None;
+
+        if let Ok(c) = client {
+            info!(
+                "Requesting Ollama REST pull for {} at {}",
+                model_to_pull, pull_url
+            );
+            match c
+                .post(&pull_url)
+                .json(&serde_json::json!({
+                    "name": &model_to_pull,
+                    "stream": false
+                }))
+                .send()
+                .await
+            {
+                Ok(res) => {
+                    if res.status().is_success() {
+                        pulled = true;
+                    } else {
+                        let status = res.status();
+                        let txt = res.text().await.unwrap_or_default();
+                        let clean_txt = strip_ansi_escapes(&txt);
+                        warn!("Ollama REST pull failed ({status}): {clean_txt}");
+                        pull_err = Some(format!("Ollama API {status}: {}", clean_txt.trim()));
+                    }
+                }
+                Err(e) => {
+                    let clean_err = strip_ansi_escapes(&e.to_string());
+                    warn!("Ollama REST pull connection failed: {clean_err}");
+                    pull_err = Some(clean_err);
+                }
+            }
+        }
+
+        if !pulled {
+            info!("Attempting fallback: CLI 'ollama pull {}'", model_to_pull);
+            MODEL_PULL_TRACKER.insert(
+                model_to_pull.clone(),
+                ModelPullProgress {
+                    model: model_to_pull.clone(),
+                    status: "pulling".to_string(),
+                    completed_bytes: 0,
+                    total_bytes: 0,
+                    percent: 40.0,
+                    message: format!(
+                        "Falling back to CLI execution: ollama pull {}",
+                        model_to_pull
+                    ),
+                    error: None,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+
+            let ollama_bin = resolve_ollama_binary();
+            let mut cmd = tokio::process::Command::new(&ollama_bin);
+            cmd.args(["pull", &model_to_pull]);
+            #[cfg(target_os = "windows")]
+            {
+                cmd.creation_flags(0x0800_0000);
+            }
+
+            match cmd.output().await {
+                Ok(out) => {
+                    if out.status.success() {
+                        pulled = true;
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        let clean_msg = sanitize_pull_error(&stderr);
+                        let msg = format!("CLI pull failed: {}", clean_msg);
+                        warn!("{}", msg);
+                        pull_err = Some(msg);
+                    }
+                }
+                Err(e) => {
+                    let clean_err = strip_ansi_escapes(&e.to_string());
+                    let msg = format!("Failed to run 'ollama pull': {clean_err}");
+                    warn!("{}", msg);
+                    pull_err = Some(msg);
+                }
+            }
+        }
+
+        if pulled {
+            MODEL_PULL_TRACKER.insert(
+                model_to_pull.clone(),
+                ModelPullProgress {
+                    model: model_to_pull.clone(),
+                    status: "success".to_string(),
+                    completed_bytes: 0,
+                    total_bytes: 0,
+                    percent: 100.0,
+                    message: format!("Successfully downloaded and verified {}", model_to_pull),
+                    error: None,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+        } else {
+            MODEL_PULL_TRACKER.insert(
+                model_to_pull.clone(),
+                ModelPullProgress {
+                    model: model_to_pull.clone(),
+                    status: "error".to_string(),
+                    completed_bytes: 0,
+                    total_bytes: 0,
+                    percent: 0.0,
+                    message: format!("Download failed for {}", model_to_pull),
+                    error: pull_err.map(|e| strip_ansi_escapes(&e).trim().to_string()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+        }
+
+        ipv6_guard.restore().await;
+    });
+}
+
 async fn post_model_pull(
     State(_state): State<DashboardState>,
     Json(payload): Json<PullModelRequest>,
 ) -> Json<Value> {
     let resources = get_cached_system_resources();
-    let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
     let installed_models =
         osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url)
             .await;
 
-    let deep_model_name = match tier {
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => "qwen2.5:32b",
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => "qwen2.5:14b",
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => "qwen2.5:7b",
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => "qwen2.5:1.5b",
-    };
+    let (deep_model_name, _) =
+        select_calibrated_qwen_model(resources.free_ram_gb, resources.free_vram_mb);
 
     let all_calibrated = [
         deep_model_name,
@@ -2701,177 +2917,7 @@ async fn post_model_pull(
     let reasoning_url = ai_cfg.reasoning_url.clone();
 
     for model_name in &target_models {
-        MODEL_PULL_TRACKER.insert(
-            model_name.clone(),
-            ModelPullProgress {
-                model: model_name.clone(),
-                status: "queued".to_string(),
-                completed_bytes: 0,
-                total_bytes: 0,
-                percent: 0.0,
-                message: format!("Download queued for {}", model_name),
-                error: None,
-                updated_at: chrono::Utc::now().to_rfc3339(),
-            },
-        );
-
-        let model_to_pull = model_name.clone();
-        let base_url = reasoning_url.clone();
-
-        tokio::spawn(async move {
-            let mut ipv6_guard = Ipv6SuspensionGuard::acquire().await;
-
-            let initial_message = if ipv6_guard.has_disabled_adapters() {
-                format!(
-                    "IPv4 prioritized (IPv6 will be auto-restored after download). Pulling {}...",
-                    model_to_pull
-                )
-            } else {
-                format!("Pulling {} via Ollama API...", model_to_pull)
-            };
-
-            MODEL_PULL_TRACKER.insert(
-                model_to_pull.clone(),
-                ModelPullProgress {
-                    model: model_to_pull.clone(),
-                    status: "pulling".to_string(),
-                    completed_bytes: 0,
-                    total_bytes: 0,
-                    percent: 15.0,
-                    message: initial_message,
-                    error: None,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                },
-            );
-
-            let pull_url = if let Ok(mut u) = reqwest::Url::parse(&base_url) {
-                u.set_path("/api/pull");
-                u.set_query(None);
-                u.to_string()
-            } else {
-                format!("{}/api/pull", base_url.trim_end_matches('/'))
-            };
-
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(600))
-                .build();
-
-            let mut pulled = false;
-            let mut pull_err = None;
-
-            if let Ok(c) = client {
-                info!(
-                    "Requesting Ollama REST pull for {} at {}",
-                    model_to_pull, pull_url
-                );
-                match c
-                    .post(&pull_url)
-                    .json(&serde_json::json!({
-                        "name": &model_to_pull,
-                        "stream": false
-                    }))
-                    .send()
-                    .await
-                {
-                    Ok(res) => {
-                        if res.status().is_success() {
-                            pulled = true;
-                        } else {
-                            let status = res.status();
-                            let txt = res.text().await.unwrap_or_default();
-                            let clean_txt = strip_ansi_escapes(&txt);
-                            warn!("Ollama REST pull failed ({status}): {clean_txt}");
-                            pull_err = Some(format!("Ollama API {status}: {}", clean_txt.trim()));
-                        }
-                    }
-                    Err(e) => {
-                        let clean_err = strip_ansi_escapes(&e.to_string());
-                        warn!("Ollama REST pull connection failed: {clean_err}");
-                        pull_err = Some(clean_err);
-                    }
-                }
-            }
-
-            if !pulled {
-                info!("Attempting fallback: CLI 'ollama pull {}'", model_to_pull);
-                MODEL_PULL_TRACKER.insert(
-                    model_to_pull.clone(),
-                    ModelPullProgress {
-                        model: model_to_pull.clone(),
-                        status: "pulling".to_string(),
-                        completed_bytes: 0,
-                        total_bytes: 0,
-                        percent: 40.0,
-                        message: format!(
-                            "Falling back to CLI execution: ollama pull {}",
-                            model_to_pull
-                        ),
-                        error: None,
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    },
-                );
-
-                let ollama_bin = resolve_ollama_binary();
-                let mut cmd = tokio::process::Command::new(&ollama_bin);
-                cmd.args(["pull", &model_to_pull]);
-                #[cfg(target_os = "windows")]
-                {
-                    cmd.creation_flags(0x0800_0000);
-                }
-
-                match cmd.output().await {
-                    Ok(out) => {
-                        if out.status.success() {
-                            pulled = true;
-                        } else {
-                            let stderr = String::from_utf8_lossy(&out.stderr);
-                            let clean_msg = sanitize_pull_error(&stderr);
-                            let msg = format!("CLI pull failed: {}", clean_msg);
-                            warn!("{}", msg);
-                            pull_err = Some(msg);
-                        }
-                    }
-                    Err(e) => {
-                        let clean_err = strip_ansi_escapes(&e.to_string());
-                        let msg = format!("Failed to run 'ollama pull': {clean_err}");
-                        warn!("{}", msg);
-                        pull_err = Some(msg);
-                    }
-                }
-            }
-
-            if pulled {
-                MODEL_PULL_TRACKER.insert(
-                    model_to_pull.clone(),
-                    ModelPullProgress {
-                        model: model_to_pull.clone(),
-                        status: "success".to_string(),
-                        completed_bytes: 0,
-                        total_bytes: 0,
-                        percent: 100.0,
-                        message: format!("Successfully downloaded and verified {}", model_to_pull),
-                        error: None,
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    },
-                );
-            } else {
-                MODEL_PULL_TRACKER.insert(
-                    model_to_pull.clone(),
-                    ModelPullProgress {
-                        model: model_to_pull.clone(),
-                        status: "error".to_string(),
-                        completed_bytes: 0,
-                        total_bytes: 0,
-                        percent: 0.0,
-                        message: format!("Download failed for {}", model_to_pull),
-                        error: pull_err.map(|e| strip_ansi_escapes(&e).trim().to_string()),
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    },
-                );
-            }
-
-            ipv6_guard.restore().await;
-        });
+        trigger_background_model_pull(model_name.clone(), reasoning_url.clone());
     }
 
     Json(json!({
@@ -5179,6 +5225,99 @@ pub fn verify_row_integrity_tag(
     constant_time_eq_token(computed.trim(), expected_tag.trim())
 }
 
+static ANTI_DELETION_DB_HANDLES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::fs::File>>,
+> = std::sync::OnceLock::new();
+
+/// Resolves all multi-ring SQLite database paths for UI & Security Posture persistence:
+/// - Ring 1: Primary workspace & release databases (`database/osoosi.db`, `target/release/database/osoosi.db`)
+/// - Ring 2: System-protected enclave database (`C:\ProgramData\OshoosiClaw\database\osoosi.db` or `/var/lib/oshoosiclaw/database/osoosi.db`)
+pub fn resolved_ui_settings_db_paths() -> Vec<std::path::PathBuf> {
+    if let Ok(override_paths) = std::env::var("OSOOSI_TEST_UI_DB_PATHS_OVERRIDE") {
+        let custom: Vec<std::path::PathBuf> = override_paths
+            .split(';')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        if !custom.is_empty() {
+            return custom;
+        }
+    }
+
+    let mut paths: Vec<std::path::PathBuf> = UI_SETTINGS_DB_PATHS
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+
+    let enclave_path = if let Ok(custom_enclave) = std::env::var("OSOOSI_ENCLAVE_DB_PATH") {
+        std::path::PathBuf::from(custom_enclave)
+    } else {
+        osoosi_types::config::resolve_base_dir()
+            .join("database")
+            .join("osoosi.db")
+    };
+
+    if !paths.iter().any(|p| p == &enclave_path) {
+        paths.push(enclave_path);
+    }
+    paths
+}
+
+/// Holds a kernel-level read-shared handle (`FILE_SHARE_READ | FILE_SHARE_WRITE`, omitting `FILE_SHARE_DELETE`)
+/// on Windows so non-kernel hostile processes attempting to delete `database/osoosi.db` are blocked with
+/// `ERROR_SHARING_VIOLATION` while allowing SQLite connections full concurrent read/write access.
+pub fn hold_anti_deletion_db_handle(db_path: &std::path::Path) {
+    if std::env::var("OSOOSI_TEST_ALLOW_DB_UNLINK_SIMULATION").is_ok() {
+        return;
+    }
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_HOLD_DB_HANDLE").is_err() {
+        return;
+    }
+    if !db_path.exists() {
+        return;
+    }
+    let key = db_path.to_string_lossy().to_string();
+    let map_lock = ANTI_DELETION_DB_HANDLES
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Ok(mut guard) = map_lock.lock() {
+        if guard.contains_key(&key) {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_SHARE_READ (0x1) | FILE_SHARE_WRITE (0x2) — explicitly omits FILE_SHARE_DELETE (0x4)
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0x00000001 | 0x00000002)
+                .open(db_path)
+            {
+                guard.insert(key, file);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Ok(file) = std::fs::OpenOptions::new().read(true).open(db_path) {
+                guard.insert(key, file);
+            }
+        }
+    }
+}
+
+/// Releases held anti-deletion file handles (used in tests simulating offline/privileged database deletion).
+pub fn release_anti_deletion_db_handles() {
+    if let Some(map_lock) = ANTI_DELETION_DB_HANDLES.get() {
+        if let Ok(mut guard) = map_lock.lock() {
+            guard.clear();
+        }
+    }
+}
+
 pub fn init_ui_settings_sqlite() {
     let is_test_binary = std::env::args()
         .next()
@@ -5193,11 +5332,11 @@ pub fn init_ui_settings_sqlite() {
         updated_at_utc TEXT NOT NULL,
         integrity_tag TEXT DEFAULT ''
     );";
-    for db_path in UI_SETTINGS_DB_PATHS {
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
+    for db_path in resolved_ui_settings_db_paths() {
+        if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             let _ = conn.execute_batch(ddl);
             let _ = conn.execute(
                 "ALTER TABLE ui_settings_kv ADD COLUMN integrity_tag TEXT DEFAULT '';",
@@ -5205,8 +5344,9 @@ pub fn init_ui_settings_sqlite() {
             );
         }
         if !is_test_binary {
-            let _ = harden_file_ntfs_dacl(std::path::Path::new(db_path));
+            let _ = harden_file_ntfs_dacl(&db_path);
         }
+        hold_anti_deletion_db_handle(&db_path);
     }
 }
 
@@ -5233,16 +5373,17 @@ pub fn save_ui_setting_sqlite(key: &str, val: &Value) {
                    setting_json = excluded.setting_json,
                    updated_at_utc = excluded.updated_at_utc,
                    integrity_tag = excluded.integrity_tag;";
-    for db_path in UI_SETTINGS_DB_PATHS {
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
+    for db_path in resolved_ui_settings_db_paths() {
+        if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             let _ = conn.execute(
                 sql,
                 rusqlite::params![clean_key, json_str, now_utc, integrity_tag],
             );
         }
+        hold_anti_deletion_db_handle(&db_path);
     }
 }
 
@@ -5260,8 +5401,8 @@ pub fn delete_ui_setting_sqlite(key: &str) {
     }
     init_ui_settings_sqlite();
     let sql = "DELETE FROM ui_settings_kv WHERE setting_key = ?1;";
-    for db_path in UI_SETTINGS_DB_PATHS {
-        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+    for db_path in resolved_ui_settings_db_paths() {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             let _ = conn.execute(sql, rusqlite::params![clean_key]);
         }
     }
@@ -5280,7 +5421,8 @@ pub fn load_ui_setting_sqlite(key: &str) -> Option<Value> {
         return None;
     }
     init_ui_settings_sqlite();
-    for db_path in UI_SETTINGS_DB_PATHS {
+    let db_paths = resolved_ui_settings_db_paths();
+    for (idx, db_path) in db_paths.iter().enumerate() {
         if let Ok(conn) = rusqlite::Connection::open_with_flags(
             db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -5294,12 +5436,17 @@ pub fn load_ui_setting_sqlite(key: &str) -> Option<Value> {
                     && !verify_row_integrity_tag("ui_settings_kv", clean_key, &raw, &tag)
                 {
                     tracing::error!(
-                        "SQLite row integrity verification failed for ui_settings_kv key '{}': tampering rejected",
-                        clean_key
+                        "SQLite row integrity verification failed for ui_settings_kv key '{}' in {}: tampering rejected",
+                        clean_key,
+                        db_path.display()
                     );
                     continue;
                 }
                 if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                    // Self-heal primary database if recovered from a secondary/enclave mirror (idx > 0)
+                    if idx > 0 {
+                        save_ui_setting_sqlite(clean_key, &val);
+                    }
                     return Some(val);
                 }
             }
@@ -5318,7 +5465,8 @@ pub fn load_all_ui_settings_sqlite() -> serde_json::Map<String, Value> {
         return map;
     }
     init_ui_settings_sqlite();
-    for db_path in UI_SETTINGS_DB_PATHS {
+    let db_paths = resolved_ui_settings_db_paths();
+    for (idx, db_path) in db_paths.iter().enumerate() {
         if let Ok(conn) = rusqlite::Connection::open_with_flags(
             db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -5336,17 +5484,18 @@ pub fn load_all_ui_settings_sqlite() -> serde_json::Map<String, Value> {
                     for (k, raw, tag) in rows.flatten() {
                         if !tag.is_empty() && !verify_row_integrity_tag("ui_settings_kv", &k, &raw, &tag) {
                             tracing::error!(
-                                "SQLite row integrity verification failed for ui_settings_kv key '{}': tampering rejected",
-                                k
+                                "SQLite row integrity verification failed for ui_settings_kv key '{}' in {}: tampering rejected",
+                                k,
+                                db_path.display()
                             );
                             continue;
                         }
                         if let Ok(val) = serde_json::from_str::<Value>(&raw) {
-                            map.insert(k, val);
+                            if idx > 0 && !map.contains_key(&k) {
+                                save_ui_setting_sqlite(&k, &val);
+                            }
+                            map.entry(k).or_insert(val);
                         }
-                    }
-                    if !map.is_empty() {
-                        return map;
                     }
                 }
             }
@@ -5356,6 +5505,7 @@ pub fn load_all_ui_settings_sqlite() -> serde_json::Map<String, Value> {
 }
 
 async fn get_ui_settings() -> Json<Value> {
+    crate::routes::workflow_guard::verify_and_heal_workflow_guard_db();
     let settings = load_all_ui_settings_sqlite();
     Json(json!({
         "ok": true,
@@ -5375,6 +5525,7 @@ async fn post_ui_settings(Json(body): Json<Value>) -> Json<Value> {
                     delete_ui_setting_sqlite(key);
                 } else {
                     save_ui_setting_sqlite(key, val);
+                    crate::routes::workflow_guard::sync_workflow_guard_from_ui_setting(key, val);
                 }
             }
         }
@@ -5384,6 +5535,7 @@ async fn post_ui_settings(Json(body): Json<Value>) -> Json<Value> {
                     delete_ui_setting_sqlite(k);
                 } else {
                     save_ui_setting_sqlite(k, v);
+                    crate::routes::workflow_guard::sync_workflow_guard_from_ui_setting(k, v);
                 }
             }
         } else if obj.get("key").is_none() {
@@ -5392,6 +5544,7 @@ async fn post_ui_settings(Json(body): Json<Value>) -> Json<Value> {
                     delete_ui_setting_sqlite(k);
                 } else {
                     save_ui_setting_sqlite(k, v);
+                    crate::routes::workflow_guard::sync_workflow_guard_from_ui_setting(k, v);
                 }
             }
         }
@@ -12061,14 +12214,40 @@ mod tests {
         // 1. Get initial status: should have pre-seeded scenarios, positive loss, buffer entries
         let status = get_skyrl_status(State(state.clone())).await.0;
         assert_eq!(status["status"], "online");
-        assert!((status["epsilon"].as_f64().unwrap() - 0.05).abs() < 1e-4);
+        let eps = status["epsilon"].as_f64().unwrap();
+        assert!(
+            (0.05..=1.0).contains(&eps),
+            "Initial epsilon must be decayed between [0.05, 1.0], got: {}",
+            eps
+        );
+        assert_eq!(status["epsilon_start"].as_f64().unwrap(), 1.0);
+        assert!((status["epsilon_min"].as_f64().unwrap() - 0.05).abs() < 1e-4);
+        assert_eq!(status["epsilon_decay_steps"].as_u64().unwrap(), 2000);
+        assert_eq!(status["min_replay_warmup"].as_u64().unwrap(), 256);
+        assert_eq!(status["exploration_phase"], "active_exploration");
+        let loss_hist = status["loss_history"]
+            .as_array()
+            .expect("loss_history must be array");
+        assert_eq!(
+            loss_hist.len(),
+            9,
+            "loss_history must contain exactly 9 mini-batch losses"
+        );
+        let reward_hist = status["reward_history"]
+            .as_array()
+            .expect("reward_history must be array");
+        assert_eq!(
+            reward_hist.len(),
+            9,
+            "reward_history must contain exactly 9 reward values"
+        );
         assert_eq!(status["active_lora_adapter"], "edr-reasoning-lora-v1");
-        assert!(status["total_episodes"].as_u64().unwrap() >= 4);
-        assert!(status["total_steps"].as_u64().unwrap() >= 10);
-        assert!(status["buffer_size"].as_u64().unwrap() >= 10);
+        assert!(status["total_episodes"].as_u64().unwrap() >= 64);
+        assert!(status["total_steps"].as_u64().unwrap() >= 300);
+        assert!(status["buffer_size"].as_u64().unwrap() >= 256);
         assert!(status["mean_loss"].as_f64().unwrap() > 0.0);
 
-        // 2. Step gym
+        // 2. Step gym with explicit action
         let step_req = SkyrlStepRequest {
             session_id: Some("test-session".to_string()),
             pid: Some(9999),
@@ -12083,6 +12262,21 @@ mod tests {
         assert_eq!(step_res["session_id"], "test-session");
         assert_eq!(step_res["step"], 1);
         assert!(step_res["thought_trace"].as_str().is_some());
+
+        // 2b. Autonomous epsilon-greedy action selection
+        let auto_step_req = SkyrlStepRequest {
+            session_id: Some("auto-epsilon-session".to_string()),
+            pid: Some(8124),
+            binary_path: Some(r"C:\Windows\Temp\payload.exe".to_string()),
+            is_malicious: Some(true),
+            action: None,
+            action_id: None,
+        };
+        let auto_step_res = post_skyrl_step(State(state.clone()), Json(auto_step_req))
+            .await
+            .0;
+        assert_eq!(auto_step_res["session_id"], "auto-epsilon-session");
+        assert!(auto_step_res["action"].as_str().is_some());
 
         // 3. Train batch
         let train_req = SkyrlTrainRequest {
@@ -15361,5 +15555,368 @@ mod f27_f28_tests {
             AuditFirstStateRollbackGuard::verify_anti_rollback_state(&anchor_v1, &anchor_v2)
                 .expect_err("Restoring older snapshot must trigger rollback detection");
         assert!(rollback_err.contains("OFFLINE_STATE_ROLLBACK_DETECTED"));
+    }
+
+    #[tokio::test]
+    async fn test_h13_bind_all_auth_enforcement_and_env_gateway_lockdown() {
+        let expected_token = get_or_init_dashboard_api_token();
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_h13_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. When bind_all is set (OSOOSI_DASHBOARD_BIND_ALL = 1), sensitive GET endpoints require auth
+        std::env::set_var("OSOOSI_DASHBOARD_BIND_ALL", "1");
+
+        // 1a. GET /api/threats without auth when bind_all=1 -> 401 UNAUTHORIZED
+        let req_threats = axum::http::Request::builder()
+            .uri("/api/threats")
+            .method(axum::http::Method::GET)
+            .header("x-test-require-auth", "1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_threats = app.clone().oneshot(req_threats).await.unwrap();
+        assert_eq!(
+            resp_threats.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "H13 VIOLATION: Sensitive GET /api/threats must require auth when bind_all is enabled"
+        );
+
+        // 1b. GET /api/env-gateway/config without auth when bind_all=1 -> 401 UNAUTHORIZED
+        let req_env_get = axum::http::Request::builder()
+            .uri("/api/env-gateway/config")
+            .method(axum::http::Method::GET)
+            .header("x-test-require-auth", "1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_env_get = app.clone().oneshot(req_env_get).await.unwrap();
+        assert_eq!(
+            resp_env_get.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "H13 VIOLATION: GET /api/env-gateway/config must require auth when bind_all is enabled"
+        );
+
+        // 1c. GET /health with bind_all=1 -> 200 OK (public non-sensitive bypass)
+        let req_health = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_health = app.clone().oneshot(req_health).await.unwrap();
+        assert_eq!(
+            resp_health.status(),
+            axum::http::StatusCode::OK,
+            "Public /health must succeed without auth even when bind_all is enabled"
+        );
+
+        // 1d. GET /api/health with bind_all=1 -> 200 OK (public non-sensitive bypass)
+        let req_api_health = axum::http::Request::builder()
+            .uri("/api/health")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_api_health = app.clone().oneshot(req_api_health).await.unwrap();
+        assert_eq!(
+            resp_api_health.status(),
+            axum::http::StatusCode::OK,
+            "Public /api/health must succeed without auth even when bind_all is enabled"
+        );
+
+        // Clean up bind_all environment variable
+        std::env::remove_var("OSOOSI_DASHBOARD_BIND_ALL");
+
+        // 2. All state-changing /api/env-gateway/* endpoints require auth (never in is_public_bypass)
+        let env_gateway_post_routes = [
+            "/api/env-gateway/config",
+            "/api/env-gateway/seal",
+            "/api/env-gateway/revert",
+            "/api/env-gateway/unseal-file",
+            "/api/env-gateway/watch",
+            "/api/env-gateway/test",
+        ];
+
+        for route in env_gateway_post_routes {
+            // Unauthenticated POST -> 401 UNAUTHORIZED
+            let req_unauth = axum::http::Request::builder()
+                .uri(route)
+                .method(axum::http::Method::POST)
+                .header("x-test-require-auth", "1")
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap();
+            let resp_unauth = app.clone().oneshot(req_unauth).await.unwrap();
+            assert_eq!(
+                resp_unauth.status(),
+                axum::http::StatusCode::UNAUTHORIZED,
+                "H13 VIOLATION: Unauthenticated POST {} must be rejected with 401",
+                route
+            );
+
+            // Authenticated POST with Bearer token -> passes auth (status is not 401)
+            let req_auth = axum::http::Request::builder()
+                .uri(route)
+                .method(axum::http::Method::POST)
+                .header("x-test-require-auth", "1")
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {}", expected_token),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap();
+            let resp_auth = app.clone().oneshot(req_auth).await.unwrap();
+            assert_ne!(
+                resp_auth.status(),
+                axum::http::StatusCode::UNAUTHORIZED,
+                "POST {} with valid Bearer token must pass auth",
+                route
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_skyrl_adversarial_epsilon_decay_and_exploration() {
+        // 1. Stress-test linear epsilon decay formula monotonicity & boundary clamping:
+        // E(t) = max(0.05, 1.0 - (t / 2000) * 0.95)
+        let mut server_state = SkyRlServerState::new();
+        server_state.epsilon_start = 1.0;
+        server_state.epsilon_min = 0.05;
+        server_state.epsilon_decay_steps = 2000;
+
+        let mut prev_eps = 1.0f32;
+        for t in 0..=2500 {
+            server_state.total_steps = t;
+            let current_eps = server_state.compute_epsilon();
+            assert!(
+                current_eps <= prev_eps + 1e-6,
+                "Epsilon decay violated monotonic non-increasing property at step {}: prev={}, current={}",
+                t, prev_eps, current_eps
+            );
+            if t < 2000 {
+                assert!(
+                    current_eps < prev_eps || t == 0,
+                    "Epsilon decay must be strictly decreasing prior to 2000 steps at step {}: prev={}, current={}",
+                    t, prev_eps, current_eps
+                );
+            } else {
+                assert_eq!(
+                    current_eps, 0.05,
+                    "Epsilon decay must clamp strictly at 0.05 for step >= 2000 at step {}: got {}",
+                    t, current_eps
+                );
+            }
+            prev_eps = current_eps;
+        }
+
+        // Clamp tests at step 2000 and 5000:
+        server_state.total_steps = 2000;
+        assert_eq!(server_state.compute_epsilon(), 0.05);
+        server_state.total_steps = 5000;
+        assert_eq!(server_state.compute_epsilon(), 0.05);
+        assert_eq!(server_state.exploration_phase(), "converged_exploitation");
+
+        // 2. Replay buffer warmup and scenario diversity verification:
+        let fresh_state = SkyRlServerState::new();
+        assert!(
+            fresh_state.total_episodes >= 70,
+            "Fresh SkyRL state warmup must cover all 70 diverse scenarios (40 malicious, 30 benign), got: {}",
+            fresh_state.total_episodes
+        );
+        assert!(
+            fresh_state.total_steps >= 350,
+            "Fresh SkyRL state warmup must execute at least 350 total steps, got: {}",
+            fresh_state.total_steps
+        );
+        assert!(
+            fresh_state.replay_buffer.len() >= 256,
+            "Replay buffer warmup must exceed min_replay_warmup threshold of 256, got: {}",
+            fresh_state.replay_buffer.len()
+        );
+        assert_eq!(fresh_state.exploration_phase(), "active_exploration");
+
+        // 3. Mini-batch Bellman TD losses and rolling 9-element histories:
+        assert_eq!(
+            fresh_state.loss_history.len(),
+            9,
+            "Loss history must contain exactly 9 entries"
+        );
+        assert_eq!(
+            fresh_state.reward_history.len(),
+            9,
+            "Reward history must contain exactly 9 entries"
+        );
+        for (i, &l) in fresh_state.loss_history.iter().enumerate() {
+            assert!(
+                l.is_finite() && !l.is_nan() && l >= 0.0,
+                "Loss history entry {} is non-finite or negative: {}",
+                i,
+                l
+            );
+        }
+        for (i, &r) in fresh_state.reward_history.iter().enumerate() {
+            assert!(
+                r.is_finite() && !r.is_nan(),
+                "Reward history entry {} is non-finite: {}",
+                i,
+                r
+            );
+        }
+
+        // Rolling history strictly capped at 9 entries under high push volume:
+        let mut test_history_state = SkyRlServerState::new();
+        for i in 1..=100 {
+            test_history_state.record_loss(i as f32 * 0.02);
+            test_history_state.record_reward(i as f32 * 0.05);
+            assert_eq!(test_history_state.loss_history.len(), 9);
+            assert_eq!(test_history_state.reward_history.len(), 9);
+        }
+        assert!((test_history_state.loss_history.last().copied().unwrap() - 2.0).abs() < 1e-4);
+        assert!((test_history_state.reward_history.last().copied().unwrap() - 5.0).abs() < 1e-4);
+
+        // 4. Epsilon-greedy action selection in post_skyrl_step:
+        let dashboard_state = DashboardState::new(None, None);
+
+        // 4a. Action unspecified: selects valid action autonomously
+        let auto_req = SkyrlStepRequest {
+            session_id: Some("adversarial-auto-session".to_string()),
+            pid: Some(5124),
+            binary_path: Some(r"C:\Windows\Temp\beacon.exe".to_string()),
+            is_malicious: Some(true),
+            action: None,
+            action_id: None,
+        };
+        let auto_res = post_skyrl_step(State(dashboard_state.clone()), Json(auto_req))
+            .await
+            .0;
+        let chosen_action = auto_res["action"]
+            .as_str()
+            .expect("Action must be present in response");
+        assert!(!chosen_action.is_empty(), "Chosen action must not be empty");
+        let action_id = auto_res["action_id"]
+            .as_u64()
+            .expect("action_id must be u64");
+        assert!(action_id < 9, "action_id must be in range [0, 8]");
+
+        // 4b. Protected process targeted: SafetyGuardrail invariant intercepts and forces Allow
+        let protected_req = SkyrlStepRequest {
+            session_id: Some("adversarial-protected-session".to_string()),
+            pid: Some(4),
+            binary_path: Some(r"C:\Windows\System32\ntoskrnl.exe".to_string()),
+            is_malicious: Some(false),
+            action: None,
+            action_id: None,
+        };
+        let protected_res = post_skyrl_step(State(dashboard_state.clone()), Json(protected_req))
+            .await
+            .0;
+        assert_eq!(
+            protected_res["guarded"], true,
+            "Protected kernel thread PID 4 must be flagged guarded"
+        );
+        assert_eq!(
+            protected_res["action"], "Allow",
+            "Protected process must always receive Allow action"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_skyrl_adversarial_dynamic_memory_law_and_autopull() {
+        // 1. Dynamic Available Memory Law (Anti-OOM) matrix verification:
+        // Free RAM >= 48 GB || Free VRAM >= 24 GB -> qwen2.5:32b
+        let (m, s) = select_calibrated_qwen_model(48.0, 0);
+        assert_eq!(m, "qwen2.5:32b");
+        assert_eq!(s, 19.0);
+        let (m, _) = select_calibrated_qwen_model(0.0, 24_000);
+        assert_eq!(m, "qwen2.5:32b");
+        let (m, _) = select_calibrated_qwen_model(50.0, 32_000);
+        assert_eq!(m, "qwen2.5:32b");
+
+        // Edge case: 47.99 GB RAM and 23,999 MB VRAM falls to 14b tier
+        let (m, s) = select_calibrated_qwen_model(47.99, 23_999);
+        assert_eq!(m, "qwen2.5:14b");
+        assert_eq!(s, 9.0);
+
+        // Free RAM >= 24 GB || Free VRAM >= 14 GB -> qwen2.5:14b
+        let (m, s) = select_calibrated_qwen_model(24.0, 0);
+        assert_eq!(m, "qwen2.5:14b");
+        assert_eq!(s, 9.0);
+        let (m, _) = select_calibrated_qwen_model(0.0, 14_000);
+        assert_eq!(m, "qwen2.5:14b");
+
+        // Edge case: 23.99 GB RAM and 13,999 MB VRAM falls to 7b tier
+        let (m, s) = select_calibrated_qwen_model(23.99, 13_999);
+        assert_eq!(m, "qwen2.5:7b");
+        assert_eq!(s, 4.7);
+
+        // Free RAM >= 12 GB || Free VRAM >= 4.5 GB -> qwen2.5:7b
+        let (m, s) = select_calibrated_qwen_model(12.0, 0);
+        assert_eq!(m, "qwen2.5:7b");
+        assert_eq!(s, 4.7);
+        let (m, _) = select_calibrated_qwen_model(0.0, 4_500);
+        assert_eq!(m, "qwen2.5:7b");
+
+        // Edge case: 11.99 GB RAM and 4,499 MB VRAM falls to 3b tier
+        let (m, s) = select_calibrated_qwen_model(11.99, 4_499);
+        assert_eq!(m, "qwen2.5:3b");
+        assert_eq!(s, 2.0);
+
+        // Free RAM >= 6 GB || Free VRAM >= 2 GB -> qwen2.5:3b
+        let (m, s) = select_calibrated_qwen_model(6.0, 0);
+        assert_eq!(m, "qwen2.5:3b");
+        assert_eq!(s, 2.0);
+        let (m, _) = select_calibrated_qwen_model(0.0, 2_000);
+        assert_eq!(m, "qwen2.5:3b");
+
+        // Edge case: 5.99 GB RAM and 1,999 MB VRAM falls to 1.5b tier
+        let (m, s) = select_calibrated_qwen_model(5.99, 1_999);
+        assert_eq!(m, "qwen2.5:1.5b");
+        assert_eq!(s, 1.0);
+
+        // Zero / low resources -> qwen2.5:1.5b
+        let (m, s) = select_calibrated_qwen_model(0.0, 0);
+        assert_eq!(m, "qwen2.5:1.5b");
+        assert_eq!(s, 1.0);
+
+        // Strict invariant: Never append -coder suffix across all tiers
+        for (ram, vram) in [
+            (64.0, 32_000),
+            (32.0, 16_000),
+            (16.0, 8_000),
+            (8.0, 3_000),
+            (4.0, 1_000),
+        ] {
+            let (m, _) = select_calibrated_qwen_model(ram, vram);
+            assert!(
+                !m.contains("-coder"),
+                "Model name '{}' must never contain forbidden -coder suffix",
+                m
+            );
+        }
+
+        // 2. Non-blocking asynchronous model auto-pull:
+        let test_model = format!("qwen2.5:test-probe-{}", rand::random::<u32>());
+        let start = std::time::Instant::now();
+        trigger_background_model_pull(test_model.clone(), "http://127.0.0.1:11434".to_string());
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 150,
+            "trigger_background_model_pull must return immediately without blocking, took: {:?}",
+            elapsed
+        );
+        assert!(
+            MODEL_PULL_TRACKER.contains_key(&test_model),
+            "Triggered pull must be tracked immediately in MODEL_PULL_TRACKER"
+        );
+        let progress = MODEL_PULL_TRACKER.get(&test_model).unwrap();
+        assert!(
+            progress.status == "queued" || progress.status == "pulling",
+            "Initial status must be queued or pulling, got: {}",
+            progress.status
+        );
+        drop(progress);
+        MODEL_PULL_TRACKER.remove(&test_model);
     }
 }

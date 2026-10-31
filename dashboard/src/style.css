@@ -2182,3 +2182,44 @@ input[type="checkbox"][switch]:focus-visible {
 .p2p-top-switch-pill:hover {
     border-color: rgba(56, 189, 248, 0.5);
 }
+
+/* =========================================================================
+   Dynamic Ollama Model Guidance & Terminal Pills
+   ========================================================================= */
+
+.terminal-command-pill {
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.terminal-command-pill:hover {
+    border-color: rgba(0, 210, 255, 0.3);
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.model-pill-clickable {
+    background: rgba(0, 210, 255, 0.12);
+    color: var(--accent-blue);
+    border: 1px solid rgba(0, 210, 255, 0.22);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.model-pill-clickable:hover {
+    background: rgba(0, 210, 255, 0.22);
+    border-color: rgba(0, 210, 255, 0.45);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 210, 255, 0.15);
+}
+
+.model-pill-clickable.active-selected {
+    background: rgba(0, 255, 127, 0.15);
+    color: var(--accent-green);
+    border-color: rgba(0, 255, 127, 0.35);
+}

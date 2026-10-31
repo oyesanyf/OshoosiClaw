@@ -64,7 +64,45 @@ impl HardwareTier {
     }
 }
 
+/// Strips any `-coder` suffix from model names (e.g. `qwen2.5-coder:7b` -> `qwen2.5:7b`,
+/// `qwen2.5-coder` -> `qwen2.5`) so `-coder` suffixes never trigger silent 404 aborts.
+pub fn sanitize_ollama_model_tag(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let replaced = trimmed.replace("-coder:", ":");
+    if let Some(stripped) = replaced.strip_suffix("-coder") {
+        stripped.to_string()
+    } else {
+        replaced
+    }
+}
+
+/// Evaluates runtime free/available memory (RAM and GPU VRAM) and returns the optimal
+/// model identifier and its estimated minimum memory footprint (in GB).
+pub fn select_dynamic_model_by_available_memory(
+    res: &SystemResourceSummary,
+) -> (&'static str, f64) {
+    if res.free_ram_gb >= 48.0 || res.free_vram_mb >= 24_000 {
+        ("qwen2.5:32b", 19.0)
+    } else if res.free_ram_gb >= 24.0 || res.free_vram_mb >= 14_000 {
+        ("qwen2.5:14b", 9.0)
+    } else if res.free_ram_gb >= 12.0 || res.free_vram_mb >= 4_500 {
+        ("qwen2.5:7b", 4.7)
+    } else if res.free_ram_gb >= 6.0 || res.free_vram_mb >= 2_000 {
+        ("qwen2.5:3b", 1.9)
+    } else {
+        ("qwen2.5:1.5b", 1.0)
+    }
+}
+
 impl SystemResourceSummary {
+    /// Selects optimal dynamic Qwen model based on runtime free/available memory.
+    pub fn select_dynamic_qwen_model(&self) -> (&'static str, f64) {
+        select_dynamic_model_by_available_memory(self)
+    }
+
     /// Determines hardware tier according to available CPU threads, RAM, and GPU VRAM,
     /// enforcing ModelFusion available-memory laws to prevent runtime OOM aborts.
     pub fn determine_tier(&self) -> HardwareTier {
@@ -416,6 +454,9 @@ pub fn select_optimal_models(
     let tier = res.determine_tier();
     let tier_label = tier.label().to_string();
 
+    let clean_fast = sanitize_ollama_model_tag(configured_fast_model);
+    let clean_deep = sanitize_ollama_model_tag(configured_deep_model);
+
     // 1. Fast Model Selection (Real-Time Event Triage)
     let fast_candidates = [
         "deepseek-r1:1.5b",
@@ -425,16 +466,16 @@ pub fn select_optimal_models(
         "phi3:mini",
     ];
 
-    let fast_model = if !configured_fast_model.is_empty()
+    let fast_model = if !clean_fast.is_empty()
         && installed_ollama_models
             .iter()
-            .any(|inst| model_matches(configured_fast_model, inst))
+            .any(|inst| model_matches(&clean_fast, inst))
     {
-        configured_fast_model.to_string()
+        clean_fast
     } else if let Some(m) = find_installed_match(&fast_candidates, installed_ollama_models) {
         m
-    } else if !configured_fast_model.is_empty() {
-        configured_fast_model.to_string()
+    } else if !clean_fast.is_empty() {
+        clean_fast
     } else {
         "deepseek-r1:1.5b".to_string()
     };
@@ -444,26 +485,37 @@ pub fn select_optimal_models(
         HardwareTier::Tier4Enterprise => &[
             "deepseek-r1:32b",
             "qwen2.5:32b",
+            "glm-5:latest",
+            "glm-4.5:latest",
+            "glm4:9b",
             "fenkohq/foundation-sec-8b:latest",
             "fenkohq/foundation-sec-8b",
         ],
         HardwareTier::Tier3HighPerf => &[
             "qwen2.5:14b",
+            "glm4:9b",
+            "glm-4.5:latest",
             "fenkohq/foundation-sec-8b",
             "deepseek-r1:7b",
             "qwen2.5:7b",
         ],
-        HardwareTier::Tier2MidRange => {
-            &["qwen2.5:7b", "deepseek-r1:7b", "fenkohq/foundation-sec-8b"]
+        HardwareTier::Tier2MidRange => &[
+            "qwen2.5:7b",
+            "glm4:9b",
+            "deepseek-r1:7b",
+            "fenkohq/foundation-sec-8b",
+            "qwen2.5:3b",
+        ],
+        HardwareTier::Tier1Constrained => {
+            &["deepseek-r1:1.5b", "qwen2.5:1.5b", "qwen2.5:3b", "glm4:9b"]
         }
-        HardwareTier::Tier1Constrained => &["deepseek-r1:1.5b", "qwen2.5:1.5b", "qwen2.5:3b"],
     };
 
     let deep_model = if let Some(m) = find_installed_match(deep_candidates, installed_ollama_models)
     {
         m
-    } else if !configured_deep_model.is_empty() {
-        configured_deep_model.to_string()
+    } else if !clean_deep.is_empty() {
+        clean_deep
     } else {
         deep_candidates
             .first()
@@ -473,7 +525,8 @@ pub fn select_optimal_models(
     };
 
     // 3. Recommended Device Placement
-    let is_large_model = deep_model.contains("32b") || deep_model.contains("70b");
+    let is_large_model =
+        deep_model.contains("32b") || deep_model.contains("70b") || deep_model.contains("glm-5");
     let recommended_device = if res.has_gpu && is_large_model {
         if res.total_vram_mb >= 22_000 && res.free_vram_mb >= 16_000 {
             "GPU (CUDA / Tensor Cores)".to_string()
@@ -817,6 +870,329 @@ fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String
     }
 }
 
+/// Resolves cross-platform path to the local `ollama` executable.
+pub fn resolve_ollama_binary() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        // 1. %LOCALAPPDATA%\Programs\Ollama\ollama.exe
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let p = std::path::PathBuf::from(local_app_data)
+                .join("Programs")
+                .join("Ollama")
+                .join("ollama.exe");
+            if p.is_file() {
+                return p;
+            }
+        }
+
+        // 2. C:\Program Files\Ollama\ollama.exe
+        let pf = std::path::PathBuf::from(r"C:\Program Files\Ollama\ollama.exe");
+        if pf.is_file() {
+            return pf;
+        }
+
+        // 3. C:\Program Files (x86)\Ollama\ollama.exe
+        let pfx86 = std::path::PathBuf::from(r"C:\Program Files (x86)\Ollama\ollama.exe");
+        if pfx86.is_file() {
+            return pfx86;
+        }
+
+        // 4. C:\Users\*\AppData\Local\Programs\Ollama\ollama.exe
+        if let Ok(users_dir) = std::fs::read_dir(r"C:\Users") {
+            for entry in users_dir.flatten() {
+                let user_ollama = entry
+                    .path()
+                    .join("AppData")
+                    .join("Local")
+                    .join("Programs")
+                    .join("Ollama")
+                    .join("ollama.exe");
+                if user_ollama.is_file() {
+                    return user_ollama;
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for candidate in [
+            "/usr/local/bin/ollama",
+            "/usr/bin/ollama",
+            "/snap/bin/ollama",
+        ] {
+            let p = std::path::PathBuf::from(candidate);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        for candidate in [
+            "/opt/homebrew/bin/ollama",
+            "/usr/local/bin/ollama",
+            "/Applications/Ollama.app/Contents/Resources/ollama",
+        ] {
+            let p = std::path::PathBuf::from(candidate);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+
+    // Check system PATH
+    if let Ok(path_var) = std::env::var("PATH") {
+        for path_entry in std::env::split_paths(&path_var) {
+            #[cfg(target_os = "windows")]
+            let bin_path = path_entry.join("ollama.exe");
+            #[cfg(not(target_os = "windows"))]
+            let bin_path = path_entry.join("ollama");
+
+            if bin_path.is_file() {
+                return bin_path;
+            }
+        }
+    }
+
+    std::path::PathBuf::from("ollama")
+}
+
+/// Dynamic pull status for an Ollama model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicModelPullState {
+    pub model: String,
+    pub status: String,
+    pub message: String,
+    pub command_hint: String,
+    pub updated_at_epoch_ms: u64,
+}
+
+static DYNAMIC_MODEL_PULL_STATES: OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, DynamicModelPullState>>,
+> = OnceLock::new();
+
+/// Returns current dynamic model pull states across the process.
+pub fn get_dynamic_model_pull_states() -> Vec<DynamicModelPullState> {
+    let store = DYNAMIC_MODEL_PULL_STATES
+        .get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    if let Ok(guard) = store.read() {
+        guard.values().cloned().collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Asynchronously ensures an Ollama model is installed in the background without blocking.
+///
+/// Returns true if a background download was initiated, or false if already installed/pulling.
+pub fn ensure_ollama_model_installed_background(ollama_endpoint: &str, model: &str) -> bool {
+    let clean_model = sanitize_ollama_model_tag(model);
+    if clean_model.is_empty() {
+        return false;
+    }
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let store = DYNAMIC_MODEL_PULL_STATES
+        .get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+    // 1. Check if already recorded as installed or currently pulling
+    if let Ok(guard) = store.read() {
+        if let Some(state) = guard.get(&clean_model) {
+            if state.status == "pulling" || state.status == "installed" {
+                return false;
+            }
+        }
+    }
+
+    // 2. Check if already present in discovered disk manifests or cache
+    let is_already_installed = {
+        let in_cache = LAST_INSTALLED_OLLAMA_MODELS
+            .get()
+            .and_then(|lock| lock.read().ok())
+            .map(|list| list.iter().any(|inst| model_matches(&clean_model, inst)))
+            .unwrap_or(false);
+        in_cache
+            || discover_disk_ollama_manifests()
+                .iter()
+                .any(|inst| model_matches(&clean_model, inst))
+    };
+
+    if is_already_installed {
+        if let Ok(mut guard) = store.write() {
+            guard.insert(
+                clean_model.clone(),
+                DynamicModelPullState {
+                    model: clean_model.clone(),
+                    status: "installed".to_string(),
+                    message: format!("Model '{}' is already installed locally.", clean_model),
+                    command_hint: format!("ollama run {}", clean_model),
+                    updated_at_epoch_ms: now_ms,
+                },
+            );
+        }
+        return false;
+    }
+
+    // 3. Mark state as pulling
+    if let Ok(mut guard) = store.write() {
+        guard.insert(
+            clean_model.clone(),
+            DynamicModelPullState {
+                model: clean_model.clone(),
+                status: "pulling".to_string(),
+                message: format!(
+                    "Initiating dynamic background download for '{}'...",
+                    clean_model
+                ),
+                command_hint: format!("ollama pull {}", clean_model),
+                updated_at_epoch_ms: now_ms,
+            },
+        );
+    }
+
+    let ep = ollama_endpoint.to_string();
+    let target_model = clean_model.clone();
+
+    let _ = std::thread::Builder::new()
+        .name("osoosi-ollama-autopull".to_string())
+        .spawn(move || {
+            let (tags_url, pull_url) = if ep.trim().is_empty() {
+                ("http://127.0.0.1:11434/api/tags".to_string(), "http://127.0.0.1:11434/api/pull".to_string())
+            } else if let Ok(mut parsed) = reqwest::Url::parse(&ep) {
+                parsed.set_path("/api/tags");
+                parsed.set_query(None);
+                let t = parsed.to_string();
+                parsed.set_path("/api/pull");
+                let p = parsed.to_string();
+                (t, p)
+            } else {
+                ("http://127.0.0.1:11434/api/tags".to_string(), "http://127.0.0.1:11434/api/pull".to_string())
+            };
+
+            // Step 1: Health probe on /api/tags (400ms timeout)
+            let is_reachable = reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_millis(250))
+                .timeout(Duration::from_millis(400))
+                .build()
+                .ok()
+                .and_then(|c| c.get(&tags_url).send().ok())
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            if !is_reachable {
+                let bin = resolve_ollama_binary();
+                if bin.is_file() {
+                    let mut serve_cmd = Command::new(&bin);
+                    serve_cmd.arg("serve");
+                    serve_cmd.stdin(std::process::Stdio::null());
+                    serve_cmd.stdout(std::process::Stdio::null());
+                    serve_cmd.stderr(std::process::Stdio::null());
+                    #[cfg(target_os = "windows")]
+                    serve_cmd.creation_flags(CREATE_NO_WINDOW);
+
+                    let _ = serve_cmd.spawn();
+                    std::thread::sleep(Duration::from_millis(1500));
+                }
+            }
+
+            // Step 2: POST /api/pull with timeout 600s
+            let mut pull_succeeded = false;
+            let mut error_diag = String::new();
+
+            if let Ok(pull_client) = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(600))
+                .build()
+            {
+                let payload = serde_json::json!({
+                    "name": target_model,
+                    "stream": false
+                });
+                match pull_client.post(&pull_url).json(&payload).send() {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            pull_succeeded = true;
+                        } else {
+                            error_diag = format!("REST /api/pull returned HTTP status {}", resp.status());
+                        }
+                    }
+                    Err(e) => {
+                        error_diag = format!("REST /api/pull request error: {}", e);
+                    }
+                }
+            }
+
+            // Step 3: CLI fallback if REST /api/pull failed
+            if !pull_succeeded {
+                let bin = resolve_ollama_binary();
+                let mut cli_cmd = Command::new(&bin);
+                cli_cmd.args(["pull", &target_model]);
+                cli_cmd.stdin(std::process::Stdio::null());
+                cli_cmd.stdout(std::process::Stdio::null());
+                cli_cmd.stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                cli_cmd.creation_flags(CREATE_NO_WINDOW);
+
+                if let Ok(status) = cli_cmd.status() {
+                    if status.success() {
+                        pull_succeeded = true;
+                    } else {
+                        error_diag = format!("CLI 'ollama pull' exited with status {:?}", status.code());
+                    }
+                } else {
+                    error_diag = format!("Failed to spawn CLI 'ollama pull' using {:?}", bin);
+                }
+            }
+
+            // Step 4: Refresh installed cache and record completion / error state
+            let updated_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let store = DYNAMIC_MODEL_PULL_STATES
+                .get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+            if pull_succeeded {
+                let _ = query_installed_ollama_models_sync(&ep);
+                if let Ok(mut guard) = store.write() {
+                    guard.insert(
+                        target_model.clone(),
+                        DynamicModelPullState {
+                            model: target_model.clone(),
+                            status: "installed".to_string(),
+                            message: format!("Model '{}' successfully installed and ready for inference.", target_model),
+                            command_hint: format!("ollama run {}", target_model),
+                            updated_at_epoch_ms: updated_ms,
+                        },
+                    );
+                }
+                tracing::info!("Dynamic LLM download completed successfully for model '{}'.", target_model);
+            } else {
+                if let Ok(mut guard) = store.write() {
+                    guard.insert(
+                        target_model.clone(),
+                        DynamicModelPullState {
+                            model: target_model.clone(),
+                            status: "error".to_string(),
+                            message: format!("Failed to dynamically pull model '{}': {}", target_model, error_diag),
+                            command_hint: format!("ollama pull {}", target_model),
+                            updated_at_epoch_ms: updated_ms,
+                        },
+                    );
+                }
+                tracing::warn!("Dynamic LLM download failed for model '{}': {}. Command hint: 'ollama pull {}'.", target_model, error_diag, target_model);
+            }
+        });
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1136,5 +1512,133 @@ mod tests {
         let disk_models = discover_disk_ollama_manifests();
         // Manifest discovery should return without crashing, scanning registry directories if present
         assert!(disk_models.is_empty() || !disk_models.is_empty());
+    }
+
+    #[test]
+    fn test_select_dynamic_model_by_available_memory_tiers() {
+        // Tier 5: >= 48GB RAM or >= 24GB VRAM -> qwen2.5:32b
+        let t5_ram = SystemResourceSummary {
+            cpu_name: "Host".into(),
+            logical_cores: 32,
+            total_ram_gb: 64.0,
+            free_ram_gb: 50.0,
+            gpu_name: "None".into(),
+            total_vram_mb: 0,
+            free_vram_mb: 0,
+            has_gpu: false,
+            free_disk_gb: 100.0,
+            total_disk_gb: 500.0,
+            disks: vec![],
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t5_ram).0,
+            "qwen2.5:32b"
+        );
+        assert_eq!(t5_ram.select_dynamic_qwen_model().0, "qwen2.5:32b");
+
+        let t5_vram = SystemResourceSummary {
+            free_ram_gb: 8.0,
+            free_vram_mb: 24500,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t5_vram).0,
+            "qwen2.5:32b"
+        );
+
+        // Tier 4: >= 24GB RAM or >= 14GB VRAM -> qwen2.5:14b
+        let t4_ram = SystemResourceSummary {
+            free_ram_gb: 25.0,
+            free_vram_mb: 1000,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t4_ram).0,
+            "qwen2.5:14b"
+        );
+
+        let t4_vram = SystemResourceSummary {
+            free_ram_gb: 4.0,
+            free_vram_mb: 15000,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t4_vram).0,
+            "qwen2.5:14b"
+        );
+
+        // Tier 3: >= 12GB RAM or >= 4.5GB VRAM -> qwen2.5:7b
+        let t3_ram = SystemResourceSummary {
+            free_ram_gb: 13.0,
+            free_vram_mb: 1000,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t3_ram).0,
+            "qwen2.5:7b"
+        );
+
+        let t3_vram = SystemResourceSummary {
+            free_ram_gb: 4.0,
+            free_vram_mb: 5000,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t3_vram).0,
+            "qwen2.5:7b"
+        );
+
+        // Tier 2: >= 6GB RAM or >= 2GB VRAM -> qwen2.5:3b
+        let t2_ram = SystemResourceSummary {
+            free_ram_gb: 6.5,
+            free_vram_mb: 500,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t2_ram).0,
+            "qwen2.5:3b"
+        );
+
+        let t2_vram = SystemResourceSummary {
+            free_ram_gb: 3.0,
+            free_vram_mb: 2500,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t2_vram).0,
+            "qwen2.5:3b"
+        );
+
+        // Tier 1: Otherwise -> qwen2.5:1.5b
+        let t1 = SystemResourceSummary {
+            free_ram_gb: 3.5,
+            free_vram_mb: 1000,
+            ..t5_ram.clone()
+        };
+        assert_eq!(
+            select_dynamic_model_by_available_memory(&t1).0,
+            "qwen2.5:1.5b"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_ollama_model_tag_strips_coder_suffix() {
+        assert_eq!(sanitize_ollama_model_tag("qwen2.5-coder:7b"), "qwen2.5:7b");
+        assert_eq!(
+            sanitize_ollama_model_tag("qwen2.5-coder:14b"),
+            "qwen2.5:14b"
+        );
+        assert_eq!(sanitize_ollama_model_tag("qwen2.5-coder"), "qwen2.5");
+        assert_eq!(sanitize_ollama_model_tag("qwen2.5:32b"), "qwen2.5:32b");
+        assert_eq!(
+            sanitize_ollama_model_tag("deepseek-r1:1.5b"),
+            "deepseek-r1:1.5b"
+        );
+    }
+
+    #[test]
+    fn test_resolve_ollama_binary_does_not_panic() {
+        let bin = resolve_ollama_binary();
+        assert!(!bin.as_os_str().is_empty());
     }
 }

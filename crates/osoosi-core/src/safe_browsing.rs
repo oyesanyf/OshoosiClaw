@@ -365,7 +365,7 @@ impl GoogleSafeBrowsingEngine {
     }
 
     pub fn configured_api_key() -> Option<String> {
-        if let Ok(k) = std::env::var("GOOGLE_SAFE_BROWSING_API_KEY") {
+        if let Some(k) = osoosi_types::resolve_env_or_standin("GOOGLE_SAFE_BROWSING_API_KEY") {
             let trimmed = k.trim();
             if !trimmed.is_empty() {
                 return Some(trimmed.to_string());
@@ -378,7 +378,10 @@ impl GoogleSafeBrowsingEngine {
                 if let Some(val) = l.strip_prefix("GOOGLE_SAFE_BROWSING_API_KEY=") {
                     let clean = val.trim().trim_matches('"').trim_matches('\'');
                     if !clean.is_empty() {
-                        return Some(clean.to_string());
+                        return Some(osoosi_types::resolve_value_or_standin(
+                            "GOOGLE_SAFE_BROWSING_API_KEY",
+                            clean,
+                        ));
                     }
                 }
             }
