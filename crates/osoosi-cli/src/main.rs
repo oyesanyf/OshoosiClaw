@@ -2924,34 +2924,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                 "============================================================"
                             );
 
-                            // Jointly enumerate .env + std::env::vars() to show discovery status
+                            // Jointly enumerate HKCU\Environment + .env + std::env::vars() (recovering vault secrets for stand-ins)
                             let target_path = status
                                 .target_path
                                 .as_deref()
                                 .unwrap_or_else(|| std::path::Path::new(".env"));
-                            let mut pairs = Vec::new();
-                            let mut seen_keys = std::collections::HashSet::new();
-                            if target_path.exists() {
-                                if let Ok(content) = std::fs::read_to_string(target_path) {
-                                    for line in content.lines() {
-                                        let trimmed = line.trim();
-                                        if !trimmed.starts_with('#') && trimmed.contains('=') {
-                                            let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
-                                            let k = parts[0].trim().to_string();
-                                            seen_keys.insert(k.clone());
-                                            pairs.push((k, parts[1].trim().to_string()));
-                                        }
-                                    }
-                                }
-                            }
-                            for (k, v) in std::env::vars() {
-                                if !seen_keys.contains(&k) {
-                                    seen_keys.insert(k.clone());
-                                    pairs.push((k, v));
-                                }
-                            }
-
-                            let enum_res = osoosi_core::protected_env_backup::LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs);
+                            let enum_res = ProtectedEnvBackupVault::enumerate_current_state(
+                                target_path,
+                                &path,
+                            );
                             println!();
                             println!("=========================================================================================");
                             println!("  Active 3-Arm LLM Fusion API Key Discovery & Zero-Touch Protection State");
@@ -2973,6 +2954,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                     && (c.key.eq_ignore_ascii_case("path")
                                         || c.key.eq_ignore_ascii_case("java_home")
                                         || c.key.eq_ignore_ascii_case("onedrive")
+                                        || c.key.eq_ignore_ascii_case("onedriveconsumer")
                                         || c.key.eq_ignore_ascii_case("temp")
                                         || c.key.eq_ignore_ascii_case("ollama_origins")
                                         || c.key.starts_with("ANTIGRAVITY_")
@@ -3047,6 +3029,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                     && (c.key.eq_ignore_ascii_case("path")
                                         || c.key.eq_ignore_ascii_case("java_home")
                                         || c.key.eq_ignore_ascii_case("onedrive")
+                                        || c.key.eq_ignore_ascii_case("onedriveconsumer")
                                         || c.key.eq_ignore_ascii_case("temp")
                                         || c.key.eq_ignore_ascii_case("ollama_origins")
                                         || c.key.starts_with("ANTIGRAVITY_")
