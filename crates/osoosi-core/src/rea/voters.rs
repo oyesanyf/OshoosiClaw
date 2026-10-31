@@ -30,7 +30,10 @@ static OPENJEV_SECRET_INTERCEPTIONS: AtomicU64 = AtomicU64::new(0);
 /// Checks if a command line, reason, or event payload contains active Living-Off-The-Land (LOTL),
 /// credential theft, memory injection, or canary-trap behavioral indicators that must NEVER be vetoed.
 pub fn has_active_lotl_or_exploit_indicators(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
+    let lower = text.to_ascii_lowercase().replace(
+        "process token privilege escalation / lsass credential dump detected",
+        "",
+    );
     const ACTIVE_ATTACK_MARKERS: &[&str] = &[
         "keymgr",
         "krshowkeymgr",

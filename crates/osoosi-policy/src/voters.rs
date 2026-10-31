@@ -2778,12 +2778,35 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // 7c. Linux process memory dumping targeting credential processes or /proc memory scraping
-        let is_gdb_or_gcore = (image.contains("gcore") || cmdline.contains("gcore"))
-            || ((image.contains("gdb") || cmdline.contains("gdb"))
-                && (cmdline.contains("-p")
-                    || cmdline.contains("--pid")
-                    || cmdline.contains("attach")
-                    || cmdline.contains("dump memory")));
+        let is_compiler_or_linker_invocation = image.ends_with("rustc.exe")
+            || image.ends_with("/rustc")
+            || image.ends_with("\\rustc")
+            || image == "rustc"
+            || image == "rustc.exe"
+            || image.ends_with("cargo.exe")
+            || image.ends_with("/cargo")
+            || image.ends_with("rust-lld.exe")
+            || image.ends_with("lld-link.exe")
+            || image.ends_with("cl.exe")
+            || image.ends_with("link.exe")
+            || (cmdline.contains("--crate-name") && cmdline.contains("--edition"));
+        let has_gdb_attach_flag = cmdline.contains(" -p ")
+            || cmdline.contains("\t-p ")
+            || cmdline.ends_with(" -p")
+            || cmdline.contains("--pid")
+            || cmdline.contains("attach ")
+            || cmdline.contains("dump memory")
+            || cmdline.contains("generate-core-file");
+        let has_gdb_binary = image.ends_with("gdb")
+            || image.ends_with("gdb.exe")
+            || cmdline.starts_with("gdb ")
+            || cmdline.contains(" gdb ")
+            || cmdline.contains("/gdb ");
+        let is_gdb_or_gcore = !is_compiler_or_linker_invocation
+            && ((image.contains("gcore")
+                || cmdline.contains("gcore ")
+                || cmdline.ends_with("gcore"))
+                || (has_gdb_binary && has_gdb_attach_flag));
         let is_proc_mem_scrape = cmdline.contains("/mem")
             && (cmdline.contains("/proc/")
                 || image.contains("dd")
@@ -2795,7 +2818,8 @@ impl ThreatVoter for CredentialGuardVoter {
         let cred_procs = [
             "sshd",
             "sudo",
-            "su",
+            "/bin/su",
+            " su ",
             "gpg-agent",
             "ssh-agent",
             "gnome-keyring",
@@ -2807,7 +2831,8 @@ impl ThreatVoter for CredentialGuardVoter {
         let targets_cred_proc = cred_procs
             .iter()
             .any(|p| cmdline.contains(p) || target_image.contains(p));
-        if (is_gdb_or_gcore && (targets_cred_proc || cmdline.contains("dump")))
+        if (is_gdb_or_gcore
+            && (targets_cred_proc || cmdline.contains("dump memory") || cmdline.contains("gcore")))
             || (is_proc_mem_scrape && (targets_cred_proc || cmdline.contains("/proc/self/mem")))
         {
             return Some(VoteResult {

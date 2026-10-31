@@ -17,7 +17,10 @@ fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a s
 
 fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
     let p = Path::new(path);
-    if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
+    if p.is_file()
+        && (crate::win_trust::is_trusted_signed_binary(p)
+            || crate::rea::verify_dynamic_binary_trust(p))
+    {
         return true;
     }
 

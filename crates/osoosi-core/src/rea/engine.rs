@@ -491,6 +491,7 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
         && (reason_lower.contains("independent=1")
             || !reason_lower.contains("evidenceorchestrator:"))
         && (reason_lower.contains("behavioral threat model: high-risk pattern detected")
+            || reason_lower.contains("clef-decision-model: malicious")
             || reason_lower.contains("chaotic phase-space trajectory breakout")
             || reason_lower.contains("diverged from benign limit cycle")
             || reason_lower.contains("agentic trajectory escape threshold exceeded")
@@ -620,6 +621,10 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
                 | "cargo"
                 | "rustc.exe"
                 | "rustc"
+                | "rust-lld.exe"
+                | "lld-link.exe"
+                | "cl.exe"
+                | "link.exe"
                 | "node.exe"
                 | "node"
                 | "cmd.exe"
@@ -628,6 +633,9 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
                 | "signtool.exe"
                 | "osoosi.exe"
                 | "osoosi-cli.exe"
+                | "osoosi-auditor.exe"
+                | "velociraptor.exe"
+                | "velociraptor"
                 | "svchost.exe"
         ) {
             return true;

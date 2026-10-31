@@ -1302,3 +1302,44 @@ fn test_rea_and_voters_adjudicate_threat_intelligence_candidates() {
         );
     }
 }
+
+#[test]
+fn test_rea_consensus_ledger_rustc_and_velociraptor_adjudication() {
+    let engine = AutonomousReaEngine::new();
+
+    // 1. velociraptor.exe single-voter Clef-Decision-Model false positive from Consensus Decision Ledger
+    let velociraptor_reason = "[Clef-Decision-Model]: Clef-Decision-Model: malicious (action=isolate, prob=0.989, provider=local_clef_engine); EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.99 confidence=0.63";
+    assert!(
+        is_rea_benign_system_or_dev_process("velociraptor.exe", Some(velociraptor_reason)),
+        "velociraptor.exe single-voter Clef-Decision-Model heuristic must be vetoed by REA"
+    );
+    let (velo_veto, velo_msg, _) = engine.adjudicate_process_or_binary_alert(
+        Some("velociraptor.exe"),
+        None,
+        Some(velociraptor_reason),
+    );
+    assert!(
+        velo_veto,
+        "REA adjudicate_process_or_binary_alert must veto velociraptor.exe: {}",
+        velo_msg
+    );
+
+    // 2. Microsoft_Visual_Cpp_80 compiler signature must be classified as informational CRT/compiler YARA rule
+    assert!(
+        osoosi_model::malware::is_informational_or_crt_yara_rule("Microsoft_Visual_Cpp_80"),
+        "Microsoft_Visual_Cpp_80 must be recognized as an informational compiler YARA rule"
+    );
+
+    // 3. rustc.exe compiling wasmtime_internal_jit_debug must pass verify_dynamic_binary_trust and REA adjudication
+    let rustc_reason = r#"[YaraX-Signatures]: YaraX: THREAT detected - Microsoft_Visual_Cpp_80; [CredentialGuard-Memory]: [CredentialGuard-Memory]: Linux Process Memory Credential Dumping (T1003.007): "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe" --crate-name wasmtime_internal_jit_debug --edition=2024 --cfg feature="gdb_jit_int" --cfg feature="perf_jitdump" -l static=gdbjit-helpers; [Asymmetric-Veto]: AsymmetricOverriddenVeto [Deterministic Invariant Violation]: Process token privilege escalation / LSASS credential dump detected"#;
+    let (rustc_veto, rustc_msg, _) = engine.adjudicate_process_or_binary_alert(
+        Some("rustc.exe"),
+        Some(r"C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe"),
+        Some(rustc_reason),
+    );
+    assert!(
+        rustc_veto,
+        "REA adjudicate_process_or_binary_alert must veto rustc.exe compiling wasmtime_internal_jit_debug: {}",
+        rustc_msg
+    );
+}
