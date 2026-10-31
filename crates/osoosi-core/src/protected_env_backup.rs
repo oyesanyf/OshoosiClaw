@@ -146,7 +146,10 @@ impl ProtectedEnvBackupVault {
 
         // Verify keyed BLAKE3 MAC
         let expected_tag = blake3::keyed_hash(&key_bytes, &envelope[..64 + ct_len]);
-        if subtle::ConstantTimeEq::ct_eq(expected_tag.as_bytes().as_slice(), provided_tag).unwrap_u8() == 0 {
+        if subtle::ConstantTimeEq::ct_eq(expected_tag.as_bytes().as_slice(), provided_tag)
+            .unwrap_u8()
+            == 0
+        {
             return Err(VaultError::IntegrityFailure);
         }
 
@@ -164,8 +167,8 @@ impl ProtectedEnvBackupVault {
 
     /// Encrypts and writes a vault payload to disk with keyed BLAKE3 MAC and NTFS DACL.
     fn write_vault_payload(vault_path: &Path, payload: &VaultPayload) -> Result<(), VaultError> {
-        let serialized_payload = serde_json::to_vec(payload)
-            .map_err(|e| VaultError::Encryption(e.to_string()))?;
+        let serialized_payload =
+            serde_json::to_vec(payload).map_err(|e| VaultError::Encryption(e.to_string()))?;
 
         // Generate salt (16B) and nonce (12B)
         let mut salt = [0u8; 16];
@@ -224,15 +227,27 @@ impl ProtectedEnvBackupVault {
         }
 
         let original_bytes = std::fs::read(env_path)?;
-        let canonical_target = std::fs::canonicalize(env_path).unwrap_or_else(|_| env_path.to_path_buf());
+        let canonical_target =
+            std::fs::canonicalize(env_path).unwrap_or_else(|_| env_path.to_path_buf());
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let sealed_variables: Vec<String> = grants.iter().map(|g| g.env_var_name.clone()).collect();
-        let standin_mappings: Vec<(String, String)> = grants.iter().map(|g| (g.env_var_name.clone(), g.standin_token.clone())).collect();
-        let original_env_vars: Vec<(String, String)> = grants.iter().map(|g| (g.env_var_name.clone(), String::from_utf8_lossy(g.secret.as_slice()).to_string())).collect();
+        let standin_mappings: Vec<(String, String)> = grants
+            .iter()
+            .map(|g| (g.env_var_name.clone(), g.standin_token.clone()))
+            .collect();
+        let original_env_vars: Vec<(String, String)> = grants
+            .iter()
+            .map(|g| {
+                (
+                    g.env_var_name.clone(),
+                    String::from_utf8_lossy(g.secret.as_slice()).to_string(),
+                )
+            })
+            .collect();
 
         let mut hasher = Sha256::new();
         hasher.update(&original_bytes);
@@ -339,9 +354,7 @@ impl ProtectedEnvBackupVault {
         // Overwrite and shred with 0x00
         let file_len = std::fs::metadata(vault_path)?.len();
         if file_len > 0 {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .open(vault_path)?;
+            let mut file = std::fs::OpenOptions::new().write(true).open(vault_path)?;
             let zeros = vec![0u8; 65536.min(file_len as usize)];
             let mut written = 0u64;
             while written < file_len {
@@ -460,7 +473,9 @@ impl ProtectedEnvBackupVault {
                 // If already a stand-in and existing vault has the real secret, recover it for evaluation
                 if v.starts_with("OSHOOSI_STANDIN_") {
                     if let Some(ref ex) = existing_vault {
-                        if let Some((_, orig_v)) = ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k) {
+                        if let Some((_, orig_v)) =
+                            ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                        {
                             v = orig_v.clone();
                         }
                     }
@@ -473,7 +488,9 @@ impl ProtectedEnvBackupVault {
         for (k, mut v) in std::env::vars() {
             if v.starts_with("OSHOOSI_STANDIN_") {
                 if let Some(ref ex) = existing_vault {
-                    if let Some((_, orig_v)) = ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k) {
+                    if let Some((_, orig_v)) =
+                        ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                    {
                         v = orig_v.clone();
                     }
                 }
@@ -484,7 +501,9 @@ impl ProtectedEnvBackupVault {
             } else {
                 // If it was seen from .env but .env had a stand-in or was empty and std::env has real value
                 if let Some(existing_pair) = pairs.iter_mut().find(|(ek, _)| ek == &k) {
-                    if existing_pair.1.starts_with("OSHOOSI_STANDIN_") && !v.starts_with("OSHOOSI_STANDIN_") {
+                    if existing_pair.1.starts_with("OSHOOSI_STANDIN_")
+                        && !v.starts_with("OSHOOSI_STANDIN_")
+                    {
                         existing_pair.1 = v;
                     }
                 }
@@ -521,10 +540,15 @@ impl ProtectedEnvBackupVault {
         for cand in &result.candidates {
             if cand.selected && !cand.vetoed_by_safety_guard && cand.fusion_confidence_bp >= 8500 {
                 if let Some((_, raw_val)) = pairs.iter().find(|(k, _)| k == &cand.key) {
-                    let clean_val = raw_val.trim().trim_matches('"').trim_matches('\'').to_string();
-                    let standin = cand.standin_token.clone().unwrap_or_else(|| {
-                        Self::generate_standin_token(&cand.key, &clean_val)
-                    });
+                    let clean_val = raw_val
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string();
+                    let standin = cand
+                        .standin_token
+                        .clone()
+                        .unwrap_or_else(|| Self::generate_standin_token(&cand.key, &clean_val));
 
                     // a) Replace in active process memory via std::env::set_var
                     std::env::set_var(&cand.key, &standin);
@@ -537,7 +561,9 @@ impl ProtectedEnvBackupVault {
                             [0u8; 32],
                             None,
                             "api.provider.internal",
-                            crate::rea_voter_env_gateway::ZeroizingLockedSecret::new(clean_val.as_bytes()),
+                            crate::rea_voter_env_gateway::ZeroizingLockedSecret::new(
+                                clean_val.as_bytes(),
+                            ),
                         );
                         gw.register_grant(grant);
                     }
@@ -766,16 +792,24 @@ impl LlmFusionApiKeyEnumerator {
         let has_path_delimiters = clean_val.contains('\\')
             || clean_val.starts_with("C:")
             || clean_val.starts_with("D:")
-            || (clean_val.contains('/') && !clean_val.starts_with("sk-") && !clean_val.starts_with("hf_"))
+            || (clean_val.contains('/')
+                && !clean_val.starts_with("sk-")
+                && !clean_val.starts_with("hf_"))
             || clean_val.starts_with("http://")
             || clean_val.starts_with("https://");
 
         let is_already_standin = clean_val.starts_with("OSHOOSI_STANDIN_");
 
         let veto_reason = if is_system_name {
-            Some("VETOED: Protected system environment variable (PATH / system invariant)".to_string())
+            Some(
+                "VETOED: Protected system environment variable (PATH / system invariant)"
+                    .to_string(),
+            )
         } else if has_ide_or_build_prefix {
-            Some("VETOED: Protected IDE, developer toolchain, or build environment prefix".to_string())
+            Some(
+                "VETOED: Protected IDE, developer toolchain, or build environment prefix"
+                    .to_string(),
+            )
         } else if has_system_suffix {
             Some("VETOED: Non-secret system configuration or path suffix".to_string())
         } else if has_path_delimiters {
@@ -822,7 +856,10 @@ impl LlmFusionApiKeyEnumerator {
             || key_upper.contains("TOKEN")
         {
             90.0
-        } else if key_upper.contains("KEY") || key_upper.contains("AUTH") || key_upper.contains("PASS") {
+        } else if key_upper.contains("KEY")
+            || key_upper.contains("AUTH")
+            || key_upper.contains("PASS")
+        {
             70.0
         } else {
             20.0
@@ -834,7 +871,7 @@ impl LlmFusionApiKeyEnumerator {
             || clean_val.starts_with("sk-")                 // OpenAI / Anthropic Key
             || clean_val.starts_with("ghp_")                // GitHub Personal Access Token
             || clean_val.starts_with("gho_")                // GitHub OAuth Token
-            || clean_val.starts_with("AKIA");               // AWS Access Key ID
+            || clean_val.starts_with("AKIA"); // AWS Access Key ID
 
         let entropy = Self::shannon_entropy(clean_val);
 
@@ -852,11 +889,14 @@ impl LlmFusionApiKeyEnumerator {
 
         // Calibrated LLM Fusion Consensus: requires fused confidence >= 8500 bp (85.0%)
         let fused_confidence_pct: f64 = (arm1_semantic_score * 0.55) + (arm2_entropy_score * 0.45);
-        let fusion_confidence_bp = (fused_confidence_pct * 100.0).round().clamp(0.0, 10000.0) as u16;
+        let fusion_confidence_bp =
+            (fused_confidence_pct * 100.0).round().clamp(0.0, 10000.0) as u16;
 
         let selected = fusion_confidence_bp >= 8500;
         let standin_token = if selected {
-            Some(ProtectedEnvBackupVault::generate_standin_token(clean_key, clean_val))
+            Some(ProtectedEnvBackupVault::generate_standin_token(
+                clean_key, clean_val,
+            ))
         } else {
             None
         };
@@ -925,7 +965,11 @@ pub fn apply_protected_ntfs_dacl(path: &Path) -> Result<(), VaultError> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
 
-    let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)";
     let wide_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -1011,7 +1055,11 @@ pub fn unlock_protected_ntfs_dacl(path: &Path) -> Result<(), VaultError> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
 
-    let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let sddl = "D:(A;;GA;;;WD)";
     let wide_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -1180,14 +1228,38 @@ mod tests {
     fn test_llm_fusion_api_key_enumeration_and_zero_touch_path() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let test_vars = vec![
-            ("GEMINI_API_KEY".to_string(), "AIzaSyD-FakeGeminiApiKeyExample12345678".to_string()),
-            ("HF_TOKEN".to_string(), "hf_FakeHuggingFaceTokenExampleToken123".to_string()),
-            ("JAVA_HOME".to_string(), "C:\\Program Files\\Java\\jdk-21".to_string()),
-            ("OLLAMA_ORIGINS".to_string(), "http://localhost:3000,http://127.0.0.1".to_string()),
-            ("OneDrive".to_string(), "C:\\Users\\user\\OneDrive".to_string()),
-            ("OneDriveConsumer".to_string(), "C:\\Users\\user\\OneDrive".to_string()),
-            ("Path".to_string(), "C:\\Windows\\system32;C:\\Windows;D:\\tools".to_string()),
-            ("TEMP".to_string(), "C:\\Users\\user\\AppData\\Local\\Temp".to_string()),
+            (
+                "GEMINI_API_KEY".to_string(),
+                "AIzaSyD-FakeGeminiApiKeyExample12345678".to_string(),
+            ),
+            (
+                "HF_TOKEN".to_string(),
+                "hf_FakeHuggingFaceTokenExampleToken123".to_string(),
+            ),
+            (
+                "JAVA_HOME".to_string(),
+                "C:\\Program Files\\Java\\jdk-21".to_string(),
+            ),
+            (
+                "OLLAMA_ORIGINS".to_string(),
+                "http://localhost:3000,http://127.0.0.1".to_string(),
+            ),
+            (
+                "OneDrive".to_string(),
+                "C:\\Users\\user\\OneDrive".to_string(),
+            ),
+            (
+                "OneDriveConsumer".to_string(),
+                "C:\\Users\\user\\OneDrive".to_string(),
+            ),
+            (
+                "Path".to_string(),
+                "C:\\Windows\\system32;C:\\Windows;D:\\tools".to_string(),
+            ),
+            (
+                "TEMP".to_string(),
+                "C:\\Users\\user\\AppData\\Local\\Temp".to_string(),
+            ),
         ];
 
         let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&test_vars);
@@ -1195,22 +1267,45 @@ mod tests {
         assert_eq!(result.total_vetoed, 6);
 
         // Verify GEMINI_API_KEY and HF_TOKEN are selected with >= 8500 bp
-        let gemini = result.candidates.iter().find(|c| c.key == "GEMINI_API_KEY").unwrap();
+        let gemini = result
+            .candidates
+            .iter()
+            .find(|c| c.key == "GEMINI_API_KEY")
+            .unwrap();
         assert!(gemini.selected);
         assert!(!gemini.vetoed_by_safety_guard);
         assert!(gemini.fusion_confidence_bp >= 8500);
 
-        let hf = result.candidates.iter().find(|c| c.key == "HF_TOKEN").unwrap();
+        let hf = result
+            .candidates
+            .iter()
+            .find(|c| c.key == "HF_TOKEN")
+            .unwrap();
         assert!(hf.selected);
         assert!(!hf.vetoed_by_safety_guard);
         assert!(hf.fusion_confidence_bp >= 8500);
 
         // Verify Path, JAVA_HOME, OneDrive, etc. are HARD-VETOED with 0 confidence
-        for veto_key in &["JAVA_HOME", "OLLAMA_ORIGINS", "OneDrive", "OneDriveConsumer", "Path", "TEMP"] {
-            let c = result.candidates.iter().find(|cand| cand.key == *veto_key).unwrap();
+        for veto_key in &[
+            "JAVA_HOME",
+            "OLLAMA_ORIGINS",
+            "OneDrive",
+            "OneDriveConsumer",
+            "Path",
+            "TEMP",
+        ] {
+            let c = result
+                .candidates
+                .iter()
+                .find(|cand| cand.key == *veto_key)
+                .unwrap();
             assert!(!c.selected, "{} must NOT be selected", veto_key);
             assert!(c.vetoed_by_safety_guard, "{} must be vetoed", veto_key);
-            assert_eq!(c.fusion_confidence_bp, 0, "{} confidence must be 0", veto_key);
+            assert_eq!(
+                c.fusion_confidence_bp, 0,
+                "{} confidence must be 0",
+                veto_key
+            );
         }
 
         // Test end-to-end dynamic sealing and auto-revert roundtrip
@@ -1227,8 +1322,14 @@ mod tests {
         let dyn_res = ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
             .expect("seal_and_backup_dynamic must succeed");
         assert!(dyn_res.total_selected >= 2);
-        assert!(dyn_res.candidates.iter().any(|c| c.key == "GEMINI_API_KEY" && c.selected));
-        assert!(dyn_res.candidates.iter().any(|c| c.key == "HF_TOKEN" && c.selected));
+        assert!(dyn_res
+            .candidates
+            .iter()
+            .any(|c| c.key == "GEMINI_API_KEY" && c.selected));
+        assert!(dyn_res
+            .candidates
+            .iter()
+            .any(|c| c.key == "HF_TOKEN" && c.selected));
 
         // Check sealed content: GEMINI_API_KEY and HF_TOKEN replaced with stand-in tokens, Path & system variables intact
         let sealed_text = std::fs::read_to_string(&env_file).expect("read sealed text");
@@ -1248,19 +1349,40 @@ mod tests {
     #[test]
     fn test_ide_and_build_prefixes_are_hard_vetoed() {
         let ide_vars = vec![
-            ("ANTIGRAVITY_CSRF_TOKEN".to_string(), "sec_antigravity_token_abc123456789".to_string()),
-            ("VSCODE_GIT_IPC_HANDLE".to_string(), "\\\\.\\pipe\\vscode-git-ipc-1234".to_string()),
+            (
+                "ANTIGRAVITY_CSRF_TOKEN".to_string(),
+                "sec_antigravity_token_abc123456789".to_string(),
+            ),
+            (
+                "VSCODE_GIT_IPC_HANDLE".to_string(),
+                "\\\\.\\pipe\\vscode-git-ipc-1234".to_string(),
+            ),
             ("CARGO_PKG_NAME".to_string(), "osoosi-core".to_string()),
             ("RUST_BACKTRACE".to_string(), "full".to_string()),
             ("TERM_PROGRAM".to_string(), "vscode".to_string()),
-            ("NPM_CONFIG_TOKEN".to_string(), "npm_secret_token_1234567890".to_string()),
-            ("SSH_AUTH_SOCK".to_string(), "/tmp/ssh-auth-sock-12345".to_string()),
-            ("GPG_AGENT_INFO".to_string(), "/run/user/1000/gnupg/S.gpg-agent:1234:1".to_string()),
-            ("GIT_EXEC_PATH".to_string(), "C:\\Program Files\\Git\\bin".to_string()),
+            (
+                "NPM_CONFIG_TOKEN".to_string(),
+                "npm_secret_token_1234567890".to_string(),
+            ),
+            (
+                "SSH_AUTH_SOCK".to_string(),
+                "/tmp/ssh-auth-sock-12345".to_string(),
+            ),
+            (
+                "GPG_AGENT_INFO".to_string(),
+                "/run/user/1000/gnupg/S.gpg-agent:1234:1".to_string(),
+            ),
+            (
+                "GIT_EXEC_PATH".to_string(),
+                "C:\\Program Files\\Git\\bin".to_string(),
+            ),
         ];
 
         let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&ide_vars);
-        assert_eq!(result.total_selected, 0, "No IDE/build variables should ever be selected");
+        assert_eq!(
+            result.total_selected, 0,
+            "No IDE/build variables should ever be selected"
+        );
         assert_eq!(result.total_vetoed, ide_vars.len());
 
         for (k, _) in &ide_vars {
@@ -1283,14 +1405,19 @@ mod tests {
         let test_val = "AIzaSyD-RealSecretProductionTestValue99999";
         std::env::set_var(test_key, test_val);
 
-        let gateway = crate::rea_voter_env_gateway::ReaVoterEnvGateway::new(Duration::from_secs(300));
+        let gateway =
+            crate::rea_voter_env_gateway::ReaVoterEnvGateway::new(Duration::from_secs(300));
 
         // .env does NOT exist initially
         assert!(!env_file.exists());
 
         // 1. Seal and register with gateway
-        let res = ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
-            .expect("must succeed even without preexisting .env");
+        let res = ProtectedEnvBackupVault::seal_and_register_with_gateway(
+            &env_file,
+            &vault_file,
+            &gateway,
+        )
+        .expect("must succeed even without preexisting .env");
         assert!(res.total_selected >= 1);
 
         // Verify gateway grant was created
@@ -1309,23 +1436,48 @@ mod tests {
         let status = ProtectedEnvBackupVault::get_status(&vault_file).expect("get status");
         assert!(status.exists);
         assert!(!status.standin_mappings.is_empty());
-        assert!(status.standin_mappings.iter().any(|(k, s)| k == test_key && s == &current_proc_val));
+        assert!(status
+            .standin_mappings
+            .iter()
+            .any(|(k, s)| k == test_key && s == &current_proc_val));
 
         // 2. Double-seal test: sealing again must NOT clobber original secret with stand-in token
-        let res2 = ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
-            .expect("double-sealing must succeed");
+        let res2 = ProtectedEnvBackupVault::seal_and_register_with_gateway(
+            &env_file,
+            &vault_file,
+            &gateway,
+        )
+        .expect("double-sealing must succeed");
         assert!(res2.total_selected >= 1);
 
         // Verify vault still holds the true original secret
-        let (payload, _) = ProtectedEnvBackupVault::read_vault_payload(&vault_file).expect("read vault payload");
-        let orig_pair = payload.original_env_vars.iter().find(|(k, _)| k == test_key).expect("must find key");
-        assert_eq!(orig_pair.1, test_val, "Vault must preserve original secret, not stand-in!");
+        let (payload, _) =
+            ProtectedEnvBackupVault::read_vault_payload(&vault_file).expect("read vault payload");
+        let orig_pair = payload
+            .original_env_vars
+            .iter()
+            .find(|(k, _)| k == test_key)
+            .expect("must find key");
+        assert_eq!(
+            orig_pair.1, test_val,
+            "Vault must preserve original secret, not stand-in!"
+        );
 
         // 3. Auto revert restores process memory and removes temporary .env and vault
         ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto revert must succeed");
-        assert_eq!(std::env::var(test_key).unwrap(), test_val, "Process memory must be restored to original secret");
-        assert!(!env_file.exists(), "Temporary .env should be removed on revert since it didn't exist before");
-        assert!(!vault_file.exists(), "Vault should be shredded and unlinked on revert since target didn't exist before");
+        assert_eq!(
+            std::env::var(test_key).unwrap(),
+            test_val,
+            "Process memory must be restored to original secret"
+        );
+        assert!(
+            !env_file.exists(),
+            "Temporary .env should be removed on revert since it didn't exist before"
+        );
+        assert!(
+            !vault_file.exists(),
+            "Vault should be shredded and unlinked on revert since target didn't exist before"
+        );
 
         // Clean up process env
         std::env::remove_var(test_key);

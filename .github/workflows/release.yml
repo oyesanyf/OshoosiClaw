@@ -172,6 +172,9 @@ jobs:
           key: linux-musl-arm64
 
       - name: Build release (static ARM64 musl)
+        env:
+          OPENSSL_STATIC: 1
+          OPENSSL_VENDORED: 1
         run: cross build --release --target aarch64-unknown-linux-musl
 
       - name: Package Linux ARM64 artifacts (.deb, .tar.gz)

@@ -48,7 +48,9 @@ pub enum GenAiSpanKind {
 }
 
 /// Sensitivity classification for accessed documents or prompts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 pub enum SensitivityTier {
     #[default]
     Public = 0,
@@ -79,10 +81,10 @@ pub struct GenAiSpan {
     pub kind: GenAiSpanKind,
 
     // OpenTelemetry gen_ai.* semantic conventions
-    pub system: String,            // gen_ai.system (e.g. "openai", "anthropic", "ollama")
-    pub model: String,             // gen_ai.request.model
-    pub prompt_version: String,    // gen_ai.prompt.version
-    pub operation_name: String,    // gen_ai.operation.name
+    pub system: String, // gen_ai.system (e.g. "openai", "anthropic", "ollama")
+    pub model: String,  // gen_ai.request.model
+    pub prompt_version: String, // gen_ai.prompt.version
+    pub operation_name: String, // gen_ai.operation.name
     pub tool_name: Option<String>, // gen_ai.tool.name
     pub tool_call_id: Option<String>,
 
@@ -304,7 +306,9 @@ impl SessionBehaviorRuleEngine {
             .iter()
             .any(|d| d.sensitivity >= SensitivityTier::Internal);
 
-        if has_accessed_internal && (pending.is_egress_upload || self.is_egress_tool(&pending.tool_name)) {
+        if has_accessed_internal
+            && (pending.is_egress_upload || self.is_egress_tool(&pending.tool_name))
+        {
             let dest_opt = pending.destination_host.as_deref().map(normalize_host);
             let is_approved = match dest_opt {
                 Some(ref host) => self.egress_allowlist.contains(host),
@@ -340,7 +344,11 @@ impl SessionBehaviorRuleEngine {
         }
 
         // 3. Unauthorized Tool Use (Capability Lattice)
-        if !session.identity.granted_capabilities.contains(&pending.required_capability) {
+        if !session
+            .identity
+            .granted_capabilities
+            .contains(&pending.required_capability)
+        {
             return PreExecutionVerdict::Blocked {
                 rule_name: "UnauthorizedToolUse".to_string(),
                 reason: format!(
@@ -360,7 +368,10 @@ impl SessionBehaviorRuleEngine {
             if self.c2_blacklist.contains(&host) {
                 return PreExecutionVerdict::Blocked {
                     rule_name: "UnexpectedDestination".to_string(),
-                    reason: format!("Target destination '{}' is listed on active C2 blacklist", host),
+                    reason: format!(
+                        "Target destination '{}' is listed on active C2 blacklist",
+                        host
+                    ),
                     voter_confidence_bp: 9500,
                 };
             }
@@ -389,7 +400,9 @@ impl SessionBehaviorRuleEngine {
             if diff_sec <= 5 {
                 total_in_5s += 1;
             }
-            if past_call.tool_name == pending.tool_name && past_call.arguments_hash == pending_args_hash {
+            if past_call.tool_name == pending.tool_name
+                && past_call.arguments_hash == pending_args_hash
+            {
                 identical_count += 1;
             }
         }
@@ -417,7 +430,8 @@ impl SessionBehaviorRuleEngine {
         }
 
         // 6. LLM Fusion Ensemble Anomaly Evaluation
-        let anomaly_score = self.evaluate_fusion_ensemble(&pending.tool_name, &pending.arguments_json);
+        let anomaly_score =
+            self.evaluate_fusion_ensemble(&pending.tool_name, &pending.arguments_json);
         if anomaly_score >= 0.85 {
             return PreExecutionVerdict::Blocked {
                 rule_name: "LlmFusionEnsembleAnomaly".to_string(),
@@ -523,11 +537,15 @@ impl Default for PrivacyPreservingOutputEvaluator {
             record_raw_content: false,
             email_regex: Regex::new(r"(?i)[a-z0-9_.+-]+@[a-z0-9-]+\.[a-z0-9-.]+").unwrap(),
             ssn_regex: Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(),
-            phone_regex: Regex::new(r"\b(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}\b").unwrap(),
+            phone_regex: Regex::new(r"\b(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}\b")
+                .unwrap(),
             api_key_regex: Regex::new(r"(?i)sk-[a-z0-9_-]{20,}").unwrap(),
             standin_regex: Regex::new(r"OSHOOSI_STANDIN_[A-Za-z0-9_]+").unwrap(),
             bearer_regex: Regex::new(r"(?i)bearer\s+[a-z0-9_\-\.]{16,}").unwrap(),
-            private_key_regex: Regex::new(r"-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----").unwrap(),
+            private_key_regex: Regex::new(
+                r"-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----",
+            )
+            .unwrap(),
             card_regex: Regex::new(r"\b(?:\d{4}[- ]?){3}\d{4}\b").unwrap(),
         }
     }
@@ -565,12 +583,32 @@ impl PrivacyPreservingOutputEvaluator {
             };
         }
 
-        scrub_pattern!(self.private_key_regex, "[REDACTED_PRIVATE_KEY]", "Private Key");
-        scrub_pattern!(self.standin_regex, "[REDACTED_STANDIN_TOKEN]", "Standin Token");
+        scrub_pattern!(
+            self.private_key_regex,
+            "[REDACTED_PRIVATE_KEY]",
+            "Private Key"
+        );
+        scrub_pattern!(
+            self.standin_regex,
+            "[REDACTED_STANDIN_TOKEN]",
+            "Standin Token"
+        );
         scrub_pattern!(self.api_key_regex, "[REDACTED_API_KEY]", "API Key");
-        scrub_pattern!(self.bearer_regex, "Bearer [REDACTED_BEARER_TOKEN]", "Bearer Token");
-        scrub_pattern!(self.ssn_regex, "[REDACTED_SSN]", "US Social Security Number");
-        scrub_pattern!(self.card_regex, "[REDACTED_CREDIT_CARD]", "Payment Card Number");
+        scrub_pattern!(
+            self.bearer_regex,
+            "Bearer [REDACTED_BEARER_TOKEN]",
+            "Bearer Token"
+        );
+        scrub_pattern!(
+            self.ssn_regex,
+            "[REDACTED_SSN]",
+            "US Social Security Number"
+        );
+        scrub_pattern!(
+            self.card_regex,
+            "[REDACTED_CREDIT_CARD]",
+            "Payment Card Number"
+        );
         scrub_pattern!(self.email_regex, "[REDACTED_EMAIL]", "Email Address");
         scrub_pattern!(self.phone_regex, "[REDACTED_PHONE]", "Telephone Number");
 
@@ -616,7 +654,10 @@ impl PrivacyPreservingOutputEvaluator {
 
         let words: HashSet<String> = text
             .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_ascii_lowercase())
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_ascii_lowercase()
+            })
             .filter(|w| w.len() >= 4)
             .collect();
 
@@ -625,7 +666,10 @@ impl PrivacyPreservingOutputEvaluator {
         }
 
         let corpus_joined = retrieved_documents.join(" ").to_ascii_lowercase();
-        let matches = words.iter().filter(|w| corpus_joined.contains(w.as_str())).count();
+        let matches = words
+            .iter()
+            .filter(|w| corpus_joined.contains(w.as_str()))
+            .count();
         let ratio = matches as f32 / words.len() as f32;
         ratio.clamp(0.0, 1.0)
     }
@@ -660,7 +704,6 @@ pub fn scrub_sensitive_strings(raw_text: &str) -> String {
     let evaluator = PrivacyPreservingOutputEvaluator::default();
     evaluator.scrub_sensitive_strings(raw_text)
 }
-
 
 // ============================================================================
 // Layer 5: Cross-Version Model & Prompt Behavior Drift Monitor
@@ -788,6 +831,7 @@ pub struct CohortBehaviorDriftMonitor {
 
 impl CohortBehaviorDriftMonitor {
     /// Ingests a new evaluation datapoint into cohort statistics and checks for drift.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_evaluation(
         &self,
         cohort: &ModelPromptCohort,
@@ -987,13 +1031,16 @@ impl GenAiSessionTrace {
     }
 }
 
+/// Voter quorum alert sink callback type.
+pub type VoterQuorumSink = Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>;
+
 /// Unified 5-Layer OpenTelemetry GenAI Behavioral and Session Monitor.
 pub struct GenAiBehavioralMonitor {
     pub rule_engine: SessionBehaviorRuleEngine,
     pub output_evaluator: PrivacyPreservingOutputEvaluator,
     pub drift_monitor: CohortBehaviorDriftMonitor,
     sessions: DashMap<String, GenAiSessionTrace>,
-    voter_quorum_sinks: RwLock<Vec<Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>>>,
+    voter_quorum_sinks: RwLock<Vec<VoterQuorumSink>>,
     total_evaluations: AtomicUsize,
     total_blocked_pre_execution: AtomicUsize,
     voter_quorum_alerts_emitted: AtomicUsize,
@@ -1032,12 +1079,16 @@ impl GenAiBehavioralMonitor {
     }
 
     /// Registers a voter quorum alert sink (e.g. `ReaVoterEnvGateway` or `PolicyEngine`).
-    pub fn add_voter_quorum_sink(&self, sink: Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>) {
+    pub fn add_voter_quorum_sink(&self, sink: VoterQuorumSink) {
         self.voter_quorum_sinks.write().unwrap().push(sink);
     }
 
     /// Starts or registers a new session trace with identity context.
-    pub fn start_session(&self, session_id: &str, identity: GenAiIdentityContext) -> GenAiSessionTrace {
+    pub fn start_session(
+        &self,
+        session_id: &str,
+        identity: GenAiIdentityContext,
+    ) -> GenAiSessionTrace {
         let trace = GenAiSessionTrace::new(session_id, identity);
         self.sessions.insert(session_id.to_string(), trace.clone());
         trace
@@ -1181,6 +1232,7 @@ impl GenAiBehavioralMonitor {
     }
 
     /// Ingests a model call into Layer 5 drift tracking.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_model_call_metrics(
         &self,
         model_id: &str,
@@ -1326,7 +1378,10 @@ mod tests {
     #[test]
     fn test_default_redaction_and_privacy_preserving_evaluator() {
         let evaluator = PrivacyPreservingOutputEvaluator::default();
-        assert!(!evaluator.record_raw_content, "Default must strictly be FALSE");
+        assert!(
+            !evaluator.record_raw_content,
+            "Default must strictly be FALSE"
+        );
 
         let raw_output = "User john.doe@example.com with SSN 123-45-6789 and API key sk-live-abc12345678901234567890 called phone +1 (555) 019-2834 with standin OSHOOSI_STANDIN_TOKEN_FA34B9";
         let report = evaluator.evaluate_output(raw_output, &[]);
@@ -1334,15 +1389,22 @@ mod tests {
         assert!(!report.record_raw_content);
         assert!(!report.scrubbed_preview.contains("john.doe@example.com"));
         assert!(!report.scrubbed_preview.contains("123-45-6789"));
-        assert!(!report.scrubbed_preview.contains("sk-live-abc12345678901234567890"));
-        assert!(!report.scrubbed_preview.contains("OSHOOSI_STANDIN_TOKEN_FA34B9"));
+        assert!(!report
+            .scrubbed_preview
+            .contains("sk-live-abc12345678901234567890"));
+        assert!(!report
+            .scrubbed_preview
+            .contains("OSHOOSI_STANDIN_TOKEN_FA34B9"));
 
         assert!(report.scrubbed_preview.contains("[REDACTED_EMAIL]"));
         assert!(report.scrubbed_preview.contains("[REDACTED_SSN]"));
         assert!(report.scrubbed_preview.contains("[REDACTED_API_KEY]"));
         assert!(report.scrubbed_preview.contains("[REDACTED_STANDIN_TOKEN]"));
         assert!(report.vault_ref.starts_with("vault_ref://genai/"));
-        assert_eq!(report.scrubbed_content_hash, *blake3::hash(raw_output.as_bytes()).as_bytes());
+        assert_eq!(
+            report.scrubbed_content_hash,
+            *blake3::hash(raw_output.as_bytes()).as_bytes()
+        );
     }
 
     #[test]
@@ -1376,7 +1438,11 @@ mod tests {
 
         let verdict = monitor.evaluate_tool_pre_execution(session_id, &pending);
         assert!(verdict.is_blocked());
-        assert_eq!(alert_counter.load(Ordering::SeqCst), 1, "VoterQuorumAlert must be emitted");
+        assert_eq!(
+            alert_counter.load(Ordering::SeqCst),
+            1,
+            "VoterQuorumAlert must be emitted"
+        );
     }
 
     #[test]
@@ -1386,7 +1452,9 @@ mod tests {
         let session_id = "sess_loop_test";
 
         let mut identity = sample_identity(target_key);
-        identity.granted_capabilities.remove(&CapabilityLevel::L5HostAdminPrivileged);
+        identity
+            .granted_capabilities
+            .remove(&CapabilityLevel::L5HostAdminPrivileged);
         identity.approval_outcome = ApprovalOutcome::PendingHitl;
         monitor.start_session(session_id, identity);
 
@@ -1433,7 +1501,9 @@ mod tests {
         let cohort = ModelPromptCohort::new(model, prompt_ver);
 
         // Seed 10 baseline evaluations with 0% violations
-        monitor.drift_monitor.set_baseline(&cohort, 0.05, 0.95, 0.98);
+        monitor
+            .drift_monitor
+            .set_baseline(&cohort, 0.05, 0.95, 0.98);
 
         // Record a burst of evaluations with high policy violations
         let mut alert_emitted = None;
@@ -1446,14 +1516,21 @@ mod tests {
                 0.60,
                 0.70,
                 Some("shell_exec"),
-                if i % 2 == 0 { Some("UnauthorizedToolUse") } else { Some("InternalDocToUnapprovedUpload") },
+                if i % 2 == 0 {
+                    Some("UnauthorizedToolUse")
+                } else {
+                    Some("InternalDocToUnapprovedUpload")
+                },
             );
             if alert.is_some() {
                 alert_emitted = alert;
             }
         }
 
-        assert!(alert_emitted.is_some(), "Drift monitor must emit alert on violation spike");
+        assert!(
+            alert_emitted.is_some(),
+            "Drift monitor must emit alert on violation spike"
+        );
         let alert = alert_emitted.unwrap();
         assert_eq!(alert.drift_type, DriftType::ViolationSpike);
         assert_eq!(alert.severity, DriftSeverity::Critical);
@@ -1598,7 +1675,11 @@ mod tests {
         assert_eq!(retrieved_session.accessed_documents.len(), 1);
         assert_eq!(retrieved_session.executed_tools.len(), 1);
         assert_eq!(
-            retrieved_session.spans[1].correlated_network.as_ref().unwrap().destination_host,
+            retrieved_session.spans[1]
+                .correlated_network
+                .as_ref()
+                .unwrap()
+                .destination_host,
             "api.openai.com"
         );
         assert_eq!(
@@ -1648,7 +1729,11 @@ mod tests {
         };
         let v2 = monitor.evaluate_tool_pre_execution(session_id, &pending_injection);
         match v2 {
-            PreExecutionVerdict::Blocked { rule_name, voter_confidence_bp, .. } => {
+            PreExecutionVerdict::Blocked {
+                rule_name,
+                voter_confidence_bp,
+                ..
+            } => {
                 assert_eq!(rule_name, "LlmFusionEnsembleAnomaly");
                 assert_eq!(voter_confidence_bp, 8800);
             }
@@ -1687,7 +1772,9 @@ mod tests {
         let prompt_ver = "v2.0";
         let cohort = ModelPromptCohort::new(model, prompt_ver);
 
-        monitor.drift_monitor.set_baseline(&cohort, 0.01, 0.99, 0.99);
+        monitor
+            .drift_monitor
+            .set_baseline(&cohort, 0.01, 0.99, 0.99);
 
         // Emit 1050 alerts to exceed the 1,000 alert ceiling
         for _ in 0..1050 {
@@ -1704,7 +1791,11 @@ mod tests {
         }
 
         let alerts = monitor.drift_monitor.get_alerts();
-        assert_eq!(alerts.len(), 1000, "Alerts list must strictly be capped at 1,000 entries");
+        assert_eq!(
+            alerts.len(),
+            1000,
+            "Alerts list must strictly be capped at 1,000 entries"
+        );
     }
 
     #[test]
@@ -1769,8 +1860,12 @@ mod tests {
     fn test_capability_level_ordering_and_defaults() {
         assert!(CapabilityLevel::L1ReadOnlySandbox < CapabilityLevel::L2LocalWorkspaceFs);
         assert!(CapabilityLevel::L2LocalWorkspaceFs < CapabilityLevel::L3LoopbackIntranet);
-        assert!(CapabilityLevel::L3LoopbackIntranet < CapabilityLevel::L4OutboundInternetAllowlisted);
-        assert!(CapabilityLevel::L4OutboundInternetAllowlisted < CapabilityLevel::L5HostAdminPrivileged);
+        assert!(
+            CapabilityLevel::L3LoopbackIntranet < CapabilityLevel::L4OutboundInternetAllowlisted
+        );
+        assert!(
+            CapabilityLevel::L4OutboundInternetAllowlisted < CapabilityLevel::L5HostAdminPrivileged
+        );
         assert_eq!(SensitivityTier::default(), SensitivityTier::Public);
     }
 

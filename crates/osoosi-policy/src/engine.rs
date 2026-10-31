@@ -943,10 +943,7 @@ impl PolicyEngine {
         *guard = Some(broadcaster);
     }
 
-    pub async fn set_voter_quorum_sink(
-        &self,
-        sink: Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>,
-    ) {
+    pub async fn set_voter_quorum_sink(&self, sink: Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>) {
         let mut guard = self.voter_quorum_sink.write().await;
         *guard = Some(sink);
     }
@@ -958,7 +955,8 @@ impl PolicyEngine {
     }
 
     pub fn set_enforce_all_voters_participate(&self, enforce: bool) {
-        self.enforce_all_voters_participate.store(enforce, Ordering::SeqCst);
+        self.enforce_all_voters_participate
+            .store(enforce, Ordering::SeqCst);
     }
 
     pub fn is_enforce_all_voters_participate(&self) -> bool {
@@ -1047,7 +1045,25 @@ impl PolicyEngine {
         // 26 (FileDeleteDetected), and Windows Security 4688 (ProcessCreation).
         if matches!(
             event.event_id,
-            1 | 3 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 25 | 26 | 4688
+            1 | 3
+                | 7
+                | 8
+                | 10
+                | 11
+                | 12
+                | 13
+                | 14
+                | 15
+                | 17
+                | 18
+                | 19
+                | 20
+                | 21
+                | 22
+                | 23
+                | 25
+                | 26
+                | 4688
         ) && (check_flag("SecurityEvent")
             || check_flag("ThreatEvent")
             || event.data.get("TargetFilename").is_some()
@@ -2073,8 +2089,9 @@ impl PolicyEngine {
         let _ = self.memory.record_consensus_finding(&finding);
 
         // Compute voter confidence in basis points (0..=10000 bp)
-        let voter_confidence_bp =
-            (signature.confidence * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
+        let voter_confidence_bp = (signature.confidence * 10_000.0)
+            .round()
+            .clamp(0.0, 10_000.0) as u16;
 
         let pid: u32 = event
             .data
@@ -2085,17 +2102,15 @@ impl PolicyEngine {
             .or_else(|| event.data.get("NewProcessId"))
             .or_else(|| event.data.get("TargetProcessId"))
             .and_then(|v| {
-                v.as_u64()
-                    .map(|n| n as u32)
-                    .or_else(|| {
-                        v.as_str().and_then(|s| {
-                            if s.starts_with("0x") || s.starts_with("0X") {
-                                u32::from_str_radix(&s[2..], 16).ok()
-                            } else {
-                                s.parse::<u32>().ok()
-                            }
-                        })
+                v.as_u64().map(|n| n as u32).or_else(|| {
+                    v.as_str().and_then(|s| {
+                        if s.starts_with("0x") || s.starts_with("0X") {
+                            u32::from_str_radix(&s[2..], 16).ok()
+                        } else {
+                            s.parse::<u32>().ok()
+                        }
                     })
+                })
             })
             .unwrap_or(0);
 
@@ -2113,7 +2128,9 @@ impl PolicyEngine {
                         .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                 })
                 .or_else(|| {
-                    resolve_process_instance_key(pid).ok().map(|k| k.start_time_ticks)
+                    resolve_process_instance_key(pid)
+                        .ok()
+                        .map(|k| k.start_time_ticks)
                 })
                 .unwrap_or_else(|| {
                     (event.timestamp.timestamp_nanos_opt().unwrap_or(0) / 100) as u64
@@ -2168,15 +2185,8 @@ pub fn resolve_process_instance_key(pid: u32) -> Result<ProcessInstanceKey, &'st
         let mut kernel = windows::Win32::Foundation::FILETIME::default();
         let mut user = windows::Win32::Foundation::FILETIME::default();
 
-        let ok = unsafe {
-            GetProcessTimes(
-                handle,
-                &mut creation,
-                &mut exit,
-                &mut kernel,
-                &mut user,
-            )
-        };
+        let ok =
+            unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
 
         if pid != std::process::id() {
             let _ = unsafe { CloseHandle(handle) };
@@ -3092,7 +3102,8 @@ mod tests_m7_asymmetric_veto {
             _cat: osoosi_types::ResourceCategory,
             _prio: osoosi_types::Priority,
             _task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
-        ) {}
+        ) {
+        }
         fn report_event(&self) {}
         fn is_burst_mode(&self) -> bool {
             false
@@ -3210,7 +3221,10 @@ mod tests_m7_asymmetric_veto {
             name: "MockHeavyLLM2".to_string(),
             invocations: counter2.clone(),
         });
-        let mut engine2 = PolicyEngine::new(Arc::new(MemoryStore::new(":memory:").unwrap()), osoosi_types::PolicyConfig::default());
+        let mut engine2 = PolicyEngine::new(
+            Arc::new(MemoryStore::new(":memory:").unwrap()),
+            osoosi_types::PolicyConfig::default(),
+        );
         engine2.telemetry_controller = Some(Arc::new(MockSilentController));
         engine2.set_enforce_all_voters_participate(true);
         engine2.add_voter(heavy_voter2).await;
@@ -3246,7 +3260,8 @@ mod tests_m7_asymmetric_veto {
             async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
                 Some(VoteResult {
                     confidence: 0.85,
-                    reason: "CEDAR-FORBID: Asymmetric Invariant Breakout Vector Detected".to_string(),
+                    reason: "CEDAR-FORBID: Asymmetric Invariant Breakout Vector Detected"
+                        .to_string(),
                     weight: 2.0,
                 })
             }
@@ -3294,7 +3309,9 @@ mod tests_m7_asymmetric_veto {
         let expected_bp = (sig.confidence * 10_000.0).round() as u16;
         assert_eq!(alert.voter_confidence_bp, expected_bp);
         assert!(alert.voter_confidence_bp >= 6667);
-        assert!(alert.trigger_reason.contains("Asymmetric Invariant Breakout Vector Detected"));
+        assert!(alert
+            .trigger_reason
+            .contains("Asymmetric Invariant Breakout Vector Detected"));
     }
 
     #[tokio::test]

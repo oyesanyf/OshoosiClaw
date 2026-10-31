@@ -666,7 +666,8 @@ impl HitlCognitiveFirewall {
         };
 
         let has_rtlo = summary.chars().any(is_rtlo) || raw_command.chars().any(is_rtlo);
-        let has_zero_width = summary.chars().any(is_zero_width) || raw_command.chars().any(is_zero_width);
+        let has_zero_width =
+            summary.chars().any(is_zero_width) || raw_command.chars().any(is_zero_width);
         let has_ansi_escape = summary.contains('\x1b')
             || summary.contains('\u{009b}')
             || raw_command.contains('\x1b')
@@ -674,8 +675,12 @@ impl HitlCognitiveFirewall {
 
         let summary_indicators = Self::scan_for_visual_deception(summary);
         let cmd_indicators = Self::scan_for_visual_deception(raw_command);
-        let has_confusable = summary_indicators.iter().any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)))
-            || cmd_indicators.iter().any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)));
+        let has_confusable = summary_indicators
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)))
+            || cmd_indicators
+                .iter()
+                .any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)));
 
         let mut indicators = summary_indicators;
         for ind in cmd_indicators {
@@ -684,7 +689,11 @@ impl HitlCognitiveFirewall {
             }
         }
 
-        let is_deceptive = has_rtlo || has_zero_width || has_ansi_escape || has_confusable || !indicators.is_empty();
+        let is_deceptive = has_rtlo
+            || has_zero_width
+            || has_ansi_escape
+            || has_confusable
+            || !indicators.is_empty();
         let recommended_action = if is_deceptive {
             "AUTO_VETO_BLOCK"
         } else {

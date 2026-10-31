@@ -15,6 +15,7 @@
   <a href="#-nasa-jpl-f-prime-flight-software-backbone"><img src="https://img.shields.io/badge/NASA%20F%27-Dual--Priority%20QoS-informational?style=for-the-badge" alt="NASA F'"/></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/oyesanyf/OshoosiClaw"><img src="https://api.securityscorecards.dev/projects/github.com/oyesanyf/OshoosiClaw/badge" alt="OpenSSF Scorecard"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
+  <a href="AWESOME_OSHOOSICLAW.md"><img src="https://awesome.re/badge.svg" alt="Awesome OshoosiClaw"/></a>
 </p>
 
 <p align="center">
@@ -39,6 +40,8 @@
   <a href="#architecture">Architecture</a> •
   <a href="ARCHITECTURE.md">Codebase Map</a> •
   <a href="docs/GOOD_FIRST_ISSUES.md">Good First Issues</a> •
+  <a href="AWESOME_OSHOOSICLAW.md">Awesome List</a> •
+  <a href="docs/AWESOME_LIST_SUBMISSIONS.md">Ecosystem Submissions</a> •
   <a href="CONTRIBUTING.md">Contributing</a> •
   <a href="SECURITY.md">Security</a> •
   <a href="#-cli-reference">CLI Reference</a>
@@ -115,6 +118,8 @@ flowchart LR
 | **Universal SQLite Persistence for All UI Settings & Unsettings (`#sqlite-settings-persistence`)** | Persists every WebUI setting, toggle, mode, schedule, rule, and **unsetting** (`false`, cleared, disabled, removed) to `database/osoosi.db` (`ui_settings_kv`, `research_registry_meta`, `research_schedule_config`) so operator configurations survive browser reloads and daemon restarts without default re-seeding overwrites. | WebUI: All views<br>API: `GET/POST/DELETE /api/settings/ui`, `POST /api/settings/autonomy`, `POST /api/dlp/policy`, `POST /api/cicd-protection/toggle`, `POST /api/research/clear` |
 | **R1–R7 Multi-Ring Agent Breakout & EDR Self-Defense Hardening (`F01–F24`)** | Eliminates OS sandbox handle/reparse/TOCTOU & DNS-rebinding escapes (`R1`), multi-turn temporal taint fragmentation & interpreter/env hijacking (`R2`), inter-arm confused-deputy prompt injection via HMAC-signed `TaintLevel::UntrustedExternal` & `MeshCapabilityGovernor` (`R3`), ETW/AMSI unhooking, ring-buffer starvation, & renamed BYOVD drivers (`R4`), local CSRF & `/api/auth/session` token bootstrap leaks + SQLite HMAC-SHA256 row integrity (`R5`), autonomous research swarm canary false positives & rule eviction (`R6`), and static ML/IDE veto inversion via asymmetric deterministic vetoes (`R7`). Verified by 99/99 E2E opaque-box tests (`scripts/run_breakout_defense_e2e.py`). | CLI: `python scripts/run_breakout_defense_e2e.py`<br>Crate: `osoosi-sandbox`, `osoosi-policy`, `osoosi-agent-anomaly`, `osoosi-runtime`, `osoosi-dashboard`, `osoosi-inject`, `osoosi-telemetry`, `driver/windows` |
 | **4-Vertical Awesome Lists Traction Automation (`scripts/submit_awesome_lists.py`)** | Automates tailored Markdown entry generation, README section matching, fork provisioning, and Pull Request submission across **21 curated Awesome Lists** (with **19 live open upstream PR entries / 17 unique PRs** across all 4 verticals including [`shadawck/awesome-endpoint-detection-and-response` #4](https://github.com/shadawck/awesome-endpoint-detection-and-response/pull/4), [`infosecB/awesome-detection-engineering` #55](https://github.com/infosecB/awesome-detection-engineering/pull/55), [`0x4D31/awesome-threat-detection` #112](https://github.com/0x4D31/awesome-threat-detection/pull/112), [`threat-hunting/awesome_Threat-Hunting` #9](https://github.com/threat-hunting/awesome_Threat-Hunting/pull/9), [`fabacab/awesome-cybersecurity-blueteam` #150](https://github.com/fabacab/awesome-cybersecurity-blueteam/pull/150), [`A-poc/BlueTeam-Tools` #12](https://github.com/A-poc/BlueTeam-Tools/pull/12), [`sbilly/awesome-security` #798](https://github.com/sbilly/awesome-security/pull/798), [`meirwah/awesome-incident-response` #363](https://github.com/meirwah/awesome-incident-response/pull/363), [`cugu/awesome-forensics` #152](https://github.com/cugu/awesome-forensics/pull/152), [`wtsxDev/reverse-engineering` #59](https://github.com/wtsxDev/reverse-engineering/pull/59), [`tylerha97/awesome-reversing` #37](https://github.com/tylerha97/awesome-reversing/pull/37), [`0xflotus/awesome-rust-security` #1](https://github.com/0xflotus/awesome-rust-security/pull/1), [`qmonnet/awesome-ebpf` (`zoidbergwill/awesome-ebpf`) #179](https://github.com/qmonnet/awesome-ebpf/pull/179), [`aya-rs/awesome-aya` #25](https://github.com/aya-rs/awesome-aya/pull/25), [`pedramamini/awesome-yara` (`InQuest/awesome-yara`) #83](https://github.com/pedramamini/awesome-yara/pull/83), [`corca-ai/awesome-llm-security` #415](https://github.com/corca-ai/awesome-llm-security/pull/415), [`ottosulin/awesome-ai-security` #616](https://github.com/ottosulin/awesome-ai-security/pull/616), and [`machinae/awesome-claws` #46](https://github.com/machinae/awesome-claws/pull/46)) spanning Direct EDR & Detection Engineering, Blue Team/DFIR/Forensics/REA, Rust & eBPF Systems Directories, and YARA/Agentic AI Security. | CLI: `python scripts/submit_awesome_lists.py --list`<br>Docs: [`docs/AWESOME_LISTS_SUBMISSION_STRATEGY.md`](docs/AWESOME_LISTS_SUBMISSION_STRATEGY.md) |
+| **Zero-Overhead Wasmtime Sandbox & Capability Isolation (Milestone M13)** | Zero-overhead, memory-bounded, epoch-preemptible WebAssembly sandbox engine (`crates/osoosi-sandbox/src/wasm_supervisor.rs`, `host_capability_gate.rs`) leveraging `wasm32-wasip2` / `.cwasm` AOT artifacts with `PoolingAllocationConfig` + `InstancePre`, sub-50µs warm instantiation SLA, zero physical RSS leaks across 1,000+ executions, 64 MiB linear memory cap, epoch preemption, and mathematical SSRF rejection. | WebUI: [`#agent-anomalies`](#agent-anomalies)<br>Crate: `crates/osoosi-sandbox`<br>Tests: `crates/osoosi-sandbox/tests/m13_wasm_capabilities_and_regression_tests.rs` |
+| **Strict Loopback-Only WebUI Isolation (Milestone M14)** | Complete host-level WebUI confinement isolating `http://127.0.0.1:3030`: unconditional `127.0.0.1` socket bind (never `0.0.0.0`), multi-layer loopback host guard middleware enforcing peer TCP loopback validation (`127.0.0.0/8`, `::1`, `::ffff:127.x.x.x`), reverse proxy header rejection (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `True-Client-IP`, `Forwarded`, `X-Forwarded-Host`), strict loopback `Host` header & DNS rebinding defense (`localhost`, `[::1]`, `127.0.0.0/8`), Origin & Referer loopback enforcement, and loopback-only CORS policies. | WebUI: `http://127.0.0.1:3030`<br>Crate: `crates/osoosi-dashboard`<br>Tests: `crates/osoosi-dashboard/tests/m14_loopback_only_ui_isolation_test.rs` |
 
 ---
 
@@ -159,6 +164,72 @@ flowchart LR
 
 ---
 
+<a id="milestone-m13-wasmtime-sandbox"></a>
+## 🛡️ Milestone M13: Zero-Overhead Wasmtime Sandbox Architecture
+
+To eliminate arbitrary code execution escape vectors when autonomous agents execute untrusted scripts, models, or third-party tools, OshoosiClaw incorporates a zero-overhead, memory-bounded, and epoch-preemptible WebAssembly runtime (`crates/osoosi-sandbox`):
+
+```mermaid
+flowchart TD
+    subgraph Host["Host Supervisor (Trusted TCB)"]
+        H1["HostCapabilityGate<br/>(Mathematical SSRF Guard & Secret Scrubber)"]
+        H2["Engine<br/>(PoolingAllocationConfig: 100 Instances, 64 MiB Mem Pool)"]
+        H3["Epoch Ratchet<br/>(Background Epoch Timer: O(1) Preemption without Fuel Overhead)"]
+        H4["InstancePre Pool<br/>(Sub-50µs Warm Instantiation SLA)"]
+    end
+
+    subgraph Guest["Guest WASM Sandbox (wasm32-wasip2 / .cwasm)"]
+        G1["Linear Memory (Max 64 MiB Bounds-Checked)"]
+        G2["Isolated Guest Execution Loop"]
+        G3["Capability-Restricted WASI Imports"]
+    end
+
+    H2 --> H4
+    H4 -->|"InstantiatePre::instantiate()"| Guest
+    H3 -.->|"Engine::increment_epoch() (Traps Runaway Loops)"| G2
+    G2 -->|"Host Call (WASI Socket / FS)"| H1
+    H1 -->|"Reject Non-Loopback / Local Intranet (Fail-Closed)"| H1
+```
+
+### Key Architectural Guarantees:
+1. **Pre-Compiled AOT `.cwasm` & `InstancePre`**: Eliminates JIT compilation pauses at runtime by pre-compiling WASM modules to native AOT binaries with `wasmtime::InstancePre`, yielding sub-50 µs warm instantiation latency.
+2. **`PoolingAllocationConfig` Allocation Arena**: Pre-allocates memory and table pools ahead-of-time (100 instances, 100 memories), eliminating runtime system `mmap`/`VirtualAlloc` calls and preventing virtual memory fragmentation or heap-exhaustion DoS attacks.
+3. **Epoch Deadline Preemption**: Enforces strict execution time limits via asynchronous epoch timer ticks (`engine.increment_epoch()`). Traps infinite loops and compute-heavy runaway tasks without the runtime overhead of per-instruction instruction-fuel counting.
+4. **Hard Memory Bounds**: Enforces a strict 64 MiB maximum linear memory cap per instance with guard pages. Memory access beyond bounds traps deterministically with zero memory corruption risk.
+5. **Mathematical SSRF & Zero Secret Leakage**: `HostCapabilityGate` intercepts all outbound network requests, parses destination IP literals (`Ipv4Addr` / `Ipv6Addr`), and mathematically rejects loopback, link-local, RFC1918 private, and metadata endpoints before any socket is opened. Sensitive credentials and secrets are never placed in guest linear memory.
+
+---
+
+<a id="milestone-m14-loopback-isolation"></a>
+## 🔒 Milestone M14: Strict Loopback-Only WebUI & Control Plane Isolation
+
+To guarantee that the EDR management interface and WebUI cannot be accessed, scanned, or exploited by any remote network host, OshoosiClaw enforces unconditional loopback confinement across 5 defensive layers:
+
+```mermaid
+flowchart TD
+    Req["Incoming HTTP / WebSocket Request"] --> LayerA{"Layer A: Peer TCP IP<br/>(127.0.0.0/8, ::1, ::ffff:127.x.x.x)"}
+    LayerA -- "Non-Loopback Peer" --> BlockA["403 Forbidden<br/>(REMOTE_HOST_ACCESS_FORBIDDEN)"]
+    LayerA -- "Loopback Peer" --> LayerB{"Layer B: Reverse Proxy Headers<br/>(X-Forwarded-For, X-Real-IP, Forwarded)"}
+    
+    LayerB -- "Remote Hop Detected" --> BlockB["403 Forbidden<br/>(REMOTE_PROXY_ACCESS_FORBIDDEN)"]
+    LayerB -- "Clean / No Remote Proxy" --> LayerC{"Layer C: Host Header & DNS Rebinding<br/>(localhost, [::1], 127.0.0.0/8)"}
+    
+    LayerC -- "External Domain (evil.com)" --> BlockC["403 Forbidden<br/>(NON_LOOPBACK_HOST_FORBIDDEN)"]
+    LayerC -- "Valid Loopback Host" --> LayerD{"Layer D: Origin & Referer Checks<br/>(Strict Local Origins Only)"}
+    
+    LayerD -- "External Origin / Referer" --> BlockD["403 Forbidden<br/>(CSRF_ORIGIN_MISMATCH)"]
+    LayerD -- "Valid Local Origin" --> LayerE["Layer E: Strict CORS & API Handlers<br/>(Local Loopback WebUI 200 OK)"]
+```
+
+### 5-Layer Defensive Guard:
+1. **Unconditional Socket Bind**: Both `spawn_dashboard_with_backend` and `start_dashboard_with_backend` bind unconditionally to `127.0.0.1`. Any attempt to set `OSOOSI_DASHBOARD_BIND_ALL` is logged as a security warning and ignored.
+2. **Layer A (Peer TCP Check)**: Inspects `ConnectInfo<SocketAddr>` to verify the connection originated from an authentic loopback IP (`127.0.0.0/8`, `::1`, or `::ffff:127.x.x.x`). Remote network connections fail closed immediately.
+3. **Layer B (Reverse Proxy Header Rejection)**: Analyzes `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `True-Client-IP`, `Forwarded`, and `X-Forwarded-Host`. If any non-loopback hop is declared, the request is rejected with `REMOTE_PROXY_ACCESS_FORBIDDEN`.
+4. **Layer C (DNS Rebinding Guard)**: Enforces that the HTTP `Host` header resolves strictly to `localhost`, `[::1]`, or `127.0.0.0/8`. Blocks DNS rebinding attacks (`attacker-domain.com -> 127.0.0.1`).
+5. **Layer D & E (Origin/Referer & CORS)**: Validates that `Origin` and `Referer` headers match local loopback origins, and configures `CorsLayer` to reject external domain preflights.
+
+---
+
 <a id="quick-start"></a>
 ## ⚡ 60-Second Quick Start
 Get OshoosiClaw running on your endpoint in under one minute:
@@ -195,7 +266,7 @@ docker run -d \
   --read-only \
   --cap-drop=ALL \
   --security-opt no-new-privileges:true \
-  -p 3030:3030 \
+  -p 127.0.0.1:3030:3030 \
   ghcr.io/oyesanyf/oshoosiclaw:1.2.0
 ```
 

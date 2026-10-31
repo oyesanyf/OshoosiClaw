@@ -95,13 +95,13 @@ COPY --from=builder --chown=65532:65532 /out/data/database /app/database
 COPY --from=builder --chown=65532:65532 /out/data/logs /app/logs
 COPY --from=builder --chown=65532:65532 /out/data/quarantine /app/quarantine
 
-ENV OSOOSI_DASHBOARD_HOST=0.0.0.0 \
+ENV OSOOSI_DASHBOARD_HOST=127.0.0.1 \
     OSOOSI_DASHBOARD_PORT=3030 \
     RUST_BACKTRACE=0
 
 VOLUME ["/app/database", "/app/logs", "/app/quarantine"]
 
-EXPOSE 3030/tcp 4001/tcp
+EXPOSE 4001/tcp
 
 USER 65532:65532
 

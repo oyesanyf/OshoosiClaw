@@ -54,6 +54,9 @@ pub use hidden_process_ledger::{
     list_hidden_spawns, output_hidden, record_hidden_spawn, spawn_hidden, spawn_hidden_tokio,
     status_hidden, HiddenSpawnRecord, LedgeredCommandExt,
 };
+pub use host_capability_gate::{
+    GateError, HardenedSealedGrant, HostCapabilityGate, SecretSwapProvider, ZeroizingLockedSecret,
+};
 pub use native_host::{
     build_ssrf_safe_http_client, build_ssrf_safe_http_client_sync, is_ssrf_ip, is_ssrf_ipv4,
     is_ssrf_url, validate_resolved_socket_addr,
@@ -75,17 +78,14 @@ pub use token_posture::{
     DANGEROUS_PRIVILEGES, INTEGRITY_HIGH, INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM,
     INTEGRITY_UNTRUSTED,
 };
+pub use wasm_supervisor::{
+    build_metered_engine, build_zero_overhead_engine, EpochTicker, P2pFrameHostState,
+    ValidatedP2pFrameReceipt, WasmSupervisor, WasmSupervisorConfig, WasmSupervisorError,
+};
 pub use wasm_tier1::{
     WasmExecutionReceipt, WasmHostState, WasmSandboxLimits, WasmTier1Executor,
     ZeroMiProjectionResult, ZeroMutualInformationProjector, WASM_DOC_EXTRACTOR_WAT,
     WASM_LEDGER_VALIDATOR_WAT,
-};
-pub use host_capability_gate::{
-    GateError, HardenedSealedGrant, HostCapabilityGate, SecretSwapProvider, ZeroizingLockedSecret,
-};
-pub use wasm_supervisor::{
-    build_metered_engine, build_zero_overhead_engine, EpochTicker, P2pFrameHostState,
-    ValidatedP2pFrameReceipt, WasmSupervisor, WasmSupervisorConfig, WasmSupervisorError,
 };
 
 /// Configuration for a sandbox execution.

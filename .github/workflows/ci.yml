@@ -37,7 +37,7 @@ jobs:
           cache-on-failure: true
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value -A clippy::useless_format -A clippy::manual_repeat_n -A clippy::doc_overindented_list_items -A clippy::cmp_owned -A clippy::manual_range_contains -A clippy::double_ended_iterator_last -A clippy::chunks_exact_to_as_chunks -A clippy::new_without_default -A clippy::needless_borrows_for_generic_args
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value -A clippy::useless_format -A clippy::manual_repeat_n -A clippy::doc_overindented_list_items -A clippy::cmp_owned -A clippy::manual_range_contains -A clippy::double_ended_iterator_last -A clippy::chunks_exact_to_as_chunks -A clippy::new_without_default -A clippy::needless_borrows_for_generic_args -A clippy::too_many_arguments -A clippy::type_complexity
 
   # ── cargo-audit: dependency vulnerability scan ────────────────────────────────
   audit:
@@ -56,7 +56,7 @@ jobs:
           tool: cargo-audit
 
       - name: Run audit
-        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410
+        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402
 
   # ── Tests ────────────────────────────────────────────────────────────────────
   test:

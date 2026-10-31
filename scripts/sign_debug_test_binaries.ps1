@@ -29,16 +29,18 @@ foreach ($f in $targets) {
         if ($hlOut -and ($hlOut.Count -gt 1)) {
             $targetFull = [System.IO.Path]::GetFullPath($f.FullName)
             $driveRoot = [System.IO.Path]::GetPathRoot($targetFull).TrimEnd('\')
-            # Prefer preserving build-script-build.exe over build_script_build-<hash>.exe
+            # Break hardlink by cloning content so all hardlinked siblings exist independently
             if ($f.Name -like "build_script_build-*.exe") {
                 continue
             }
+            $tmp = [System.IO.Path]::GetTempFileName()
+            Copy-Item -Path $targetFull -Destination $tmp -Force
             foreach ($hlRel in $hlOut) {
                 $hlCandidate = "$driveRoot$hlRel"
-                if ([System.IO.Path]::GetFullPath($hlCandidate) -ne $targetFull) {
-                    Remove-Item -Path $hlCandidate -Force -ErrorAction SilentlyContinue
-                }
+                Remove-Item -Path $hlCandidate -Force -ErrorAction SilentlyContinue
+                Copy-Item -Path $tmp -Destination $hlCandidate -Force
             }
+            Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
         }
         $sig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
         if ((-not $sig) -or ($sig.SignerCertificate -eq $null)) {

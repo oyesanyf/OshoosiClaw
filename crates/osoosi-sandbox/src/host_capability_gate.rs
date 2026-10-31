@@ -121,10 +121,7 @@ pub struct HostCapabilityGate {
 }
 
 impl HostCapabilityGate {
-    pub fn new(
-        ollama_bridge_enabled: bool,
-        caller_pid: u32,
-    ) -> Self {
+    pub fn new(ollama_bridge_enabled: bool, caller_pid: u32) -> Self {
         Self {
             grants: Arc::new(RwLock::new(HashMap::new())),
             custom_swap_provider: None,
@@ -222,9 +219,8 @@ impl HostCapabilityGate {
         headers: &[(String, String)],
         body: Option<&[u8]>,
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), GateError> {
-        let parsed_url = reqwest::Url::parse(url_str).map_err(|e| {
-            GateError::DomainDenied(format!("Malformed URL '{}': {}", url_str, e))
-        })?;
+        let parsed_url = reqwest::Url::parse(url_str)
+            .map_err(|e| GateError::DomainDenied(format!("Malformed URL '{}': {}", url_str, e)))?;
 
         let host = parsed_url
             .host_str()
@@ -256,18 +252,19 @@ impl HostCapabilityGate {
                 .map_err(|e| GateError::NetworkError(e.to_string()))?
         } else {
             // SSRF & DNS Pinning via build_ssrf_safe_http_client
-            let (c, pinned_socket) = build_ssrf_safe_http_client(url_str)
-                .await
-                .map_err(|e| match e {
-                    osoosi_types::OctopusSecurityError::SsrfBlocked(msg) => {
-                        if msg.contains("DNS REBINDING") {
-                            GateError::DnsRebindingBlocked(msg)
-                        } else {
-                            GateError::SsrfBlocked(msg)
+            let (c, pinned_socket) =
+                build_ssrf_safe_http_client(url_str)
+                    .await
+                    .map_err(|e| match e {
+                        osoosi_types::OctopusSecurityError::SsrfBlocked(msg) => {
+                            if msg.contains("DNS REBINDING") {
+                                GateError::DnsRebindingBlocked(msg)
+                            } else {
+                                GateError::SsrfBlocked(msg)
+                            }
                         }
-                    }
-                    other => GateError::NetworkError(other.to_string()),
-                })?;
+                        other => GateError::NetworkError(other.to_string()),
+                    })?;
 
             info!(
                 "HostCapabilityGate: outbound fetch '{}' pinned to '{}'",
@@ -291,14 +288,12 @@ impl HostCapabilityGate {
 
         for (k, v) in headers {
             if v.contains("OSHOOSI_STANDIN_") {
-                let swapped = self
-                    .swap_secret(host, v.as_bytes())
-                    .map_err(|e| {
-                        GateError::CredentialDenied(format!(
-                            "Boundary secret swap failed for header '{}': {}",
-                            k, e
-                        ))
-                    })?;
+                let swapped = self.swap_secret(host, v.as_bytes()).map_err(|e| {
+                    GateError::CredentialDenied(format!(
+                        "Boundary secret swap failed for header '{}': {}",
+                        k, e
+                    ))
+                })?;
                 let swapped_str = String::from_utf8(swapped).map_err(|_| {
                     GateError::CredentialDenied("Non-UTF8 secret byte representation".to_string())
                 })?;
@@ -310,14 +305,12 @@ impl HostCapabilityGate {
 
         if let Some(payload) = body {
             if payload.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
-                let swapped_body = self
-                    .swap_secret(host, payload)
-                    .map_err(|e| {
-                        GateError::CredentialDenied(format!(
-                            "Boundary secret swap failed in payload: {}",
-                            e
-                        ))
-                    })?;
+                let swapped_body = self.swap_secret(host, payload).map_err(|e| {
+                    GateError::CredentialDenied(format!(
+                        "Boundary secret swap failed in payload: {}",
+                        e
+                    ))
+                })?;
                 request_builder = request_builder.body(swapped_body);
             } else {
                 request_builder = request_builder.body(payload.to_vec());

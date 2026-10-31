@@ -78,27 +78,36 @@ pub struct OsoosiBehavior {
 /// Global or per-node split-plane wire frame validator closure.
 pub type WireFrameValidator = Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
 
-static GLOBAL_FRAME_VALIDATOR: std::sync::RwLock<Option<WireFrameValidator>> = std::sync::RwLock::new(None);
+static GLOBAL_FRAME_VALIDATOR: std::sync::RwLock<Option<WireFrameValidator>> =
+    std::sync::RwLock::new(None);
 
 /// Sets the global split-plane frame validator (e.g. backed by WasmSupervisor hot-path guest pool).
 pub fn set_global_wire_frame_validator<F>(validator: F)
 where
     F: Fn(&str, &[u8]) -> Result<(), String> + Send + Sync + 'static,
 {
-    let mut lock = GLOBAL_FRAME_VALIDATOR.write().unwrap_or_else(|p| p.into_inner());
+    let mut lock = GLOBAL_FRAME_VALIDATOR
+        .write()
+        .unwrap_or_else(|p| p.into_inner());
     *lock = Some(Arc::new(validator));
 }
 
 /// Validates a raw inbound wire frame before any host-side serde deserialization.
 pub fn validate_wire_frame(topic: &str, raw_data: &[u8]) -> Result<(), String> {
-    if let Some(ref validator) = *GLOBAL_FRAME_VALIDATOR.read().unwrap_or_else(|p| p.into_inner()) {
+    if let Some(ref validator) = *GLOBAL_FRAME_VALIDATOR
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+    {
         return validator(topic, raw_data);
     }
 
     // Default built-in split-plane validator:
     // 1. Check max frame size <= 512 KiB
     if raw_data.len() > 524_288 {
-        return Err(format!("Payload oversized ({} bytes > 512 KiB)", raw_data.len()));
+        return Err(format!(
+            "Payload oversized ({} bytes > 512 KiB)",
+            raw_data.len()
+        ));
     }
     // 2. Check min payload size
     if raw_data.len() < 2 {

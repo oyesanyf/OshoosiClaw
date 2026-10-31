@@ -99,9 +99,7 @@ pub struct GenAiEvaluateRequest {
 }
 
 /// Handler for `POST /api/v1/telemetry/genai-monitor/evaluate`.
-pub async fn post_genai_monitor_evaluate(
-    Json(payload): Json<GenAiEvaluateRequest>,
-) -> Json<Value> {
+pub async fn post_genai_monitor_evaluate(Json(payload): Json<GenAiEvaluateRequest>) -> Json<Value> {
     let monitor = get_global_genai_monitor();
     let session_id = payload.session_id.trim();
     if session_id.is_empty() {

@@ -2883,10 +2883,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
                     match ProtectedEnvBackupVault::get_status(&path) {
                         Ok(status) => {
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                             println!("  OpenỌ̀ṣọ́ọ̀sì Environment Gateway & Protected Vault Status");
-                            println!("============================================================");
-                            println!("Vault Exists:       {}", if status.exists { "✅ Yes" } else { "❌ No" });
+                            println!(
+                                "============================================================"
+                            );
+                            println!(
+                                "Vault Exists:       {}",
+                                if status.exists { "✅ Yes" } else { "❌ No" }
+                            );
                             println!("Vault Path:         {}", status.vault_path.display());
                             if let Some(ref target) = status.target_path {
                                 println!("Target Path:        {}", target.display());
@@ -2894,7 +2901,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             if let Some(epoch) = status.sealed_at_epoch {
                                 println!("Sealed Epoch:       {}", epoch);
                             }
-                            println!("DACL Protected:     {}", if status.dacl_protected { "✅ Active (SE_DACL_PROTECTED)" } else { "No" });
+                            println!(
+                                "DACL Protected:     {}",
+                                if status.dacl_protected {
+                                    "✅ Active (SE_DACL_PROTECTED)"
+                                } else {
+                                    "No"
+                                }
+                            );
                             println!("Sealed Variables:   {:?}", status.sealed_variables);
                             if !status.standin_mappings.is_empty() {
                                 println!("Active Stand-in Tokens:");
@@ -2906,7 +2920,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                 println!("Original SHA-256:   {}", sha);
                             }
                             println!("Payload Size:       {} bytes", status.payload_size);
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
 
                             // Jointly enumerate .env + std::env::vars() to show discovery status
                             let target_path = status
@@ -2944,11 +2960,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             println!("Sealed Secrets:     {}", enum_res.total_selected);
                             println!("Vetoed Safe Vars:   {}", enum_res.total_vetoed);
                             println!("-----------------------------------------------------------------------------------------");
-                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Replacement Token");
+                            println!(
+                                "{:<24} | {:<10} | {:<15} | {:<30}",
+                                "Variable Name",
+                                "Status",
+                                "Confidence",
+                                "Analysis / Replacement Token"
+                            );
                             println!("-----------------------------------------------------------------------------------------");
                             for c in &enum_res.candidates {
-                                let is_important_veto = c.vetoed_by_safety_guard && (
-                                    c.key.eq_ignore_ascii_case("path")
+                                let is_important_veto = c.vetoed_by_safety_guard
+                                    && (c.key.eq_ignore_ascii_case("path")
                                         || c.key.eq_ignore_ascii_case("java_home")
                                         || c.key.eq_ignore_ascii_case("onedrive")
                                         || c.key.eq_ignore_ascii_case("temp")
@@ -2956,10 +2978,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                         || c.key.starts_with("ANTIGRAVITY_")
                                         || c.key.starts_with("VSCODE_")
                                         || c.key.starts_with("CARGO_")
-                                        || c.key.starts_with("RUST_")
-                                );
+                                        || c.key.starts_with("RUST_"));
                                 if c.selected || is_important_veto {
-                                    let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
+                                    let status_str = if c.selected {
+                                        "✅ SEALED"
+                                    } else {
+                                        "🛡️ VETOED"
+                                    };
                                     let conf_str = format!("{} bp", c.fusion_confidence_bp);
                                     let detail_str = if c.selected {
                                         if let Some(ref standin) = c.standin_token {
@@ -2968,9 +2993,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                             "LLM Fusion Consensus Confirmed".to_string()
                                         }
                                     } else {
-                                        c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
+                                        c.veto_reason
+                                            .clone()
+                                            .unwrap_or_else(|| "Low secret confidence".to_string())
                                     };
-                                    println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, detail_str);
+                                    println!(
+                                        "{:<24} | {:<10} | {:<15} | {:<30}",
+                                        c.key, status_str, conf_str, detail_str
+                                    );
                                 }
                             }
                             println!("=========================================================================================");
@@ -2981,7 +3011,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         }
                     }
                 }
-                EnvGatewayAction::Seal { env_file, vault_path } => {
+                EnvGatewayAction::Seal {
+                    env_file,
+                    vault_path,
+                } => {
                     let v_path = vault_path
                         .clone()
                         .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
@@ -2992,14 +3025,26 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             println!("  OpenỌ̀ṣọ́ọ̀sì 3-Arm LLM Fusion API Key Discovery & Zero-Touch Protection");
                             println!("=========================================================================================");
                             println!("Scanned Variables:  {}", enum_res.total_scanned);
-                            println!("Sealed Secrets:     {} (Protected in DACL Vault)", enum_res.total_selected);
-                            println!("Vetoed Safe Vars:   {} (PATH & System Variables Preserved)", enum_res.total_vetoed);
+                            println!(
+                                "Sealed Secrets:     {} (Protected in DACL Vault)",
+                                enum_res.total_selected
+                            );
+                            println!(
+                                "Vetoed Safe Vars:   {} (PATH & System Variables Preserved)",
+                                enum_res.total_vetoed
+                            );
                             println!("-----------------------------------------------------------------------------------------");
-                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Replacement Token");
+                            println!(
+                                "{:<24} | {:<10} | {:<15} | {:<30}",
+                                "Variable Name",
+                                "Status",
+                                "Confidence",
+                                "Analysis / Replacement Token"
+                            );
                             println!("-----------------------------------------------------------------------------------------");
                             for c in &enum_res.candidates {
-                                let is_important_veto = c.vetoed_by_safety_guard && (
-                                    c.key.eq_ignore_ascii_case("path")
+                                let is_important_veto = c.vetoed_by_safety_guard
+                                    && (c.key.eq_ignore_ascii_case("path")
                                         || c.key.eq_ignore_ascii_case("java_home")
                                         || c.key.eq_ignore_ascii_case("onedrive")
                                         || c.key.eq_ignore_ascii_case("temp")
@@ -3007,10 +3052,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                         || c.key.starts_with("ANTIGRAVITY_")
                                         || c.key.starts_with("VSCODE_")
                                         || c.key.starts_with("CARGO_")
-                                        || c.key.starts_with("RUST_")
-                                );
+                                        || c.key.starts_with("RUST_"));
                                 if c.selected || is_important_veto {
-                                    let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
+                                    let status_str = if c.selected {
+                                        "✅ SEALED"
+                                    } else {
+                                        "🛡️ VETOED"
+                                    };
                                     let conf_str = format!("{} bp", c.fusion_confidence_bp);
                                     let reason_str = if c.selected {
                                         if let Some(ref standin) = c.standin_token {
@@ -3019,13 +3067,21 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                             "LLM Fusion Consensus Confirmed".to_string()
                                         }
                                     } else {
-                                        c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
+                                        c.veto_reason
+                                            .clone()
+                                            .unwrap_or_else(|| "Low secret confidence".to_string())
                                     };
-                                    println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, reason_str);
+                                    println!(
+                                        "{:<24} | {:<10} | {:<15} | {:<30}",
+                                        c.key, status_str, conf_str, reason_str
+                                    );
                                 }
                             }
                             println!("=========================================================================================");
-                            println!("✅ Successfully sealed {} variables into DACL-protected vault.", enum_res.total_selected);
+                            println!(
+                                "✅ Successfully sealed {} variables into DACL-protected vault.",
+                                enum_res.total_selected
+                            );
                         }
                         Err(e) => {
                             eprintln!("[-] Dynamic seal failed: {}", e);
@@ -3037,16 +3093,24 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     let v_path = vault_path
                         .clone()
                         .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
-                    println!("[*] Reverting environment file from vault '{}'...", v_path.display());
+                    println!(
+                        "[*] Reverting environment file from vault '{}'...",
+                        v_path.display()
+                    );
                     match ProtectedEnvBackupVault::auto_revert(&v_path) {
-                        Ok(()) => println!("✅ Target environment restored to original pre-stand-in state."),
+                        Ok(()) => println!(
+                            "✅ Target environment restored to original pre-stand-in state."
+                        ),
                         Err(e) => {
                             eprintln!("[-] Revert failed: {}", e);
                             std::process::exit(1);
                         }
                     }
                 }
-                EnvGatewayAction::RemoveBackup { confirm, vault_path } => {
+                EnvGatewayAction::RemoveBackup {
+                    confirm,
+                    vault_path,
+                } => {
                     let v_path = vault_path
                         .clone()
                         .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
@@ -3054,7 +3118,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         eprintln!("[-] Error: Backup removal requires explicit confirmation via --confirm flag.");
                         std::process::exit(1);
                     }
-                    println!("[*] Unlocking Protected DACL, shredding with 0x00, and unlinking '{}'...", v_path.display());
+                    println!(
+                        "[*] Unlocking Protected DACL, shredding with 0x00, and unlinking '{}'...",
+                        v_path.display()
+                    );
                     match ProtectedEnvBackupVault::remove_backup(&v_path, *confirm) {
                         Ok(()) => println!("✅ Protected backup vault securely shredded (0x00 overwrite + sync_all) and removed."),
                         Err(e) => {
@@ -9594,13 +9661,8 @@ mod tests {
             _ => panic!("Expected Commands::EnvGateway Revert"),
         }
 
-        let cli_remove = Cli::try_parse_from([
-            "osoosi",
-            "env-gateway",
-            "remove-backup",
-            "--confirm",
-        ])
-        .unwrap();
+        let cli_remove =
+            Cli::try_parse_from(["osoosi", "env-gateway", "remove-backup", "--confirm"]).unwrap();
         match cli_remove.command {
             Some(Commands::EnvGateway {
                 action:
