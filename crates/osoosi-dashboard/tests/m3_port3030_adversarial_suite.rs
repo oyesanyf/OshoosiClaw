@@ -264,7 +264,7 @@ async fn test_port_3030_rate_limiter_burst_and_recovery() {
     let base_url = format!("http://127.0.0.1:{}", bound_port);
     let client = Client::new();
     let token = get_or_init_dashboard_api_token();
-    let test_ip = format!("198.51.100.{}", (rand::random::<u8>() % 200) + 1);
+    let test_ip = format!("127.0.10.{}", (rand::random::<u8>() % 200) + 1);
 
     // Send 10 requests within burst limit
     for _ in 0..10 {
