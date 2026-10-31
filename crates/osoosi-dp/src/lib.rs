@@ -1747,16 +1747,18 @@ impl OsoosiTwoTierDlpEngine {
                         }
                     }
 
-                    // Check ISO/IEC 7812 & Luhn PAN (13..=19 digits)
-                    let digits: Vec<u8> = bytes
-                        .iter()
-                        .copied()
-                        .filter(|b| b.is_ascii_digit())
-                        .collect();
-                    if Self::is_valid_credit_card_pan(&digits)
-                        && !detected_categories.contains(&"CREDIT_CARD_LUHN".to_string())
-                    {
-                        detected_categories.push("CREDIT_CARD_LUHN".to_string());
+                    // Check ISO/IEC 7812 & Luhn PAN (13..=19 digits; token must only contain digits and '-')
+                    if bytes.iter().all(|b| b.is_ascii_digit() || *b == b'-') {
+                        let digits: Vec<u8> = bytes
+                            .iter()
+                            .copied()
+                            .filter(|b| b.is_ascii_digit())
+                            .collect();
+                        if Self::is_valid_credit_card_pan(&digits)
+                            && !detected_categories.contains(&"CREDIT_CARD_LUHN".to_string())
+                        {
+                            detected_categories.push("CREDIT_CARD_LUHN".to_string());
+                        }
                     }
                 }
 
@@ -2384,13 +2386,15 @@ impl PresidioGlinerPiiZeroGuard {
                         && RedactXStructuredValidator::mod11_valid(tok)
                     {
                         Some("HIPAA_MRN")
-                    } else {
+                    } else if tok.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
                         let digits: Vec<u8> = tok.bytes().filter(|b| b.is_ascii_digit()).collect();
                         if OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(&digits) {
                             Some("CREDIT_CARD")
                         } else {
                             None
                         }
+                    } else {
+                        None
                     };
 
                 if detected_type.is_none() {
