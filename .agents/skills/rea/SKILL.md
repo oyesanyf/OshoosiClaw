@@ -38,7 +38,7 @@ REA (`Reverse Engineer Anything`, inspired by `morluto/rea`) connects OpenỌ̀�
 
 ```powershell
 # Autonomous target inspection (auto-detects format)
-osoosi rea analyze <path> --json
+osoosi rea analyze FILE_PATH --json
 
 # Explicit target inspection
 osoosi rea analyze target/release/osoosi.exe --target rust --json
@@ -55,6 +55,6 @@ osoosi rea providers --json
 
 ## Dashboard REST API & WebUI (`#rea`)
 
-- `GET /api/rea/v1/status` — Returns engine status, `autonomous_enabled`, `total_autonomous_sweeps`, detected providers, and recent evidence-backed investigations.
-- `POST /api/rea/v1/analyze` — Runs immediate REA analysis on `target_path`, `raw_hex`, or preset (`self_binary`, `sample_evm`, `sample_wasm`).
-- `POST /api/rea/v1/autonomous` — Triggers an immediate autonomous sweep across active processes/binaries or toggles autonomous mode.
+- `GET /api/rea/v1/status` - Returns engine status, `autonomous_enabled`, `total_autonomous_sweeps`, detected providers, and recent evidence-backed investigations.
+- `POST /api/rea/v1/analyze` - Runs immediate REA analysis on `target_path`, `raw_hex`, or preset (`self_binary`, `sample_evm`, `sample_wasm`).
+- `POST /api/rea/v1/autonomous` - Triggers an immediate autonomous sweep across active processes/binaries or toggles autonomous mode.

@@ -1,8 +1,8 @@
-# ModelFusion / HugOS IDE — Fix Memory
+# ModelFusion / HugOS IDE - Fix Memory
 
 ## Session: 2026-07-19 → 2026-07-21
 
-### Fix 1: Title Bug — Chat Title Shows Model Answer Instead of User Question
+### Fix 1: Title Bug - Chat Title Shows Model Answer Instead of User Question
 - **Root Cause**: `ChatTitleProvider` in `title.ts` sent the user's question to the LLM and used the LLM's *answer* as the title.
 - **Fix**: Replaced LLM-based title generation with direct extraction of the user's first prompt, truncated to 100 chars.
 - **File**: `IDE/vscode/extensions/copilot/src/extension/prompt/node/title.ts`
@@ -51,15 +51,15 @@
 ---
 
 ## Git Commit Summary
-- `f318d214` — fix: remove custom slash commands from package.json
-- `f7a54673` — feat: add /v1/chat/completions OpenAI-compatible endpoint to CLI
-- `89bd0cf6` — fix: replace http://localhost:11434 with http://127.0.0.1:11434
-- `8381729a` — fix: bypass corporate proxy (.no_proxy()) for local loopback Ollama connections
-- `303693f2` — fix: set PYTHONIOENCODING=utf-8 for OpenEvolve env and default to qwen2.5:7b for VRAM safety
-- `c0b79fbe` — chore: update IDE/vscode submodule with OpenEvolve UTF-8 and VRAM safety fixes
-- `9d03a1d9` — fix: target ONLY latest user message for slash command detection to stop transcript history hijacking
-- `853133c6` — feat: query_system_resources hardware summary & auto-enable gpu=true and ollama=true in /orchestrate
-- `7f7d6999` — feat: enforce GPU=true, Ollama=true, CPU=false in Rust server and IDE extension when GPU is present
+- `f318d214` - fix: remove custom slash commands from package.json
+- `f7a54673` - feat: add /v1/chat/completions OpenAI-compatible endpoint to CLI
+- `89bd0cf6` - fix: replace http://localhost:11434 with http://127.0.0.1:11434
+- `8381729a` - fix: bypass corporate proxy (.no_proxy()) for local loopback Ollama connections
+- `303693f2` - fix: set PYTHONIOENCODING=utf-8 for OpenEvolve env and default to qwen2.5:7b for VRAM safety
+- `c0b79fbe` - chore: update IDE/vscode submodule with OpenEvolve UTF-8 and VRAM safety fixes
+- `9d03a1d9` - fix: target ONLY latest user message for slash command detection to stop transcript history hijacking
+- `853133c6` - feat: query_system_resources hardware summary & auto-enable gpu=true and ollama=true in /orchestrate
+- `7f7d6999` - feat: enforce GPU=true, Ollama=true, CPU=false in Rust server and IDE extension when GPU is present
 
 ---
 

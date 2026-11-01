@@ -3,14 +3,12 @@
 ## Git Push Guardrails
 - **Restricted Remotes:** NEVER run `git push` inside `IDE/vscode` or target any Microsoft/upstream third-party remote.
 - **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/OshoosiClaw.git`.
-
 - **Zero-Wait Incremental Commits ("NO COMMIT SHOULD WAIT, WE MAY LOSE CODE CHANGE"):** Never leave verified code waiting uncommitted in the working tree across subtasks. Both lead agents and subagents must commit and ship incremental checkpoints immediately via `powershell -ExecutionPolicy Bypass -File scripts/solo_pr_ship.ps1 -Title "..."` and verify `git status -s` is clean before ending any turn.
-
 - **Mandatory PR & GitHub Actions Workflow Remediation ("ALWAY FIX PR AND WORKFLOW ISSUES"):** Always check open Pull Requests and GitHub Actions workflow runs when shipping code. If any Pull Request is stuck or any GitHub Actions workflow (`.github/workflows/*.yml`) fails, immediately inspect the failed job logs, fix the broken workflow or check, and ensure the PR merges cleanly into `main`.
 - **Mandatory RAPTOR Security Remediation & Nightly Scheduled Audit ("DURING THE SOLO PROCESS ALL SECURITY ISSUES MUST BE FIXED"):**
   - During every solo PR ship cycle (`scripts/solo_pr_ship.ps1`), **all security findings and RAPTOR Security Audit (`SAST + Post-Quantum Crypto + SCA`) issues must be inspected and fixed before merge**. Never allow a RAPTOR security check to pass with `0` SARIF files or unmitigated critical findings.
   - RAPTOR runs on every PR/push via `.github/workflows/raptor-security.yml` (`gadievron/raptor` mounted into `/workspaces/raptor`), nightly at `02:30 UTC` via GitHub Actions cron (`30 2 * * *`), and nightly at `02:30 AM` local time via the Windows Scheduled Task `OshoosiClaw-Nightly-Raptor-Security-Audit` (`scripts/run_nightly_raptor_audit.ps1`).
-- **Multi-Developer Code Review & Branch Protection Policy:** GitHub Branch Protection enforces at least one approval (`required_approving_review_count = 1`) on `main`. As more developers join, any repository collaborator or peer developer can review and approve pull requests—`oyesanyf` does not personally have to approve every PR (`require at least one approve, it does not have to be me always, it can be another developer`). For automated release builds and maintainer PRs, `.githooks/post-commit` (`core.hooksPath = .githooks`) and `scripts/solo_pr_ship.ps1` ship commits via a temporary `pr/solo-<timestamp>` branch, verified by `.github/workflows/auto-review-bot.yml`, where approval from any peer developer or the bot satisfies Branch Protection and OpenSSF Scorecard `Code-Review` / `CI-Tests` checks. Step 8 of `scripts/build_and_submit.ps1` also invokes `scripts/solo_pr_ship.ps1`.
+- **Multi-Developer Code Review & Branch Protection Policy:** GitHub Branch Protection enforces at least one approval (`required_approving_review_count = 1`) on `main`. As more developers join, any repository collaborator or peer developer can review and approve pull requests - `oyesanyf` does not personally have to approve every PR (`require at least one approve, it does not have to be me always, it can be another developer`). For automated release builds and maintainer PRs, `.githooks/post-commit` (`core.hooksPath = .githooks`) and `scripts/solo_pr_ship.ps1` ship commits via a temporary `pr/solo-TIMESTAMP` branch, verified by `.github/workflows/auto-review-bot.yml`, where approval from any peer developer or the bot satisfies Branch Protection and OpenSSF Scorecard `Code-Review` / `CI-Tests` checks. Step 8 of `scripts/build_and_submit.ps1` also invokes `scripts/solo_pr_ship.ps1`.
 
 ## Mandatory Automated Microsoft Submission on Every Build
 - **User Preference:** "Each time the code is built, remember to send to Microsoft."
@@ -31,7 +29,7 @@
 ## Strict Invariant: PATH & Environment Variable Protection
 - **User Requirement:** "my path must never ever be over wrote"
 - **Zero-Overwrite Rule:** Under NO circumstance may any script, installer definition, registry operation, or code modification overwrite, replace, or truncate the user or system `PATH` or any environment variable.
-- **WiX / MSI Invariant:** In all WiX manifests (`.wxs`), any `<Environment>` tag targeting `PATH` MUST have `Permanent="yes"` and `Part="last"`. Never use `Permanent="no"`, which generates destructive `-` deletion flags in the Windows Installer `Environment` table.
+- **WiX / MSI Invariant:** In all WiX manifests (`.wxs`), any `Environment XML` tag targeting `PATH` MUST have `Permanent="yes"` and `Part="last"`. Never use `Permanent="no"`, which generates destructive `-` deletion flags in the Windows Installer `Environment` table.
 - **Scripting & Registry Invariant:** Never set `Path` in PowerShell without reading, preserving, and appending to the existing `Path` string.
 - **Runtime Invariant:** The EDR engine and background daemons must never write to persistent Windows Registry environment hives (`HKLM` or `HKCU`).
 
@@ -43,7 +41,7 @@
 
 ## Windows WDAC / Device Guard Primary `signtool.exe` Invariant
 - **Primary Signer Rule:** Always use the native Windows 10 SDK `signtool.exe` (`SHA-256` digest + DigiCert RFC 3161 timestamp) as the primary Authenticode signer for all `.exe`, `.dll`, and `.msi` artifacts. Never rely on `osslsigncode` as the primary signer on Windows, as Windows Device Guard / WDAC rejects non-standard PE signature tables.
-- **Complete Binary Coverage & Verification:** Every build must sign both primary artifacts and all companion binaries in `target/release/` (`osoosi.exe`, `osoosi_inject.dll`, `osoosi-auditor.exe`, `otx-taxii-rs.exe`, `bulk_trainer.exe`, `test-peer.exe`) and assert `(Get-AuthenticodeSignature <path>).SignerCertificate -ne $null`.
+- **Complete Binary Coverage & Verification:** Every build must sign both primary artifacts and all companion binaries in `target/release/` (`osoosi.exe`, `osoosi_inject.dll`, `osoosi-auditor.exe`, `otx-taxii-rs.exe`, `bulk_trainer.exe`, `test-peer.exe`) and assert `(Get-AuthenticodeSignature FILE_PATH).SignerCertificate -ne $null`.
 
 ## EDR Operational Evaluation & Full-Stack Telemetry Invariants
 - **Monitor Mode vs. Enforce Mode Awareness:** When evaluating live attacks (`edr_tester.py`, Atomic Red Team, `rfc_hunt_swarm.py`), always check whether the daemon is running in **Monitor Mode** (`Action: Logged and Alerted`) or **Enforce Mode** (`Blocked / Quarantined / Process Terminated`). In Monitor Mode, verify detection efficacy via `Consensus Threat Identified` logs, SQLite `threats` / `consensus_findings` persistence, and P2P/Nostr mesh broadcasts.
@@ -77,10 +75,11 @@
 1. **RETRIEVE:** Cite specific context sources, files, logs, or external docs referenced.
 2. **CONTEXT:** Summarize key verified facts and remaining open variables.
 3. **ANSWER:** Present a concise, scannable response using bullet points or tables.
-## Cross-Repository Synchronization (`D:\harfile\AgentOctopus`) — Disabled
+
+## Cross-Repository Synchronization (`D:\harfile\AgentOctopus`) - Disabled
 - **User Preference:** "no need to be sync agent octupus anymore"
 - **Rule:** Do NOT synchronize changes to `D:\harfile\AgentOctopus`. Keep all development, packaging, and git pushes strictly scoped to `https://github.com/oyesanyf/OshoosiClaw.git`.
 
-## Awesome Lists Community Traction Protocol � Disabled (Strictly Forbidden)
+## Awesome Lists Community Traction Protocol - Disabled (Strictly Forbidden)
 - **User Preference:** "STOP CREATING ALL THESE AWESOME LISTS TOO MAY AND THEY ARE SHOW UP AS REPO IN MY REPO"
 - **Strict Rule:** NEVER fork, clone, or create any `awesome-*` list repositories (or `BlueTeam-Tools`, `reverse-engineering`, etc.) under `oyesanyf`, and NEVER run automated awesome-list PR scripts. Keep the `oyesanyf` GitHub account completely free of third-party awesome-list forks.
