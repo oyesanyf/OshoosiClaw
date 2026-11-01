@@ -49,8 +49,9 @@ pub fn classify_pe_rust_test_harness_provenance(bytes: &[u8]) -> PeTestHarnessPr
         return report;
     }
 
-    let find_subslice =
-        |haystack: &[u8], needle: &[u8]| -> Option<usize> { haystack.windows(needle.len()).position(|w| w == needle) };
+    let find_subslice = |haystack: &[u8], needle: &[u8]| -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    };
 
     report.has_rust_compiler_provenance = find_subslice(bytes, b"rustc 1.").is_some()
         || find_subslice(bytes, b".dep-v0").is_some()
@@ -155,8 +156,13 @@ pub fn classify_pe_rust_test_harness_provenance(bytes: &[u8]) -> PeTestHarnessPr
                 .any(|&(s, e)| abs_off >= s && abs_off < e);
 
             if in_exec {
-                if !report.executable_section_vector_hits.contains(&label.to_string()) {
-                    report.executable_section_vector_hits.push(label.to_string());
+                if !report
+                    .executable_section_vector_hits
+                    .contains(&label.to_string())
+                {
+                    report
+                        .executable_section_vector_hits
+                        .push(label.to_string());
                 }
             } else if in_rdata && !report.rdata_test_vector_hits.contains(&label.to_string()) {
                 report.rdata_test_vector_hits.push(label.to_string());
@@ -889,10 +895,8 @@ mod tests {
             "Canonicalizer must reject WAV containing shellcode/heap-spray payloads"
         );
 
-        let tmp = std::env::temp_dir().join(format!(
-            "osoosi_malicious_wav_{}.wav",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("osoosi_malicious_wav_{}.wav", uuid::Uuid::new_v4()));
         std::fs::write(&tmp, &malicious_wav).unwrap();
         let findings = inspect_file(&tmp).expect("inspect malicious wav");
         let _ = std::fs::remove_file(&tmp);
@@ -961,9 +965,15 @@ mod tests {
         assert!(prov.has_rust_test_harness_symbols);
         assert!(!prov.has_rwx_or_writable_code_section);
         assert!(prov.executable_section_vector_hits.is_empty());
-        assert!(prov.rdata_test_vector_hits.contains(&"calc.exe".to_string()));
-        assert!(prov.rdata_test_vector_hits.contains(&"/etc/passwd".to_string()));
-        assert!(prov.rdata_test_vector_hits.contains(&"DROP TABLE".to_string()));
+        assert!(prov
+            .rdata_test_vector_hits
+            .contains(&"calc.exe".to_string()));
+        assert!(prov
+            .rdata_test_vector_hits
+            .contains(&"/etc/passwd".to_string()));
+        assert!(prov
+            .rdata_test_vector_hits
+            .contains(&"DROP TABLE".to_string()));
         assert!(prov.is_verified_benign_rust_test_harness);
 
         // Now inject an exploit vector inside the executable `.text` section (320..448) -> must fail closed!
@@ -976,10 +986,8 @@ mod tests {
 
     #[test]
     fn test_webui_media_and_sink_integrity_audit() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "osoosi_music_songs_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_music_songs_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(temp_dir.join("roots_reggae_anthem")).unwrap();
         std::fs::create_dir_all(temp_dir.join("song-one-love-shining-1977")).unwrap();
 

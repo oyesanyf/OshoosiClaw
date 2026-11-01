@@ -1553,7 +1553,9 @@ pub fn inspect_riff_wave_container(bytes: &[u8]) -> Option<RiffWaveInspectionRep
     // omit the `fact` chunk, triggering SmartScreen / heuristic EDR shellcode/heap-spray false positives.
     let missing_mandatory_fact_chunk = format_tag == 0x0003 && !has_fact_chunk;
 
-    let data_end = data_chunk_offset.saturating_add(data_chunk_size).min(bytes.len());
+    let data_end = data_chunk_offset
+        .saturating_add(data_chunk_size)
+        .min(bytes.len());
     let data_slice = if data_chunk_offset > 0 && data_chunk_offset < data_end {
         &bytes[data_chunk_offset..data_end]
     } else {
@@ -1610,18 +1612,26 @@ pub fn inspect_riff_wave_container(bytes: &[u8]) -> Option<RiffWaveInspectionRep
 
     // 3. Check for x86_64 shellcode prologues (CLD + AND RSP, -16 `FC 48 83 E4 F0` or GS:[0x60] PEB walk)
     let shellcode_patterns: &[(&[u8], &str)] = &[
-        (&[0xFC, 0x48, 0x83, 0xE4, 0xF0], "x64 Metasploit/CobaltStrike stack-align prologue (cld; and rsp, -16)"),
-        (&[0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00], "x64 TEB/PEB walk (mov rax, gs:[0x60])"),
-        (&[0x65, 0x48, 0x8B, 0x14, 0x25, 0x60, 0x00, 0x00, 0x00], "x64 TEB/PEB walk (mov rdx, gs:[0x60])"),
-        (&[0x64, 0xA1, 0x30, 0x00, 0x00, 0x00], "x86 TEB/PEB walk (mov eax, fs:[0x30])"),
+        (
+            &[0xFC, 0x48, 0x83, 0xE4, 0xF0],
+            "x64 Metasploit/CobaltStrike stack-align prologue (cld; and rsp, -16)",
+        ),
+        (
+            &[0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00],
+            "x64 TEB/PEB walk (mov rax, gs:[0x60])",
+        ),
+        (
+            &[0x65, 0x48, 0x8B, 0x14, 0x25, 0x60, 0x00, 0x00, 0x00],
+            "x64 TEB/PEB walk (mov rdx, gs:[0x60])",
+        ),
+        (
+            &[0x64, 0xA1, 0x30, 0x00, 0x00, 0x00],
+            "x86 TEB/PEB walk (mov eax, fs:[0x30])",
+        ),
     ];
     for &(pat, desc) in shellcode_patterns {
         if let Some(off) = find_subslice(scan_window, pat) {
-            shellcode_or_heapspray_indicators.push(format!(
-                "{} at offset 0x{:x}",
-                desc,
-                12 + off
-            ));
+            shellcode_or_heapspray_indicators.push(format!("{} at offset 0x{:x}", desc, 12 + off));
         }
     }
 
