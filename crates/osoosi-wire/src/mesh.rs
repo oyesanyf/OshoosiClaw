@@ -1056,7 +1056,25 @@ impl MeshNode {
                             if approved.insert(peer_id) {
                                 if let Some(ref c) = peer_count { c.fetch_add(1, Ordering::Relaxed); }
                             }
-                            let primary_addr = info.listen_addrs.first().map(|a| a.to_string());
+                            let primary_addr = info
+                                .listen_addrs
+                                .iter()
+                                .find(|a| {
+                                    let s = a.to_string();
+                                    !s.contains("/127.0.0.1/")
+                                        && !s.contains("/0.0.0.0/")
+                                        && !s.contains("/::1/")
+                                })
+                                .or_else(|| info.listen_addrs.first())
+                                .map(|a| a.to_string())
+                                .or_else(|| {
+                                    let obs = info.observed_addr.to_string();
+                                    if !obs.contains("/127.0.0.1/") && !obs.contains("/0.0.0.0/") {
+                                        Some(obs)
+                                    } else {
+                                        None
+                                    }
+                                });
                             let _ = join_gate.on_peer_discovered(peer_id, primary_addr);
                         } else {
                             // Stealth: Disconnect from foreign non-Oshoosi nodes
@@ -1071,7 +1089,9 @@ impl MeshNode {
                             continue;
                         }
                         consecutive_exhaustion_count = 0;
-                        info!("Connection established with {} via {:?}", peer_id, endpoint.get_remote_address());
+                        let remote_addr_str = endpoint.get_remote_address().to_string();
+                        info!("Connection established with {} via {}", peer_id, remote_addr_str);
+                        let _ = join_gate.on_peer_discovered(peer_id, Some(remote_addr_str));
 
                         // Automatically initiate TPM 2.0 remote attestation challenge when peer connects
                         let pid_str = peer_id.to_string();
@@ -1146,7 +1166,18 @@ impl MeshNode {
                         let mut dial_count = 0;
                         for peer_info in peers {
                             if peer_info.peer_id != *self.swarm.local_peer_id() {
-                                let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
+                                let best_addr = peer_info
+                                    .addrs
+                                    .iter()
+                                    .find(|a| {
+                                        let s = a.to_string();
+                                        !s.contains("/127.0.0.1/")
+                                            && !s.contains("/0.0.0.0/")
+                                            && !s.contains("/::1/")
+                                    })
+                                    .or_else(|| peer_info.addrs.first())
+                                    .map(|a| a.to_string());
+                                let _ = join_gate.on_peer_discovered(peer_info.peer_id, best_addr);
 
                                 // SHODAN SCAN: Dial newly discovered peers to fingerprint them
                                 // Limit to 5 dials per crawl cycle to prevent ISP throttling
@@ -1165,7 +1196,16 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::RoutingUpdated { peer, addresses, .. })) => {
                         if peer != *self.swarm.local_peer_id() {
                             debug!("Kademlia routing updated for peer {}: {:?}", peer, addresses);
-                            let addr = addresses.iter().next().map(|a| a.to_string());
+                            let addr = addresses
+                                .iter()
+                                .find(|a| {
+                                    let s = a.to_string();
+                                    !s.contains("/127.0.0.1/")
+                                        && !s.contains("/0.0.0.0/")
+                                        && !s.contains("/::1/")
+                                })
+                                .or_else(|| addresses.iter().next())
+                                .map(|a| a.to_string());
                             let _ = join_gate.on_peer_discovered(peer, addr);
                         }
                     }

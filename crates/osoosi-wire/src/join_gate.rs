@@ -35,6 +35,8 @@ pub struct JoinGate {
     active_challenges: Arc<dashmap::DashMap<String, AttestationChallenge>>,
     /// Set of peer IDs that have successfully passed TPM 2.0 remote attestation
     verified_peers: Arc<dashmap::DashSet<String>>,
+    /// Set of peer IDs that have been explicitly approved into the mesh
+    approved_peers: Arc<dashmap::DashSet<String>>,
     /// Set of seen attestation nonces for broadcast announces (anti-replay)
     seen_announce_nonces: Arc<dashmap::DashSet<[u8; 32]>>,
 }
@@ -62,8 +64,13 @@ impl JoinGate {
             golden_baseline: Arc::new(std::sync::RwLock::new(None)),
             active_challenges: Arc::new(dashmap::DashMap::new()),
             verified_peers: Arc::new(dashmap::DashSet::new()),
+            approved_peers: Arc::new(dashmap::DashSet::new()),
             seen_announce_nonces: Arc::new(dashmap::DashSet::new()),
         }
+    }
+
+    pub fn memory(&self) -> &Arc<MemoryStore> {
+        &self.memory
     }
 
     /// Called when a PeerAnnounce is received. Upserts to memory; removes from pending if peer fails rules.
@@ -248,9 +255,50 @@ impl JoinGate {
             .map(|r| (r.score, r.alerts_verified, r.false_positives))
             .unwrap_or((default_initial_score, 0, 0));
 
+        let normalized_multiaddr = match multiaddr
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown"))
+        {
+            Some(addr) => {
+                if addr.contains("/p2p/") {
+                    Some(addr.to_string())
+                } else {
+                    Some(format!(
+                        "{}/p2p/{}",
+                        addr.trim_end_matches('/'),
+                        peer_id_str
+                    ))
+                }
+            }
+            None => self
+                .memory
+                .get_pending_joins()
+                .ok()
+                .and_then(|list| {
+                    list.into_iter()
+                        .find(|p| p.peer_id == peer_id_str)
+                        .and_then(|p| p.multiaddr)
+                })
+                .filter(|s| !s.trim().is_empty() && !s.eq_ignore_ascii_case("unknown"))
+                .or_else(|| Some(format!("/p2p/{}", peer_id_str))),
+        };
+
+        // If peer was already explicitly approved into the mesh, do not re-queue into pending_joins
+        if self.approved_peers.contains(&peer_id_str) {
+            if let Some(ref addr) = normalized_multiaddr {
+                let _ = self
+                    .command_tx
+                    .try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
+            }
+            let _ = self.command_tx.try_send(MeshCommand::ApprovePeer(peer_id));
+            let _ = self.memory.remove_pending_join(&peer_id_str);
+            return Ok(());
+        }
+
         let req = PendingJoinRequest {
             peer_id: peer_id_str.clone(),
-            multiaddr: multiaddr.clone(),
+            multiaddr: normalized_multiaddr.clone(),
             reputation_score: score,
             alerts_verified,
             false_positives,
@@ -271,7 +319,8 @@ impl JoinGate {
             );
             let sink = TaintSink::mesh_join();
             if tainted.check_sink(&sink).is_ok() {
-                if let Some(ref addr) = multiaddr {
+                self.approved_peers.insert(peer_id_str.clone());
+                if let Some(ref addr) = normalized_multiaddr {
                     let _ = self
                         .command_tx
                         .try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
@@ -288,7 +337,7 @@ impl JoinGate {
                     return Ok(());
                 }
             }
-        } else if let Some(ref addr) = multiaddr {
+        } else if let Some(ref addr) = normalized_multiaddr {
             // Only dial manually if not auto-approved (as auto-approval already dialed or it failed)
             let _ = self
                 .command_tx
@@ -376,7 +425,7 @@ impl JoinGate {
             .find(|p| p.peer_id == peer_id)
             .unwrap_or_else(|| PendingJoinRequest {
                 peer_id: peer_id.to_string(),
-                multiaddr: None,
+                multiaddr: Some(format!("/p2p/{}", peer_id)),
                 reputation_score: 0.85,
                 alerts_verified: 1,
                 false_positives: 0,
@@ -392,6 +441,7 @@ impl JoinGate {
             last_updated: Utc::now(),
         })?;
         self.verified_peers.insert(peer_id.to_string());
+        self.approved_peers.insert(peer_id.to_string());
 
         let tainted = tainted_value_for_peer(peer_id, approved_score, req.multiaddr.as_deref());
         let sink = TaintSink::mesh_join();
@@ -429,6 +479,7 @@ impl JoinGate {
 
     /// User denied this peer. Removes from pending.
     pub fn deny(&self, peer_id: &str) -> anyhow::Result<()> {
+        self.approved_peers.remove(peer_id);
         self.memory.remove_pending_join(peer_id)?;
         info!("User denied peer {} from joining mesh", peer_id);
         Ok(())
@@ -452,6 +503,7 @@ impl JoinGate {
     /// Drops reputation score to 0.0, ejects from routing, severs socket connectivity, and broadcasts a tripwire alert.
     pub fn quarantine_peer(&self, peer_id: &str, reason: &str) -> anyhow::Result<()> {
         self.verified_peers.remove(peer_id);
+        self.approved_peers.remove(peer_id);
         let mut rep = self
             .memory
             .get_reputation(peer_id)?
@@ -504,6 +556,7 @@ impl JoinGate {
     /// Release a quarantined peer so it may be rediscovered/approved again.
     pub fn release_peer(&self, peer_id: &str) -> anyhow::Result<()> {
         self.verified_peers.remove(peer_id);
+        self.approved_peers.remove(peer_id);
         self.memory.release_quarantined_peer(peer_id)?;
         if let Ok(pid) = peer_id.parse::<PeerId>() {
             let _ = self.command_tx.try_send(MeshCommand::ReleasePeer(pid));
@@ -1166,5 +1219,51 @@ mod tests {
         }
         assert!(received_quarantine);
         assert!(received_tripwire);
+    }
+
+    #[tokio::test]
+    async fn test_join_gate_preserves_multiaddr_and_does_not_requeue_approved_peer() {
+        let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
+        let (tx, _rx) = tokio::sync::mpsc::channel(32);
+        let gate = JoinGate::new(memory.clone(), tx, 1.0, PeerRulesConfig::default(), None);
+        let peer_id = PeerId::random();
+        let peer_id_str = peer_id.to_string();
+
+        // 1. Discover with IP/port address
+        gate.on_peer_discovered(peer_id, Some("/ip4/10.0.0.165/tcp/4001".to_string()))
+            .unwrap();
+        let pending1 = gate.pending_joins().unwrap();
+        assert_eq!(pending1.len(), 1);
+        assert_eq!(
+            pending1[0].multiaddr.as_deref(),
+            Some(format!("/ip4/10.0.0.165/tcp/4001/p2p/{}", peer_id_str).as_str())
+        );
+
+        // 2. Subsequent add_pending_join with None multiaddr must preserve existing multiaddr via COALESCE
+        let update_req = PendingJoinRequest {
+            peer_id: peer_id_str.clone(),
+            multiaddr: None,
+            reputation_score: 0.5,
+            alerts_verified: 0,
+            false_positives: 0,
+            discovered_at: Utc::now(),
+        };
+        memory.add_pending_join(&update_req).unwrap();
+        let pending2 = gate.pending_joins().unwrap();
+        assert_eq!(
+            pending2[0].multiaddr.as_deref(),
+            Some(format!("/ip4/10.0.0.165/tcp/4001/p2p/{}", peer_id_str).as_str()),
+            "Known multiaddr must never be overwritten with None/Unknown"
+        );
+
+        // 3. Operator approves peer; subsequent discovery beacon must not re-add to pending_joins
+        gate.allow(&peer_id_str).await.unwrap();
+        assert!(gate.pending_joins().unwrap().is_empty());
+        gate.discovery_rate_limiter.clear();
+        gate.on_peer_discovered(peer_id, None).unwrap();
+        assert!(
+            gate.pending_joins().unwrap().is_empty(),
+            "Approved peer must not be re-added to pending_joins on subsequent discovery beacons"
+        );
     }
 }

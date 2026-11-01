@@ -251,43 +251,91 @@ async function renderMeshView(mesh) {
         }
 
         if (pendingJoins.length > 0) {
-            html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Pending Joins</h4>`;
-            html += pendingJoins.map(pj => `
-                <div class="timeline-item" style="border-left: 2px solid orange;">
+            const sortedPending = [...pendingJoins].sort((a, b) =>
+                typeof window.compareIsoTimestampsDesc === 'function'
+                    ? window.compareIsoTimestampsDesc(a.discovered_at, b.discovered_at)
+                    : ((Date.parse(b.discovered_at) || 0) - (Date.parse(a.discovered_at) || 0))
+            );
+            html += `<h4 id="pending-joins-section-header" style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                <span>Pending Joins (${sortedPending.length})</span>
+                <span style="display:inline-flex; gap:8px;">
+                    <button type="button" class="action-btn primary" onclick="meshAllowAllPending()" style="padding:4px 10px; font-size:11.5px;">✓ Approve All (${sortedPending.length})</button>
+                    <button type="button" class="action-btn" onclick="meshClearPendingJoins()" style="padding:4px 10px; font-size:11.5px;">Deny / Clear All</button>
+                </span>
+            </h4>`;
+            html += sortedPending.map(pj => {
+                const rawAddr = (pj.multiaddr || pj.address || '').trim();
+                const cleanAddr = (rawAddr && rawAddr.toLowerCase() !== 'unknown')
+                    ? (rawAddr.includes('/p2p/') ? rawAddr : `${rawAddr.replace(/\/$/, '')}/p2p/${pj.peer_id}`)
+                    : `/p2p/${pj.peer_id}`;
+                const addrParts = cleanAddr.split('/');
+                const parsedHostIp = pj.host_ip || ((addrParts.length >= 5 && (addrParts[1] === 'ip4' || addrParts[1] === 'ip6' || addrParts[1] === 'dns4' || addrParts[1] === 'dns6')) ? addrParts[2] : 'P2P DHT / Relay Swarm');
+                const parsedPort = pj.port || ((addrParts.length >= 5 && addrParts[4] && !isNaN(Number(addrParts[4]))) ? Number(addrParts[4]) : 4001);
+                const transportLabel = pj.transport || (parsedHostIp !== 'P2P DHT / Relay Swarm' ? `TCP/${parsedPort} • libp2p GossipSub v1.2` : 'Kademlia DHT / Circuit Relay • GossipSub v1.2');
+                const repScoreNum = (pj.reputation_score !== undefined && pj.reputation_score !== null) ? Number(pj.reputation_score) : 0.5;
+                const repPct = Math.round(repScoreNum * 100);
+                const repTier = repScoreNum >= 0.85 ? 'Trusted Peer' : (repScoreNum >= 0.50 ? 'Neutral Baseline' : 'Low Reputation');
+                const repLabel = pj.reputation_label || `${repScoreNum.toFixed(2)} (${repPct}% ${repTier})`;
+                const alertsVerified = Number(pj.alerts_verified || 0);
+                const falsePositives = Number(pj.false_positives || 0);
+                const osLabel = pj.os || 'Oshoosi Endpoint Node';
+                const patchStatus = pj.is_patched === false ? 'Unpatched' : 'OS Patched';
+                const attestationState = pj.attestation_state || 'TPM 2.0 Challenge Pending';
+                const statusLabel = pj.status || 'Awaiting Operator Approval';
+                const discoveredDateTime = formatTimestamp(pj.discovered_at) || pj.discovered_date_time || String(pj.discovered_at || 'N/A');
+
+                return `
+                <div class="timeline-item" style="border-left: 2px solid orange; margin-bottom: 10px;">
                     <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
-                        <i data-lucide="help-circle"></i>
+                        <i data-lucide="help-circle" aria-hidden="true"></i>
                     </div>
-                    <div class="item-info">
-                        <div class="item-title">${escapeHtml(pj.peer_id)}</div>
-                        <div class="item-meta">
-                            <span><i data-lucide="map-pin"></i> ${escapeHtml(pj.multiaddr || pj.address || 'Unknown')}</span>
-                            <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
+                    <div class="item-info" style="flex:1;">
+                        <div class="item-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                            <span>${escapeHtml(pj.peer_id)} <code style="font-size:11px; opacity:0.85; margin-left:6px; color:#38bdf8;">${escapeHtml(parsedHostIp)}:${escapeHtml(String(parsedPort))}</code></span>
+                            <span class="badge orange" style="background:rgba(245,158,11,0.16); color:#fbbf24; border:1px solid rgba(245,158,11,0.35); font-size:11px;">${escapeHtml(statusLabel)} • Rep ${escapeHtml(repScoreNum.toFixed(2))}</span>
+                        </div>
+                        <div class="item-meta" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:12px;">
+                            <span><i data-lucide="map-pin" aria-hidden="true"></i> <strong>Multiaddr:</strong> <code>${escapeHtml(cleanAddr)}</code></span>
+                            <span><i data-lucide="clock" aria-hidden="true"></i> <strong>Discovered:</strong> ${escapeHtml(discoveredDateTime)}</span>
+                        </div>
+                        <div class="item-meta" style="margin-top:4px; display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px; color:var(--text-muted);">
+                            <span><i data-lucide="shield" aria-hidden="true"></i> <strong>Reputation:</strong> ${escapeHtml(repLabel)}</span>
+                            <span><i data-lucide="check-circle" aria-hidden="true"></i> <strong>Verified Alerts:</strong> ${escapeHtml(String(alertsVerified))}</span>
+                            <span><i data-lucide="alert-circle" aria-hidden="true"></i> <strong>False Positives:</strong> ${escapeHtml(String(falsePositives))}</span>
+                            <span><i data-lucide="cpu" aria-hidden="true"></i> <strong>Host OS:</strong> ${escapeHtml(osLabel)} (${escapeHtml(patchStatus)})</span>
+                            <span><i data-lucide="lock" aria-hidden="true"></i> <strong>Attestation:</strong> ${escapeHtml(attestationState)}</span>
+                            <span><i data-lucide="radio" aria-hidden="true"></i> <strong>Transport:</strong> ${escapeHtml(transportLabel)}</span>
                         </div>
                         <div class="item-actions" style="margin-top:8px;">
-                            <button class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">Allow</button>
-                            <button class="action-btn" onclick="meshDenyPeer('${escapeHtml(pj.peer_id)}')">Deny</button>
+                            <button type="button" class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">✓ Approve / Allow</button>
+                            <button type="button" class="action-btn" onclick="meshDenyPeer('${escapeHtml(pj.peer_id)}')">✕ Deny</button>
                         </div>
                     </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
         if (quarantinedPeers.length > 0) {
-            html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers</h4>`;
+            html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers (${quarantinedPeers.length})</h4>`;
             html += quarantinedPeers.map(qp => `
-                <div class="timeline-item" style="border-left: 2px solid var(--accent-red);">
+                <div class="timeline-item" style="border-left: 2px solid var(--accent-red); margin-bottom: 10px;">
                     <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
-                        <i data-lucide="shield-alert"></i>
+                        <i data-lucide="shield-alert" aria-hidden="true"></i>
                     </div>
-                    <div class="item-info">
-                        <div class="item-title">${qp.peer_id}</div>
-                        <div class="item-meta">
-                            <span><i data-lucide="clock"></i> Quarantined ${formatTimestamp(qp.quarantined_at)}</span>
+                    <div class="item-info" style="flex:1;">
+                        <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>${escapeHtml(qp.peer_id)}</span>
+                            <span class="badge red">Quarantined • Rep ${escapeHtml(Number(qp.reputation_score || 0).toFixed(2))}</span>
+                        </div>
+                        <div class="item-meta" style="margin-top:4px; display:flex; flex-wrap:wrap; gap:12px;">
+                            <span><i data-lucide="clock" aria-hidden="true"></i> <strong>Quarantined:</strong> ${escapeHtml(formatTimestamp(qp.quarantined_at))}</span>
+                            <span><i data-lucide="alert-triangle" aria-hidden="true"></i> <strong>Reason:</strong> ${escapeHtml(qp.reason || 'Policy / Attestation Violation')}</span>
                         </div>
                         <div class="item-actions" style="margin-top:8px;">
-                            <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
-                            <button class="action-btn warning" onclick="markPeerFalsePositive('${qp.peer_id}')">False Positive</button>
-                            <button class="action-btn primary" onclick="entanglePeer('${qp.peer_id}')">Entangle</button>
+                            <button type="button" class="action-btn" onclick="meshReleasePeer('${escapeHtml(qp.peer_id)}')">Release</button>
+                            <button type="button" class="action-btn warning" onclick="markPeerFalsePositive('${escapeHtml(qp.peer_id)}')">False Positive</button>
+                            <button type="button" class="action-btn primary" onclick="entanglePeer('${escapeHtml(qp.peer_id)}')">Entangle</button>
                         </div>
                     </div>
                 </div>
@@ -306,13 +354,14 @@ async function renderMeshView(mesh) {
 
 window.meshAllowPeer = async function(id) {
     try {
-        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${encodeURIComponent(id)}/allow`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Mesh Allow Peer', data || `HTTP ${res.status}`);
             return;
         }
         showSkyrlToast(`Peer ${id} approved and admitted to mesh.`, 'success');
+        await renderMeshView();
         updateDashboard();
     } catch (e) {
         showUserError('Mesh Allow Peer', e);
@@ -320,16 +369,48 @@ window.meshAllowPeer = async function(id) {
 };
 window.meshDenyPeer = async function(id) {
     try {
-        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${encodeURIComponent(id)}/deny`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Mesh Deny Peer', data || `HTTP ${res.status}`);
             return;
         }
         showSkyrlToast(`Peer ${id} denied and dropped.`, 'info');
+        await renderMeshView();
         updateDashboard();
     } catch (e) {
         showUserError('Mesh Deny Peer', e);
+    }
+};
+window.meshAllowAllPending = async function() {
+    try {
+        const pj = await fetchAPI('/pending-joins');
+        if (!Array.isArray(pj) || pj.length === 0) return;
+        for (const item of pj) {
+            if (item && item.peer_id) {
+                await fetchWithRetry(`${API_BASE}/pending-joins/${encodeURIComponent(item.peer_id)}/allow`, { method: 'POST' });
+            }
+        }
+        showSkyrlToast(`Approved ${pj.length} pending peer(s) into the mesh.`, 'success');
+        await renderMeshView();
+        updateDashboard();
+    } catch (e) {
+        showUserError('Mesh Approve All', e);
+    }
+};
+window.meshClearPendingJoins = async function() {
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/pending-joins/clear`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Clear Pending Joins', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast('Cleared pending joins backlog.', 'info');
+        await renderMeshView();
+        updateDashboard();
+    } catch (e) {
+        showUserError('Clear Pending Joins', e);
     }
 };
 window.meshReleasePeer = async function(id) {

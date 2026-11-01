@@ -4979,16 +4979,73 @@ window.otelToggleLabels = function() {
 };
 
 /**
- * Handle ISO timestamps
+ * Parse high-precision RFC3339/ISO-8601 timestamps with Temporal.Instant when supported
+ */
+function parseHighPrecisionInstant(iso) {
+    if (!iso) return null;
+    if (typeof Temporal !== 'undefined' && Temporal.Instant) {
+        try {
+            return Temporal.Instant.from(String(iso));
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Compare two ISO-8601 timestamps descending (newest first) preserving nanosecond precision
+ */
+function compareIsoTimestampsDesc(aIso, bIso) {
+    const instA = parseHighPrecisionInstant(aIso);
+    const instB = parseHighPrecisionInstant(bIso);
+    if (instA && instB) {
+        return Temporal.Instant.compare(instB, instA);
+    }
+    const tA = Date.parse(aIso) || 0;
+    const tB = Date.parse(bIso) || 0;
+    return tB - tA;
+}
+window.compareIsoTimestampsDesc = compareIsoTimestampsDesc;
+
+/**
+ * Format ISO timestamps with full Date (YYYY-MM-DD) and Time (HH:MM:SS AM/PM)
  */
 function formatTimestamp(iso) {
+    if (!iso) return 'N/A';
     try {
+        const inst = parseHighPrecisionInstant(iso);
+        if (inst) {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+            const zdt = inst.toZonedDateTimeISO(tz);
+            const yyyy = zdt.year;
+            const mm = String(zdt.month).padStart(2, '0');
+            const dd = String(zdt.day).padStart(2, '0');
+            const timeStr = zdt.toLocaleString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+            return `${yyyy}-${mm}-${dd} ${timeStr}`;
+        }
         const date = new Date(iso);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        if (isNaN(date.getTime())) return String(iso);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        const timeStr = date.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+        return `${yyyy}-${mm}-${dd} ${timeStr}`;
     } catch {
-        return iso;
+        return String(iso);
     }
 }
+window.formatTimestamp = formatTimestamp;
 
 /**
  * Update the OpenTelemetry Chart
