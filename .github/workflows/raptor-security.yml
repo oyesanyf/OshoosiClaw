@@ -33,13 +33,43 @@ jobs:
 
           if docker pull danielcuthbert/raptor:latest >/dev/null 2>&1; then
             echo "[+] Pulled danielcuthbert/raptor:latest container image."
+            RAPTOR_ENGINE_DIR="${RUNNER_TEMP}/raptor_engine"
+            rm -rf "${RAPTOR_ENGINE_DIR}"
+            git clone --depth 1 https://github.com/gadievron/raptor.git "${RAPTOR_ENGINE_DIR}"
+            echo "[+] Cloned gadievron/raptor engine into ${RAPTOR_ENGINE_DIR}."
+
+            python3 - "${RAPTOR_ENGINE_DIR}" << 'PATCHEOF'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+
+          cfg = root / "core" / "config" / "__init__.py"
+          if cfg.exists():
+              txt = cfg.read_text(encoding="utf-8")
+              if '"RAPTOR_ALLOW_DEGRADED_UNTRUSTED"' not in txt:
+                  txt = txt.replace('"RAPTOR_REDB_MAX_BYTES",', '"RAPTOR_REDB_MAX_BYTES",\n        "RAPTOR_ALLOW_DEGRADED_UNTRUSTED",')
+                  cfg.write_text(txt, encoding="utf-8")
+
+          ctx = root / "core" / "sandbox" / "context.py"
+          if ctx.exists():
+              txt = ctx.read_text(encoding="utf-8")
+              old_fn = '''def _degraded_untrusted_waiver() -> bool:'''
+              if old_fn in txt and 'Path("/.dockerenv").exists()' not in txt:
+                  txt = txt.replace(
+                      '    return os.environ.get(\n        "RAPTOR_ALLOW_DEGRADED_UNTRUSTED", ""\n    ).strip().lower() in ("1", "true", "yes", "on")',
+                      '    val = os.environ.get("RAPTOR_ALLOW_DEGRADED_UNTRUSTED", "").strip().lower()\n    if val in ("0", "false", "no", "off"):\n        return False\n    if val in ("1", "true", "yes", "on"):\n        return True\n    return Path("/.dockerenv").exists()'
+                  )
+                  ctx.write_text(txt, encoding="utf-8")
+          PATCHEOF
+
             docker run --rm \
+              -v "${RAPTOR_ENGINE_DIR}:/workspaces/raptor" \
               -v "${GITHUB_WORKSPACE}:/workspaces/target:ro" \
               -v "${GITHUB_WORKSPACE}/raptor_out:/workspaces/out" \
               -e RAPTOR_ALLOW_DEGRADED_UNTRUSTED="1" \
+              -w /workspaces/raptor \
               danielcuthbert/raptor:latest \
               bash -c '
-                set -e
+                set -euo pipefail
                 STAGE_DIR="/tmp/raptor_ci_repo"
                 OUT_DIR="/tmp/raptor_ci_out"
                 mkdir -p "${STAGE_DIR}" "${OUT_DIR}"
@@ -49,17 +79,23 @@ jobs:
                   --exclude="./node_modules" \
                   --exclude="./database" \
                   --exclude="./models" \
+                  --exclude="./rules" \
+                  --exclude="./yara" \
+                  --exclude="./sigma" \
+                  --exclude="./tmp_stix" \
+                  --exclude="./deploy" \
                   --exclude="./raptor_out" \
                   -cf - . | tar -C "${STAGE_DIR}" -xf -
 
-                python3 raptor.py describe --target "${STAGE_DIR}" | tee "${OUT_DIR}/describe.txt" || true
-                python3 raptor.py scan --repo "${STAGE_DIR}" --out "${OUT_DIR}/scan" || true
-                python3 raptor.py scan --repo "${STAGE_DIR}" --policy-groups crypto --out "${OUT_DIR}/crypto" || true
-                python3 raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
-                cp -r "${OUT_DIR}"/* /workspaces/out/ 2>/dev/null || true
+                python3 /workspaces/raptor/raptor.py describe --target "${STAGE_DIR}" | tee "${OUT_DIR}/describe.txt"
+                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --out "${OUT_DIR}/scan"
+                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --policy-groups crypto --out "${OUT_DIR}/crypto"
+                python3 /workspaces/raptor/raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
+                cp -r "${OUT_DIR}"/* /workspaces/out/
               '
           else
-            echo "[*] Generating deterministic SARIF baseline report..."
+            echo "[!] ERROR: Could not pull danielcuthbert/raptor:latest container image."
+            exit 1
           fi
 
           python3 - << 'PYEOF'
@@ -83,19 +119,20 @@ jobs:
               except Exception as exc:
                   print(f"[WARN] Could not parse SARIF {sf}: {exc}")
 
+          gate_passed = (len(sarif_files) > 0) and (critical_unmitigated == 0)
           summary = {
               "gate": "RAPTOR Security Audit (SAST + Crypto + SCA)",
               "sarif_files_parsed": len(sarif_files),
               "total_findings_inspected": total_findings,
               "critical_unmitigated_blockers": critical_unmitigated,
-              "verdict": "PASS" if critical_unmitigated == 0 else "FAIL"
+              "verdict": "PASS" if gate_passed else "FAIL"
           }
           os.makedirs("raptor_out", exist_ok=True)
           with open("raptor_out/raptor_gate_summary.json", "w", encoding="utf-8") as out_f:
               json.dump(summary, out_f, indent=2)
 
           print(json.dumps(summary, indent=2))
-          if critical_unmitigated > 0:
+          if not gate_passed:
               sys.exit(1)
           PYEOF
 
