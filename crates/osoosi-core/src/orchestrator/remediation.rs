@@ -1857,7 +1857,7 @@ impl EdrOrchestrator {
             crate::hardened::MEMORY_SHIELD_REMEDIATED.load(std::sync::atomic::Ordering::SeqCst),
             crate::hardened::SOFTWARE_EGRESS_REMEDIATED.load(std::sync::atomic::Ordering::SeqCst),
             "TPM 2.0 Anchored · WFP Containment Armed",
-            &serde_json::to_string(&status.recommendations).unwrap_or_default(),
+            &serde_json::to_string(&status.structured_recommendations).unwrap_or_default(),
         );
         self.audit.log(
             "SECURITY_GAP_REMEDIATED",
