@@ -40,10 +40,12 @@ model: gemini-3.1-pro
      2. **Verify Security Invariants**: Audit for zero auth regressions, zero token leaks, zero async `blocking_read()`/`blocking_write()` panics, and strict non-root (`65532:65532`) read-only container confinement.
      3. **Update Documentation & Diagrams**: Update `README.md` and `mermaid` architecture diagrams to reflect all new capabilities, security hardening, and packaging workflows.
 
-7. **Strict Invariant: Zero-Wait Incremental Commits & PR/Workflow Health**:
-   - **User Preferences**: `"NO COMMIT SHOULD WAIT , WE MAY LOSE CODE CHANGE"` and `"ALWAY FIX PR AND WORKFLOW ISSUES"`.
+7. **Strict Invariant: Zero-Wait Incremental Commits, Mandatory Security Remediation During Solo Process, & Nightly Scheduled RAPTOR Audits**:
+   - **User Preferences**: `"NO COMMIT SHOULD WAIT , WE MAY LOSE CODE CHANGE"`, `"ALWAY FIX PR AND WORKFLOW ISSUES"`, and `"DURING THE SOLO PROCESS ALL SECURITY ISSUES MUST BE FIXED"`.
    - Commit and ship incremental checkpoints immediately via `scripts/solo_pr_ship.ps1` rather than batching uncommitted changes across long runs; verify `git status -s` is empty at the end of every turn.
    - Continuously check open Pull Requests and GitHub Actions workflow runs; immediately diagnose and fix any failing GitHub Actions workflow, CI check, or blocked PR until merged and green.
+   - **Mandatory Solo-Process Security Fix Gate**: During every solo PR ship cycle (`scripts/solo_pr_ship.ps1`), all RAPTOR Security Audit (`SAST + Post-Quantum Crypto + SCA`) findings and security vulnerabilities MUST be inspected and fixed before merge; never allow a RAPTOR run to pass with `0` SARIF files parsed.
+   - **Nightly Scheduled Execution**: RAPTOR runs automatically every night at `02:30` both via GitHub Actions cron (`30 2 * * *` in `.github/workflows/raptor-security.yml`) and via the local Windows Scheduled Task `OshoosiClaw-Nightly-Raptor-Security-Audit` (`scripts/run_nightly_raptor_audit.ps1`).
 
 ## Cross-Repository Synchronization (`D:\harfile\AgentOctopus`) — Disabled
 - **User Preference:** "no need to be sync agent octupus anymore"
