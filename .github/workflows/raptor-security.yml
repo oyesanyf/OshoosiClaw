@@ -32,7 +32,8 @@ jobs:
           chmod 777 raptor_out
           echo "===================================================================="
           echo "  RAPTOR Autonomous Security Scanner (CI Required Check Gate)"
-          echo "  Suites: Static SAST (scan) + Post-Quantum Crypto (crypto) + SCA"
+          echo "  Suites: Exhaustive Multi-Language SAST + Post-Quantum Crypto"
+          echo "          + Compiler Analyzer + Expanded Macro AST + Coccinelle + SCA"
           echo "===================================================================="
 
           if docker pull danielcuthbert/raptor:latest >/dev/null 2>&1; then
@@ -53,7 +54,26 @@ jobs:
               txt = cfg.read_text(encoding="utf-8")
               if '"RAPTOR_ALLOW_DEGRADED_UNTRUSTED"' not in txt:
                   txt = txt.replace('"RAPTOR_REDB_MAX_BYTES",', '"RAPTOR_REDB_MAX_BYTES",\n        "RAPTOR_ALLOW_DEGRADED_UNTRUSTED",')
-                  cfg.write_text(txt, encoding="utf-8")
+              # Upgrade BASELINE_SEMGREP_PACKS to maximum advanced registry + Trail of Bits + 0xdea coverage
+              old_baseline = '''    BASELINE_SEMGREP_PACKS: ClassVar[list[tuple[str, str]]] = [
+                  ("semgrep_security_audit", "p/security-audit"),
+                  ("semgrep_owasp_top_10", "p/owasp-top-ten"),
+                  ("semgrep_secrets", "p/secrets"),
+              ]'''
+              new_baseline = '''    BASELINE_SEMGREP_PACKS: ClassVar[list[tuple[str, str]]] = [
+                  ("semgrep_security_audit", "p/security-audit"),
+                  ("semgrep_owasp_top_10", "p/owasp-top-ten"),
+                  ("semgrep_secrets", "p/secrets"),
+                  ("semgrep_trailofbits", "p/trailofbits"),
+                  ("semgrep_0xdea", "p/0xdea"),
+                  ("semgrep_command_injection", "p/command-injection"),
+                  ("semgrep_jwt", "p/jwt"),
+                  ("semgrep_xss", "p/xss"),
+                  ("semgrep_default", "p/default"),
+              ]'''
+              if old_baseline in txt:
+                  txt = txt.replace(old_baseline, new_baseline)
+              cfg.write_text(txt, encoding="utf-8")
 
           ctx = root / "core" / "sandbox" / "context.py"
           if ctx.exists():
@@ -66,6 +86,13 @@ jobs:
                   )
                   ctx.write_text(txt, encoding="utf-8")
           PATCHEOF
+
+            # Copy OshoosiClaw custom advanced Rust/Kernel/PQC/WebUI rules into RAPTOR engine ruleset
+            if [ -d "${GITHUB_WORKSPACE}/.raptor/rules" ]; then
+              mkdir -p "${RAPTOR_ENGINE_DIR}/engine/semgrep/rules/oshoosi_advanced"
+              cp -r "${GITHUB_WORKSPACE}/.raptor/rules/"*.yaml "${RAPTOR_ENGINE_DIR}/engine/semgrep/rules/oshoosi_advanced/"
+              echo "[+] Injected OshoosiClaw advanced Rust/Tokio/Kernel/PQC Semgrep rules into RAPTOR engine."
+            fi
 
             docker run --rm \
               --user root \
@@ -92,6 +119,10 @@ jobs:
                 fi
                 echo "[+] Active semgrep binary: $(which semgrep) ($(semgrep --version))"
 
+                # Pre-populate all 11 Semgrep registry rule packs locally (security-audit, owasp-top-ten, trailofbits, 0xdea, secrets, etc.)
+                python3 /workspaces/raptor/engine/semgrep/tools/cache-packs.py update || true
+                python3 /workspaces/raptor/engine/semgrep/tools/cache-packs.py list || true
+
                 STAGE_DIR="/tmp/raptor_ci_repo"
                 OUT_DIR="/tmp/raptor_ci_out"
                 mkdir -p "${STAGE_DIR}" "${OUT_DIR}"
@@ -109,9 +140,14 @@ jobs:
                   --exclude="./raptor_out" \
                   -cf - . | tar -C "${STAGE_DIR}" -xf -
 
+                EXTRA_CFG_FLAG=""
+                if [ -f "${STAGE_DIR}/.raptor/rules/oshoosi-advanced-security.yaml" ]; then
+                  EXTRA_CFG_FLAG="--extra-config ${STAGE_DIR}/.raptor/rules/oshoosi-advanced-security.yaml"
+                fi
+
                 python3 /workspaces/raptor/raptor.py describe --target "${STAGE_DIR}" | tee "${OUT_DIR}/describe.txt"
-                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --out "${OUT_DIR}/scan"
-                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --policy-groups crypto --out "${OUT_DIR}/crypto"
+                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --policy-groups all --compiler-scan --expanded-semgrep ${EXTRA_CFG_FLAG} --out "${OUT_DIR}/scan"
+                python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --policy-groups crypto,secrets,auth,injection,flows,sinks,deserialisation,filesystem --out "${OUT_DIR}/crypto"
                 python3 /workspaces/raptor/raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
                 cp -r "${OUT_DIR}"/* /workspaces/out/
               '
@@ -126,25 +162,33 @@ jobs:
           sarif_files = glob.glob("raptor_out/**/*.sarif", recursive=True)
           total_findings = 0
           critical_unmitigated = 0
+          rules_evaluated = set()
 
           for sf in sarif_files:
               try:
                   with open(sf, "r", encoding="utf-8", errors="replace") as f:
                       data = json.load(f)
                   for run in data.get("runs", []):
+                      driver_rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+                      for r in driver_rules:
+                          if isinstance(r, dict) and r.get("id"):
+                              rules_evaluated.add(r["id"])
                       for res in run.get("results", []):
                           total_findings += 1
                           level = str(res.get("level", "warning")).lower()
                           rule_id = str(res.get("ruleId", ""))
-                          if level == "error" and "hardcoded-private-key" in rule_id:
+                          if rule_id:
+                              rules_evaluated.add(rule_id)
+                          if level == "error" and ("hardcoded-private-key" in rule_id or "async-tokio-blocking-rwlock" in rule_id or "danger-accept-invalid-certs" in rule_id):
                               critical_unmitigated += 1
               except Exception as exc:
                   print(f"[WARN] Could not parse SARIF {sf}: {exc}")
 
           gate_passed = (len(sarif_files) > 0) and (critical_unmitigated == 0)
           summary = {
-              "gate": "RAPTOR Security Audit (SAST + Crypto + SCA)",
+              "gate": "RAPTOR Security Audit (Exhaustive SAST + TrailOfBits/0xdea/OWASP + Compiler-Scan + Expanded-AST + PQC Crypto + SCA)",
               "sarif_files_parsed": len(sarif_files),
+              "unique_rules_indexed": len(rules_evaluated),
               "total_findings_inspected": total_findings,
               "critical_unmitigated_blockers": critical_unmitigated,
               "verdict": "PASS" if gate_passed else "FAIL"
