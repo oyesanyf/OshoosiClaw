@@ -832,7 +832,7 @@ pub async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Valu
     match &state.join_gate {
         Some(gate) => match gate.pending_joins() {
             Ok(mut pending) => {
-                pending.sort_by(|a, b| b.discovered_at.cmp(&a.discovered_at));
+                pending.sort_by_key(|a| std::cmp::Reverse(a.discovered_at));
                 let enriched: Vec<Value> = pending
                     .into_iter()
                     .map(|mut p| {
