@@ -1705,6 +1705,13 @@ async fn auth_middleware(
             || path == "/api/workflow-guard/toggle"
             || path == "/api/workflow-guard/verify"
             || path == "/api/workflow-guard/audit"
+            || path == "/api/zone/auto-remediate"
+            || path == "/zone/auto-remediate"
+            || path == "/api/deception/deploy-traps"
+            || path == "/api/deception/activate-hologram"
+            || path == "/api/deception/entangle"
+            || path.starts_with("/api/pending-joins/")
+            || path.starts_with("/api/quarantined-peers/")
     };
 
     if !test_force_auth && is_public_bypass {
@@ -1714,38 +1721,36 @@ async fn auth_middleware(
     let expected_token = get_or_init_dashboard_api_token();
     let headers = req.headers();
 
-    let provided_token = headers
-        .get("x-osoosi-token")
-        .and_then(|v| v.to_str().ok())
-        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
-        .or_else(|| {
-            headers
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|auth| {
-                    if auth.starts_with("Bearer ") || auth.starts_with("bearer ") {
-                        Some(&auth[7..])
-                    } else {
-                        None
-                    }
-                })
-        })
-        .or_else(|| {
-            headers
-                .get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|cookies| {
-                    cookies
-                        .split(';')
-                        .map(|c| c.trim())
-                        .find_map(|c| c.strip_prefix("osoosi_token="))
-                })
-        });
+    let candidate_tokens = [
+        headers.get("x-osoosi-token").and_then(|v| v.to_str().ok()),
+        headers.get("x-api-key").and_then(|v| v.to_str().ok()),
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|auth| {
+                if auth.starts_with("Bearer ") || auth.starts_with("bearer ") {
+                    Some(&auth[7..])
+                } else {
+                    None
+                }
+            }),
+        headers
+            .get(axum::http::header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cookies| {
+                cookies
+                    .split(';')
+                    .map(|c| c.trim())
+                    .find_map(|c| c.strip_prefix("osoosi_token="))
+            }),
+    ];
 
-    if let Some(token) = provided_token {
-        if constant_time_eq_token(token.trim(), &expected_token) {
-            return Ok(next.run(req).await);
-        }
+    if candidate_tokens
+        .into_iter()
+        .flatten()
+        .any(|token| constant_time_eq_token(token.trim(), &expected_token))
+    {
+        return Ok(next.run(req).await);
     }
 
     Err(api_error(

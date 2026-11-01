@@ -2348,7 +2348,7 @@
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Zone-Wide Security Recommendations</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button id="btn-auto-remediate-all" class="btn-primary btn-sm flex items-center gap-2" style="display:none;"><i data-lucide="zap" style="width:14px; height:14px;"></i> Auto-Configure All Settings</button>
+                            <button type="button" id="btn-auto-remediate-all" class="btn-primary btn-sm flex items-center gap-2" onclick="autoRemediateAllGaps(this)"><i data-lucide="zap" style="width:14px; height:14px;"></i> Save &amp; Apply All TPM Settings</button>
                             <button class="btn-text" id="toggle-zone-rec-btn" onclick="toggleZoneRecPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>

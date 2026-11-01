@@ -932,18 +932,61 @@ impl EdrOrchestrator {
         let p2p_enabled = osoosi_types::is_p2p_mesh_enabled();
         let peer_count = self.mesh_peer_count();
 
-        // Run assess_security safely inside tokio::task::spawn_blocking with a 2-second timeout fallback.
+        let mut saved_posture: Option<serde_json::Value> = None;
+        if let Ok(Some(posture)) = self.memory().load_zone_posture("zone-alpha-mesh") {
+            if posture["tpm_remediated"].as_bool().unwrap_or(false) {
+                crate::hardened::TPM_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if posture["memory_shield_remediated"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                crate::hardened::MEMORY_SHIELD_REMEDIATED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if posture["egress_remediated"].as_bool().unwrap_or(false) {
+                crate::hardened::SOFTWARE_EGRESS_REMEDIATED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            saved_posture = Some(posture);
+        }
+
+        // Run assess_security safely inside tokio::task::spawn_blocking with an 8-second timeout fallback.
         let assess_handle = tokio::task::spawn_blocking(crate::hardened::assess_security);
         let hardened_status =
-            match tokio::time::timeout(std::time::Duration::from_secs(2), assess_handle).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(8), assess_handle).await {
                 Ok(Ok(status)) => Some(status),
                 _ => None,
             };
 
+        let tpm_rem = crate::hardened::TPM_REMEDIATED.load(std::sync::atomic::Ordering::SeqCst);
+        let tee_rem =
+            crate::hardened::MEMORY_SHIELD_REMEDIATED.load(std::sync::atomic::Ordering::SeqCst);
+        let dpu_rem =
+            crate::hardened::SOFTWARE_EGRESS_REMEDIATED.load(std::sync::atomic::Ordering::SeqCst);
+
         let security_score = hardened_status
             .as_ref()
             .map(|s| s.security_score)
-            .unwrap_or(100);
+            .or_else(|| {
+                saved_posture
+                    .as_ref()
+                    .and_then(|p| p["security_score"].as_i64())
+                    .map(|sc| sc.clamp(0, 100) as u8)
+            })
+            .unwrap_or_else(|| {
+                let mut sc: u8 = 60;
+                if tpm_rem {
+                    sc = sc.saturating_add(20);
+                }
+                if tee_rem {
+                    sc = sc.saturating_add(10);
+                }
+                if dpu_rem {
+                    sc = sc.saturating_add(10);
+                }
+                sc.min(100)
+            });
         let recommendations = hardened_status
             .as_ref()
             .map(|s| s.recommendations.clone())
@@ -958,36 +1001,60 @@ impl EdrOrchestrator {
             _ => serde_json::json!([
                 {
                     "id": "tee",
-                    "title": "Deploy on SGX/SEV-capable hardware for memory encryption",
+                    "title": if tee_rem {
+                        "Volatile Memory Shield Enclave Active (Software TEE Fallback)"
+                    } else {
+                        "Deploy on SGX/SEV-capable hardware for memory encryption"
+                    },
                     "description": "Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.",
                     "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "open",
+                    "can_auto_remediate": !tee_rem,
+                    "status": if tee_rem { "remediated" } else { "open" },
                     "remediation_action": "Volatile Memory Shield / ephemeral secret zeroization enclave (+10%)",
                     "impact_points": 10,
-                    "remediation_details": "Hardware SGX/SEV not detected. Volatile Memory Shield enclave ready for auto-configuration."
+                    "remediation_details": if tee_rem {
+                        "Auto-configured: Volatile Memory Shield active — cryptographic keys and secrets zeroized in non-pageable memory."
+                    } else {
+                        "Hardware SGX/SEV not detected. Volatile Memory Shield enclave ready for auto-configuration."
+                    }
                 },
                 {
                     "id": "tpm",
-                    "title": "Enable TPM 2.0 for hardware-backed audit attestation",
+                    "title": if tpm_rem {
+                        "TPM 2.0 Hardware Audit Attestation Bound"
+                    } else {
+                        "Enable TPM 2.0 for hardware-backed audit attestation"
+                    },
                     "description": "Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.",
                     "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "open",
+                    "can_auto_remediate": !tpm_rem,
+                    "status": if tpm_rem { "remediated" } else { "open" },
                     "remediation_action": "Hardware TPM 2.0 attestation binding (+20%)",
                     "impact_points": 20,
-                    "remediation_details": "Hardware TPM ready to bind for cryptographic audit attestation."
+                    "remediation_details": if tpm_rem {
+                        "Auto-configured: Audit chain cryptographically anchored to platform TPM 2.0."
+                    } else {
+                        "Hardware TPM ready to bind for cryptographic audit attestation."
+                    }
                 },
                 {
                     "id": "dpu",
-                    "title": "Consider NVIDIA BlueField DPU for hardware egress filtering",
+                    "title": if dpu_rem {
+                        "OpenShell L7 + WFP Software Egress Enforcer Active"
+                    } else {
+                        "Consider NVIDIA BlueField DPU for hardware egress filtering"
+                    },
                     "description": "Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.",
                     "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "open",
+                    "can_auto_remediate": !dpu_rem,
+                    "status": if dpu_rem { "remediated" } else { "open" },
                     "remediation_action": "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+10%)",
                     "impact_points": 10,
-                    "remediation_details": "Hardware DPU not detected. Software egress enforcer ready for auto-configuration."
+                    "remediation_details": if dpu_rem {
+                        "Auto-configured: OpenShell L7 + WFP software egress filter actively enforcing zero-trust network boundaries."
+                    } else {
+                        "Hardware DPU not detected. Software egress enforcer ready for auto-configuration."
+                    }
                 }
             ]),
         };

@@ -1243,8 +1243,9 @@ pub async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value
                     if let Some(recs_str) = posture["recommendations_json"].as_str() {
                         if !recs_str.trim().is_empty() {
                             if let Ok(parsed) = serde_json::from_str::<Value>(recs_str) {
-                                if parsed.is_array()
-                                    && !parsed.as_array().is_none_or(|a| a.is_empty())
+                                if parsed
+                                    .as_array()
+                                    .is_some_and(|a| !a.is_empty() && a[0].is_object())
                                 {
                                     structured_recs = parsed;
                                 }
@@ -1315,8 +1316,40 @@ pub async fn post_auto_remediate_gap(
         Some(orch) => Json(orch.auto_remediate_security_gap(&gap).await),
         None => {
             let status = osoosi_core::hardened::auto_remediate_security_gap(&gap);
+            if !cfg!(test) {
+                let mut db_path = osoosi_types::load_runtime_config().db_path;
+                if !std::path::Path::new(&db_path).exists() {
+                    if let Some(root) = osoosi_types::resolve_project_root() {
+                        let candidate = root.join(&db_path);
+                        if candidate.exists() {
+                            db_path = candidate.to_string_lossy().to_string();
+                        } else {
+                            let candidate_root = root.join("database").join("osoosi.db");
+                            if candidate_root.exists() {
+                                db_path = candidate_root.to_string_lossy().to_string();
+                            }
+                        }
+                    }
+                }
+                if let Ok(mem) = osoosi_core::MemoryStore::new(&db_path) {
+                    let _ = mem.save_zone_posture(
+                        "zone-alpha-mesh",
+                        status.security_score as i64,
+                        osoosi_core::hardened::TPM_REMEDIATED
+                            .load(std::sync::atomic::Ordering::SeqCst),
+                        osoosi_core::hardened::MEMORY_SHIELD_REMEDIATED
+                            .load(std::sync::atomic::Ordering::SeqCst),
+                        osoosi_core::hardened::SOFTWARE_EGRESS_REMEDIATED
+                            .load(std::sync::atomic::Ordering::SeqCst),
+                        "TPM 2.0 Anchored · WFP Containment Armed",
+                        &serde_json::to_string(&status.structured_recommendations)
+                            .unwrap_or_default(),
+                    );
+                }
+            }
             Json(json!({
                 "status": "remediated",
+                "gap_id": gap,
                 "security_score": status.security_score,
                 "recommendations": status.recommendations,
                 "structured_recommendations": status.structured_recommendations,
