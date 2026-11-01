@@ -150,11 +150,14 @@ jobs:
                 python3 /workspaces/raptor/raptor.py scan --repo "${STAGE_DIR}" --policy-groups crypto,secrets,auth,injection,flows,sinks,deserialisation,filesystem --out "${OUT_DIR}/crypto"
                 python3 /workspaces/raptor/raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
                 cp -r "${OUT_DIR}"/* /workspaces/out/
+                chmod -R a+rX /workspaces/out/
               '
           else
             echo "[!] ERROR: Could not pull danielcuthbert/raptor:latest container image."
             exit 1
           fi
+
+          sudo chmod -R a+rX raptor_out || true
 
           python3 - << 'PYEOF'
           import glob, json, os, sys
