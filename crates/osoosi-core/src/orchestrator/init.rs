@@ -382,31 +382,39 @@ impl EdrOrchestrator {
             }))
             .await;
 
-        // Auto-seal sensitive API keys into protected vault on startup
-        info!("EdrOrchestrator: Auto-sealing sensitive API keys into protected vault...");
-        match crate::protected_env_backup::ProtectedEnvBackupVault::seal_and_register_with_gateway(
-            std::path::Path::new(".env"),
-            &default_vault_path,
-            &env_gateway,
-        ) {
-            Ok(res) => {
-                info!(
-                    "EdrOrchestrator: Auto-sealed {} API keys into vault ({} safe vars preserved).",
-                    res.total_selected, res.total_vetoed
-                );
+        // Auto-seal sensitive API keys into protected vault on startup ONLY if explicitly enabled in config
+        if crate::protected_env_backup::ProtectedEnvBackupVault::is_auto_seal_enabled() {
+            info!("EdrOrchestrator: Auto-sealing sensitive API keys into protected vault...");
+            match crate::protected_env_backup::ProtectedEnvBackupVault::seal_and_register_with_gateway(
+                std::path::Path::new(".env"),
+                &default_vault_path,
+                &env_gateway,
+            ) {
+                Ok(res) => {
+                    info!(
+                        "EdrOrchestrator: Auto-sealed {} API keys into vault ({} safe vars preserved).",
+                        res.total_selected, res.total_vetoed
+                    );
+                }
+                Err(e) => {
+                    warn!("EdrOrchestrator: Auto-seal failed on startup: {}", e);
+                }
             }
-            Err(e) => {
-                warn!("EdrOrchestrator: Auto-seal failed on startup: {}", e);
-            }
+        } else {
+            info!("EdrOrchestrator: Protect .env auto-seal is disabled or paused; preserving unsealed environment.");
         }
 
         // Background watcher: periodically check if any user Environment hive has newly added/unsealed API keys
+        // Strictly gated by is_auto_seal_enabled() so reverting secrets in the UI is NEVER undone by the daemon!
         let watcher_vault_path = default_vault_path.clone();
         let watcher_gateway = env_gateway.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             loop {
                 interval.tick().await;
+                if !crate::protected_env_backup::ProtectedEnvBackupVault::is_auto_seal_enabled() {
+                    continue;
+                }
                 if crate::protected_env_backup::ProtectedEnvBackupVault::has_unsealed_user_api_keys(
                 ) {
                     if let Ok(res) = crate::protected_env_backup::ProtectedEnvBackupVault::seal_and_register_with_gateway(

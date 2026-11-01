@@ -81,6 +81,7 @@ certs/
 .env
 .env.*
 *.vault
+*.dpapi
 osoosi.toml.sig
 !osoosi.toml.sign
 

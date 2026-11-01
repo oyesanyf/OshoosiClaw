@@ -106,14 +106,9 @@ impl EnvSealConfig {
     pub const DEFAULT_CONFIG_PATH: &'static str = "database/env_seal_config.json";
 
     pub fn load_or_default() -> Self {
-        for candidate in [
-            Self::DEFAULT_CONFIG_PATH,
-            "../database/env_seal_config.json",
-            "../../database/env_seal_config.json",
-        ] {
-            let p = Path::new(candidate);
+        for p in ProtectedEnvBackupVault::candidate_env_seal_config_paths() {
             if p.is_file() {
-                if let Ok(bytes) = std::fs::read(p) {
+                if let Ok(bytes) = std::fs::read(&p) {
                     if let Ok(cfg) = serde_json::from_slice::<Self>(&bytes) {
                         return cfg;
                     }
@@ -124,13 +119,25 @@ impl EnvSealConfig {
     }
 
     pub fn save(&self, target_path: Option<&Path>) -> Result<(), std::io::Error> {
-        let p = target_path.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if let Some(tp) = target_path {
+            if let Some(parent) = tp.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            return std::fs::write(tp, bytes);
+        }
+        let p = Path::new(Self::DEFAULT_CONFIG_PATH);
         if let Some(parent) = p.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let bytes = serde_json::to_vec_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(p, bytes)
+        let res = std::fs::write(p, &bytes);
+        for cand in ProtectedEnvBackupVault::candidate_env_seal_config_paths() {
+            if cand.is_file() && cand != p {
+                let _ = std::fs::write(&cand, &bytes);
+            }
+        }
+        res
     }
 }
 
@@ -398,9 +405,16 @@ pub async fn post_env_gateway_config(
     if should_unseal_all {
         let vp_opt = cfg.vault_path.clone();
         let _ = tokio::task::spawn_blocking(move || {
+            osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
+            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(
+                vp_opt.as_deref().map(Path::new),
+            );
             let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
                 vp_opt.as_deref().map(Path::new),
             );
+            for vp in &all_vaults {
+                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
+            }
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: "all".to_string(),
@@ -453,9 +467,18 @@ pub async fn post_env_gateway_toggle(
     let vp_opt = cfg.vault_path.clone();
     let _ = tokio::task::spawn_blocking(move || {
         if !new_enabled {
+            osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
+            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(
+                vp_opt.as_deref().map(Path::new),
+            );
             let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
                 vp_opt.as_deref().map(Path::new),
             );
+            for vp in &all_vaults {
+                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
+            }
+        } else {
+            osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(false, Ordering::SeqCst);
         }
         push_watcher_event(WatcherEventRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -613,10 +636,12 @@ pub async fn post_env_gateway_seal(
     Json(req): Json<SealRequest>,
 ) -> (StatusCode, Json<Value>) {
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
-        let cfg = EnvSealConfig::load_or_default();
+        let mut cfg = EnvSealConfig::load_or_default();
         if !cfg.enabled {
-            return Err("Protect .env (Experimental) is currently DISABLED in UI settings. Enable Protect .env first before sealing files.".to_string());
+            cfg.enabled = true;
+            let _ = cfg.save(None);
         }
+        osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(false, Ordering::SeqCst);
         let vault_path = req
             .vault_path
             .as_deref()
@@ -709,7 +734,7 @@ pub async fn post_env_gateway_seal(
 /// 6. POST /api/env-gateway/revert
 pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusCode, Json<Value>) {
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
-        let cfg = EnvSealConfig::load_or_default();
+        let mut cfg = EnvSealConfig::load_or_default();
         let v_path = ProtectedEnvBackupVault::locate_active_vault_path(
             req.vault_path
                 .as_deref()
@@ -735,8 +760,22 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
                 "message": "Target environment file restored from vault.",
             }))
         } else {
+            osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
+            WATCHER_RUNNING.store(false, Ordering::SeqCst);
+            cfg.enabled = false;
+            cfg.auto_seal = false;
+            cfg.watcher_enabled = false;
+            let _ = cfg.save(None);
+
+            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(v_path.as_deref());
             ProtectedEnvBackupVault::auto_revert_all_active_vaults(v_path.as_deref())
                 .map_err(|e| format!("Auto revert all failed: {}", e))?;
+            for vp in &all_vaults {
+                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
+            }
+            if let Some(ref vp) = v_path {
+                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
+            }
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: "all".to_string(),
@@ -747,7 +786,12 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
             });
             Ok(json!({
                 "status": "success",
-                "message": "All environment files and volatile memory restored to original secrets.",
+                "enabled": false,
+                "reverted": true,
+                "vault_exists": false,
+                "sealed_variables": [],
+                "standin_mappings": [],
+                "message": "All environment files, Windows User Environment (HKCU\\Environment), and volatile memory restored to original secrets.",
             }))
         }
     })

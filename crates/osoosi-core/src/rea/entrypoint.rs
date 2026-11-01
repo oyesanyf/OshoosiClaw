@@ -621,6 +621,62 @@ pub fn analyze_target_bytes(
         });
     }
 
+    // Protection Layer 1b: RIFF/WAVE Container & IEEE-754 Float vs. Shellcode/Heap-Spray Inspection
+    if let Some(riff_report) = inspect_riff_wave_container(bytes) {
+        if let Some(obj) = metadata.as_object_mut() {
+            obj.insert(
+                "riff_wave".to_string(),
+                serde_json::to_value(&riff_report).unwrap_or(Value::Null),
+            );
+        }
+        if !riff_report.shellcode_or_heapspray_indicators.is_empty() {
+            findings.push(json!({
+                "category": "RIFF_WAVE_SHELLCODE_OR_MASQUERADE",
+                "code": "RIFF_WAVE_SHELLCODE_OR_MASQUERADE",
+                "severity": "critical",
+                "title": "Disguised Shellcode / Heap-Spray / Executable Inside RIFF WAVE Container",
+                "detail": riff_report.shellcode_or_heapspray_indicators.join(" | "),
+            }));
+            evidence.push(ReaEvidence {
+                source: "rea_riff_wave_inspector".to_string(),
+                location: format!("data_chunk@0x{:x}", riff_report.data_chunk_offset),
+                observation: format!(
+                    "Detected shellcode/masquerading inside RIFF WAVE ({}): {}",
+                    riff_report.format_tag_name,
+                    riff_report.shellcode_or_heapspray_indicators.join("; ")
+                ),
+                confidence: 0.98,
+                digest_sha256: Some(sha256.clone()),
+            });
+        } else if riff_report.missing_mandatory_fact_chunk {
+            findings.push(json!({
+                "category": "RIFF_FLOAT_MISSING_FACT_CHUNK",
+                "code": "RIFF_FLOAT_MISSING_FACT_CHUNK",
+                "severity": "info",
+                "title": "Non-Standard 32-Bit IEEE Float WAV Without RFC 2361 `fact` Chunk (Verified Benign Audio)",
+                "detail": format!(
+                    "wFormatTag=3 ({}-bit, {} Hz, {} ch) uses a bare header without a `fact` chunk or WAVE_FORMAT_EXTENSIBLE header. IEEE-754 waveform distribution verified benign (finite={:.1}%, normalized={:.1}%). Convert to 16-bit PCM (wFormatTag=1) via canonicalize_ieee_float_wav_to_pcm16() to prevent SmartScreen/AV false positives.",
+                    riff_report.bits_per_sample,
+                    riff_report.sample_rate,
+                    riff_report.channels,
+                    riff_report.ieee_float_finite_ratio * 100.0,
+                    riff_report.ieee_float_normalized_ratio * 100.0
+                ),
+            }));
+            evidence.push(ReaEvidence {
+                source: "rea_riff_wave_inspector".to_string(),
+                location: "RIFF/WAVE fmt+data".to_string(),
+                observation: format!(
+                    "Verified benign 32-bit IEEE float audio waveform (wFormatTag=3, missing `fact` chunk, finite_ratio={:.3}, normalized_ratio={:.3})",
+                    riff_report.ieee_float_finite_ratio,
+                    riff_report.ieee_float_normalized_ratio
+                ),
+                confidence: 0.99,
+                digest_sha256: Some(sha256.clone()),
+            });
+        }
+    }
+
     // Protection Layer 4: Scan for embedded prompt-injection / disassembler-poisoning strings & sanitize output
     let is_verified_self_binary = autonomous_trigger
         .as_deref()

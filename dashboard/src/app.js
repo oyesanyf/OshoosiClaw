@@ -11842,8 +11842,13 @@ async function sealEnvSecrets() {
         }
 
         const count = data.files_sealed_count || 0;
+        if (state && state.envGateway) {
+            state.envGateway.enabled = true;
+        }
+        syncProtectEnvMasterUiState(true);
         showToast(`Successfully sealed ${count} environment file(s) into DPAPI/NTFS Protected Vault!`, 'success');
-        loadEnvGatewayStatus();
+        await loadEnvGatewayStatus(true);
+        await loadEnvGatewayConfig();
         if (state.envGateway.scannedFiles.length > 0) {
             scanEnvFiles(allDrivesCheck ? allDrivesCheck.checked : false);
         }
@@ -11884,9 +11889,6 @@ async function sealSingleEnvFile(filePath) {
 
 async function revertEnvSecrets() {
     if (state.envGateway.isReverting) return;
-    if (!confirm('Revert all sealed environment files and restore original secrets from the protected vault?')) {
-        return;
-    }
 
     state.envGateway.isReverting = true;
     const btn = document.getElementById('btn-revert-env-secrets');
@@ -11906,9 +11908,14 @@ async function revertEnvSecrets() {
             showUserError('Revert Secrets', data || `HTTP ${resp.status}`);
             return;
         }
-        showToast(data.message || 'All environment files and process memory restored to original secrets.', 'success');
-        loadEnvGatewayStatus();
-        scanEnvFiles(false);
+        if (state && state.envGateway) {
+            state.envGateway.enabled = false;
+        }
+        syncProtectEnvMasterUiState(false);
+        showToast(data.message || 'All environment files, Windows User Environment (HKCU\\Environment), and process memory restored to original secrets.', 'success');
+        await loadEnvGatewayStatus(true);
+        await loadEnvGatewayConfig();
+        await scanEnvFiles(false);
     } catch (err) {
         console.error('Failed to revert secrets:', err);
         showUserError('Revert Secrets', err);

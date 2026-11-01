@@ -1,4 +1,6 @@
 {
+  "enabled": false,
+  "experimental": true,
   "custom_paths": [],
   "all_drives": false,
   "auto_seal": false,
