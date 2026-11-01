@@ -17,6 +17,160 @@ pub struct InspectionFindings {
     pub has_spoofed_stack: bool,
     pub magika_label: String,
     pub magika_mime_type: String,
+    pub is_verified_rust_test_harness: bool,
+    pub rdata_only_adversarial_test_vectors: Vec<String>,
+}
+
+/// Structural provenance analysis for compiled Rust test binaries (`cargo test` / `target/*/deps/*`).
+///
+/// Solves the Windows Smart App Control (`os error 4551`) / EDR false-positive dilemma without using
+/// lazy directory path exclusions:
+/// - Verifies whether a PE/ELF binary has genuine Rust compiler + `libtest` harness markers,
+/// - Maps every PE section's raw file range and memory permissions (`IMAGE_SCN_MEM_READ` vs `IMAGE_SCN_MEM_EXECUTE`),
+/// - Verifies whether embedded adversarial test strings (`; cat /etc/passwd | calc.exe`, `../../../../windows/system32`,
+///   `..\\..\\..\\boot.ini`, `DROP TABLE `) reside **strictly inside read-only data sections (`.rdata` / `.rodata`)**
+///   with zero high-risk process-injection / hollowing imports and zero RWX sections.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PeTestHarnessProvenance {
+    pub has_rust_compiler_provenance: bool,
+    pub has_rust_test_harness_symbols: bool,
+    pub has_rwx_or_writable_code_section: bool,
+    pub has_injection_imports: bool,
+    pub rdata_test_vector_hits: Vec<String>,
+    pub executable_section_vector_hits: Vec<String>,
+    pub is_verified_benign_rust_test_harness: bool,
+}
+
+/// Inspect a PE or ELF binary's section table, symbol markers, and read-only `.rdata`/`.rodata` ranges
+/// to determine if embedded exploit strings are static unit-test vectors inside a genuine Rust test binary.
+pub fn classify_pe_rust_test_harness_provenance(bytes: &[u8]) -> PeTestHarnessProvenance {
+    let mut report = PeTestHarnessProvenance::default();
+    if bytes.len() < 64 {
+        return report;
+    }
+
+    let find_subslice =
+        |haystack: &[u8], needle: &[u8]| -> Option<usize> { haystack.windows(needle.len()).position(|w| w == needle) };
+
+    report.has_rust_compiler_provenance = find_subslice(bytes, b"rustc 1.").is_some()
+        || find_subslice(bytes, b".dep-v0").is_some()
+        || find_subslice(bytes, b"rust_begin_unwind").is_some()
+        || find_subslice(bytes, b"/cargo/registry/src/").is_some()
+        || find_subslice(bytes, b"\\cargo\\registry\\src\\").is_some();
+
+    report.has_rust_test_harness_symbols = find_subslice(bytes, b"test::run_test").is_some()
+        || find_subslice(bytes, b"run_tests_console").is_some()
+        || find_subslice(bytes, b"test_main_static").is_some()
+        || find_subslice(bytes, b"__rust_begin_short_backtrace").is_some()
+        || find_subslice(bytes, b"running 1 test").is_some()
+        || find_subslice(bytes, b"test result: ").is_some();
+
+    let mut rdata_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut exec_ranges: Vec<(usize, usize)> = Vec::new();
+
+    if let Ok(pe) = goblin::pe::PE::parse(bytes) {
+        for sec in &pe.sections {
+            let name = String::from_utf8_lossy(&sec.name)
+                .trim_matches('\0')
+                .to_ascii_lowercase();
+            let raw_start = sec.pointer_to_raw_data as usize;
+            let raw_size = sec.size_of_raw_data as usize;
+            let raw_end = raw_start.saturating_add(raw_size).min(bytes.len());
+            let chars = sec.characteristics;
+
+            let is_exec = (chars & 0x2000_0000) != 0; // IMAGE_SCN_MEM_EXECUTE
+            let is_write = (chars & 0x8000_0000) != 0; // IMAGE_SCN_MEM_WRITE
+            if is_exec && is_write {
+                report.has_rwx_or_writable_code_section = true;
+            }
+            if raw_start < raw_end {
+                if is_exec {
+                    exec_ranges.push((raw_start, raw_end));
+                } else if !is_write && (name.starts_with(".rdata") || name.starts_with(".rodata")) {
+                    rdata_ranges.push((raw_start, raw_end));
+                }
+            }
+        }
+
+        for imp in &pe.imports {
+            let low = imp.name.to_ascii_lowercase();
+            if low.contains("virtualallocex")
+                || low.contains("writeprocessmemory")
+                || low.contains("createremotethread")
+                || low.contains("ntunmapviewofsection")
+                || low.contains("setthreadcontext")
+                || low.contains("queueuserapc")
+            {
+                report.has_injection_imports = true;
+            }
+        }
+    } else if let Ok(goblin::Object::Elf(elf)) = goblin::Object::parse(bytes) {
+        for sh in &elf.section_headers {
+            let name = elf
+                .shdr_strtab
+                .get_at(sh.sh_name)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let start = sh.sh_offset as usize;
+            let end = start.saturating_add(sh.sh_size as usize).min(bytes.len());
+            let is_exec = (sh.sh_flags as u32 & goblin::elf::section_header::SHF_EXECINSTR) != 0;
+            let is_write = (sh.sh_flags as u32 & goblin::elf::section_header::SHF_WRITE) != 0;
+            if is_exec && is_write {
+                report.has_rwx_or_writable_code_section = true;
+            }
+            if start < end {
+                if is_exec {
+                    exec_ranges.push((start, end));
+                } else if !is_write && name.starts_with(".rodata") {
+                    rdata_ranges.push((start, end));
+                }
+            }
+        }
+    }
+
+    let adversarial_vectors: &[(&[u8], &str)] = &[
+        (b"/etc/passwd", "/etc/passwd"),
+        (b"calc.exe", "calc.exe"),
+        (b"windows/system32", "windows/system32"),
+        (b"windows\\system32", "windows\\system32"),
+        (b"boot.ini", "boot.ini"),
+        (b"DROP TABLE ", "DROP TABLE"),
+        (b"echo hacked", "echo hacked"),
+    ];
+
+    for &(needle, label) in adversarial_vectors {
+        let mut pos = 0usize;
+        while pos + needle.len() <= bytes.len() {
+            let Some(rel) = find_subslice(&bytes[pos..], needle) else {
+                break;
+            };
+            let abs_off = pos + rel;
+            pos = abs_off + needle.len();
+
+            let in_rdata = rdata_ranges
+                .iter()
+                .any(|&(s, e)| abs_off >= s && abs_off + needle.len() <= e);
+            let in_exec = exec_ranges
+                .iter()
+                .any(|&(s, e)| abs_off >= s && abs_off < e);
+
+            if in_exec {
+                if !report.executable_section_vector_hits.contains(&label.to_string()) {
+                    report.executable_section_vector_hits.push(label.to_string());
+                }
+            } else if in_rdata && !report.rdata_test_vector_hits.contains(&label.to_string()) {
+                report.rdata_test_vector_hits.push(label.to_string());
+            }
+        }
+    }
+
+    report.is_verified_benign_rust_test_harness = report.has_rust_compiler_provenance
+        && report.has_rust_test_harness_symbols
+        && !report.has_rwx_or_writable_code_section
+        && !report.has_injection_imports
+        && report.executable_section_vector_hits.is_empty();
+
+    report
 }
 
 /// Disassembly helper: checks if memory bytes preceding a return address represent a CALL instruction.
@@ -461,6 +615,24 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
         }
     }
 
+    // Structural RIFF/WAVE inspection (wFormatTag=3 IEEE float without `fact` chunk vs disguised shellcode/heap-spray)
+    if let Some(riff_report) = crate::rea::inspect_riff_wave_container(&bytes) {
+        if !riff_report.shellcode_or_heapspray_indicators.is_empty() {
+            for indicator in &riff_report.shellcode_or_heapspray_indicators {
+                findings
+                    .suspicious_sections
+                    .push(format!("RIFF WAVE Shellcode/Masquerade: {}", indicator));
+            }
+            findings.composition_score += 0.75;
+        }
+        return Ok(findings);
+    }
+
+    // Structural Rust Test Harness `.rdata` Static-Vector Provenance Check
+    let test_prov = classify_pe_rust_test_harness_provenance(&bytes);
+    findings.is_verified_rust_test_harness = test_prov.is_verified_benign_rust_test_harness;
+    findings.rdata_only_adversarial_test_vectors = test_prov.rdata_test_vector_hits;
+
     if bytes.starts_with(b"\x7FELF") || magika_id.label == "elf" {
         inspect_elf64(&bytes, &mut findings);
         return Ok(findings);
@@ -623,5 +795,228 @@ mod tests {
             .suspicious_sections
             .iter()
             .any(|s| s.contains("Magika extension masquerading")));
+    }
+
+    #[test]
+    fn test_riff_wave_32bit_ieee_float_missing_fact_chunk_and_pcm16_canonicalizer() {
+        // Build a bare 44-byte header 32-bit IEEE Float WAV (wFormatTag = 3, 48 kHz, Stereo)
+        // without a `fact` chunk — identical to the non-standard float WAVs that trigger SmartScreen/AV heuristics.
+        let sample_rate = 48_000u32;
+        let channels = 2u16;
+        let num_frames = 512usize;
+        let total_samples = num_frames * (channels as usize);
+        let data_bytes_len = (total_samples * 4) as u32;
+        let riff_size = 36u32 + data_bytes_len;
+
+        let mut float_wav = Vec::with_capacity(44 + data_bytes_len as usize);
+        float_wav.extend_from_slice(b"RIFF");
+        float_wav.extend_from_slice(&riff_size.to_le_bytes());
+        float_wav.extend_from_slice(b"WAVE");
+        float_wav.extend_from_slice(b"fmt ");
+        float_wav.extend_from_slice(&16u32.to_le_bytes());
+        float_wav.extend_from_slice(&3u16.to_le_bytes()); // wFormatTag = 3 (IEEE Float)
+        float_wav.extend_from_slice(&channels.to_le_bytes());
+        float_wav.extend_from_slice(&sample_rate.to_le_bytes());
+        float_wav.extend_from_slice(&(sample_rate * 8).to_le_bytes());
+        float_wav.extend_from_slice(&8u16.to_le_bytes());
+        float_wav.extend_from_slice(&32u16.to_le_bytes()); // bitsPerSample = 32
+        float_wav.extend_from_slice(b"data");
+        float_wav.extend_from_slice(&data_bytes_len.to_le_bytes());
+
+        for frame in 0..num_frames {
+            let t = frame as f32 / sample_rate as f32;
+            let left = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.75;
+            let right = (2.0 * std::f32::consts::PI * 880.0 * t).cos() * 0.75;
+            float_wav.extend_from_slice(&left.to_le_bytes());
+            float_wav.extend_from_slice(&right.to_le_bytes());
+        }
+
+        let report = crate::rea::inspect_riff_wave_container(&float_wav)
+            .expect("Must parse bare 44-byte 32-bit IEEE float WAV");
+        assert_eq!(report.format_tag, 3);
+        assert!(!report.has_fact_chunk);
+        assert!(report.missing_mandatory_fact_chunk);
+        assert!(report.valid_ieee_float_waveform);
+        assert!(report.shellcode_or_heapspray_indicators.is_empty());
+        assert!(report.requires_pcm16_canonicalization);
+
+        // Convert to standard 16-bit PCM WAV (wFormatTag = 1, bitsPerSample = 16)
+        let pcm16_wav = crate::rea::canonicalize_ieee_float_wav_to_pcm16(&float_wav)
+            .expect("Must canonicalize legitimate IEEE float WAV to 16-bit PCM");
+        let pcm_report = crate::rea::inspect_riff_wave_container(&pcm16_wav)
+            .expect("Must parse canonicalized 16-bit PCM WAV");
+        assert_eq!(pcm_report.format_tag, 1);
+        assert_eq!(pcm_report.bits_per_sample, 16);
+        assert_eq!(pcm_report.channels, 2);
+        assert_eq!(pcm_report.sample_rate, 48_000);
+        assert!(!pcm_report.missing_mandatory_fact_chunk);
+        assert!(pcm_report.shellcode_or_heapspray_indicators.is_empty());
+    }
+
+    #[test]
+    fn test_riff_wave_disguised_shellcode_and_heapspray_blocked() {
+        let mut malicious_wav = Vec::new();
+        malicious_wav.extend_from_slice(b"RIFF");
+        malicious_wav.extend_from_slice(&500u32.to_le_bytes());
+        malicious_wav.extend_from_slice(b"WAVE");
+        malicious_wav.extend_from_slice(b"fmt ");
+        malicious_wav.extend_from_slice(&16u32.to_le_bytes());
+        malicious_wav.extend_from_slice(&3u16.to_le_bytes()); // Claims wFormatTag = 3
+        malicious_wav.extend_from_slice(&2u16.to_le_bytes());
+        malicious_wav.extend_from_slice(&48_000u32.to_le_bytes());
+        malicious_wav.extend_from_slice(&384_000u32.to_le_bytes());
+        malicious_wav.extend_from_slice(&8u16.to_le_bytes());
+        malicious_wav.extend_from_slice(&32u16.to_le_bytes());
+        malicious_wav.extend_from_slice(b"data");
+        malicious_wav.extend_from_slice(&256u32.to_le_bytes());
+
+        // Inject heap-spray sled (0x0c0c0c0c) + x64 CobaltStrike/Metasploit prologue + TEB/PEB walk
+        malicious_wav.extend_from_slice(&[0x0cu8; 64]);
+        malicious_wav.extend_from_slice(&[0xFC, 0x48, 0x83, 0xE4, 0xF0]);
+        malicious_wav.extend_from_slice(&[0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00]);
+        malicious_wav.resize(44 + 256, 0x90);
+
+        let report = crate::rea::inspect_riff_wave_container(&malicious_wav)
+            .expect("Must parse RIFF envelope");
+        assert!(!report.valid_ieee_float_waveform);
+        assert!(
+            report.shellcode_or_heapspray_indicators.len() >= 3,
+            "Expected multiple shellcode/heap-spray indicators, got {:?}",
+            report.shellcode_or_heapspray_indicators
+        );
+        assert!(
+            crate::rea::canonicalize_ieee_float_wav_to_pcm16(&malicious_wav).is_err(),
+            "Canonicalizer must reject WAV containing shellcode/heap-spray payloads"
+        );
+
+        let tmp = std::env::temp_dir().join(format!(
+            "osoosi_malicious_wav_{}.wav",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&tmp, &malicious_wav).unwrap();
+        let findings = inspect_file(&tmp).expect("inspect malicious wav");
+        let _ = std::fs::remove_file(&tmp);
+        assert!(
+            findings.composition_score >= 0.75,
+            "Disguised shellcode WAV must score >= 0.75, got {}",
+            findings.composition_score
+        );
+    }
+
+    #[test]
+    fn test_elf_rust_test_harness_rdata_adversarial_vectors_vs_exec_payload() {
+        // Construct a minimal ELF64 with:
+        // - Section 1: `.text` (SHF_ALLOC | SHF_EXECINSTR = 0x6) at offset 256..384
+        // - Section 2: `.rodata` (SHF_ALLOC = 0x2, read-only) at offset 384..768
+        // - Section 3: `.shstrtab` at offset 768..832
+        let mut buf = vec![0u8; 832];
+        buf[0..4].copy_from_slice(b"\x7FELF");
+        buf[4] = 2; // 64-bit
+        buf[5] = 1; // little-endian
+        buf[6] = 1; // EV_CURRENT
+        buf[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+        buf[18..20].copy_from_slice(&0x3Eu16.to_le_bytes()); // x86_64
+        buf[20..24].copy_from_slice(&1u32.to_le_bytes());
+        buf[40..48].copy_from_slice(&64u64.to_le_bytes()); // e_shoff = 64
+        buf[52..54].copy_from_slice(&64u16.to_le_bytes()); // e_ehsize = 64
+        buf[58..60].copy_from_slice(&64u16.to_le_bytes()); // e_shentsize = 64
+        buf[60..62].copy_from_slice(&4u16.to_le_bytes()); // e_shnum = 4 (null, .text, .rodata, .shstrtab)
+        buf[62..64].copy_from_slice(&3u16.to_le_bytes()); // e_shstrndx = 3
+
+        // String table at 768: "\0.text\0.rodata\0.shstrtab\0"
+        let shstrtab = b"\0.text\0.rodata\0.shstrtab\0";
+        buf[768..768 + shstrtab.len()].copy_from_slice(shstrtab);
+
+        // Section 1 (.text) header at 64 + 64 = 128
+        buf[128..132].copy_from_slice(&1u32.to_le_bytes()); // sh_name = 1 (".text")
+        buf[132..136].copy_from_slice(&1u32.to_le_bytes()); // SHT_PROGBITS
+        buf[136..144].copy_from_slice(&0x6u64.to_le_bytes()); // SHF_ALLOC | SHF_EXECINSTR
+        buf[152..160].copy_from_slice(&256u64.to_le_bytes()); // sh_offset = 256
+        buf[160..168].copy_from_slice(&128u64.to_le_bytes()); // sh_size = 128
+
+        // Section 2 (.rodata) header at 64 + 128 = 192 (WAIT: 4 sections * 64 = 256 bytes, so headers occupy 64..320!)
+        // Let's place .text at 320..448, .rodata at 448..768, .shstrtab at 768..832
+        buf[152..160].copy_from_slice(&320u64.to_le_bytes()); // .text offset = 320
+        buf[160..168].copy_from_slice(&128u64.to_le_bytes()); // .text size = 128
+
+        // Section 2 (.rodata) header at 192
+        buf[192..196].copy_from_slice(&7u32.to_le_bytes()); // sh_name = 7 (".rodata")
+        buf[196..200].copy_from_slice(&1u32.to_le_bytes()); // SHT_PROGBITS
+        buf[200..208].copy_from_slice(&0x2u64.to_le_bytes()); // SHF_ALLOC (Read-Only!)
+        buf[216..224].copy_from_slice(&448u64.to_le_bytes()); // sh_offset = 448
+        buf[224..232].copy_from_slice(&320u64.to_le_bytes()); // sh_size = 320
+
+        // Section 3 (.shstrtab) header at 256
+        buf[256..260].copy_from_slice(&15u32.to_le_bytes()); // sh_name = 15 (".shstrtab")
+        buf[260..264].copy_from_slice(&3u32.to_le_bytes()); // SHT_STRTAB
+        buf[280..288].copy_from_slice(&768u64.to_le_bytes()); // sh_offset = 768
+        buf[288..296].copy_from_slice(&(shstrtab.len() as u64).to_le_bytes());
+
+        // Populate .rodata (448..768) with Rust compiler + test harness markers + static adversarial test vectors
+        let rodata_payload = b"rustc 1.85.0 (4d91de4e4 2025-02-17)\0test::run_test\0; cat /etc/passwd | calc.exe && echo hacked\0../../../../windows/system32\0..\\..\\..\\boot.ini\0DROP TABLE songs\0";
+        buf[448..448 + rodata_payload.len()].copy_from_slice(rodata_payload);
+
+        let prov = classify_pe_rust_test_harness_provenance(&buf);
+        assert!(prov.has_rust_compiler_provenance);
+        assert!(prov.has_rust_test_harness_symbols);
+        assert!(!prov.has_rwx_or_writable_code_section);
+        assert!(prov.executable_section_vector_hits.is_empty());
+        assert!(prov.rdata_test_vector_hits.contains(&"calc.exe".to_string()));
+        assert!(prov.rdata_test_vector_hits.contains(&"/etc/passwd".to_string()));
+        assert!(prov.rdata_test_vector_hits.contains(&"DROP TABLE".to_string()));
+        assert!(prov.is_verified_benign_rust_test_harness);
+
+        // Now inject an exploit vector inside the executable `.text` section (320..448) -> must fail closed!
+        let mut trojan_buf = buf.clone();
+        trojan_buf[320..328].copy_from_slice(b"calc.exe");
+        let trojan_prov = classify_pe_rust_test_harness_provenance(&trojan_buf);
+        assert!(!trojan_prov.executable_section_vector_hits.is_empty());
+        assert!(!trojan_prov.is_verified_benign_rust_test_harness);
+    }
+
+    #[test]
+    fn test_webui_media_and_sink_integrity_audit() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "osoosi_music_songs_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(temp_dir.join("roots_reggae_anthem")).unwrap();
+        std::fs::create_dir_all(temp_dir.join("song-one-love-shining-1977")).unwrap();
+
+        let broken_ui_js = r#"
+            const url1 = "/api/songs/song_reggae_anthem_001/versions/1/audio/final_master";
+            const url2 = "/api/songs/song_afrobeats_002/versions/1/audio/final_master";
+            // fallback to silent timer when audio 404s
+            setInterval(() => { console.log("silent playback timer"); }, 1000);
+        "#;
+        let broken_report =
+            crate::rea::audit_webui_media_and_sink_integrity(broken_ui_js, Some(&temp_dir));
+        assert_eq!(
+            broken_report.missing_on_disk_song_ids,
+            vec![
+                "song_reggae_anthem_001".to_string(),
+                "song_afrobeats_002".to_string()
+            ]
+        );
+        assert!(broken_report.has_silent_timer_fallback);
+        assert!(!broken_report.supports_set_sink_id);
+
+        let fixed_ui_js = r#"
+            const url1 = "/api/songs/roots_reggae_anthem/versions/1/audio/final_master";
+            const url2 = "/api/songs/song-one-love-shining-1977/versions/1/audio/final_master";
+            async function selectAudioOutput(deviceId) {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const outputs = devices.filter(d => d.kind === "audiooutput");
+                await audioEl.setSinkId(deviceId);
+            }
+        "#;
+        let fixed_report =
+            crate::rea::audit_webui_media_and_sink_integrity(fixed_ui_js, Some(&temp_dir));
+        assert!(fixed_report.missing_on_disk_song_ids.is_empty());
+        assert!(!fixed_report.has_silent_timer_fallback);
+        assert!(fixed_report.supports_set_sink_id);
+        assert!(fixed_report.supports_enumerate_audio_outputs);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -141,6 +141,21 @@ impl StaticAnalyzer {
         let artifacts = self.run_native_strings(file_path).await?;
 
         // Combine findings into a ThreatSignature
+        // If the binary is structurally verified as a benign Rust test harness whose adversarial strings
+        // reside solely in read-only `.rdata` with zero RWX sections or injection imports, do not trigger
+        // false-positive blocks on static test vectors (preventing `os error 4551` style false blocks).
+        if composition
+            .as_ref()
+            .is_some_and(|c| c.is_verified_rust_test_harness && c.composition_score < 0.5)
+        {
+            debug!(
+                "Static Analyzer: verified benign Rust test harness with static .rdata test vectors: {:?}",
+                file_path
+            );
+            self.analysis_cache.insert(hash, None);
+            return Ok(None);
+        }
+
         if let Some(yara_sig) = yara_res {
             let mut signature = ThreatSignature {
                 id: format!("STATIC-{}", hash.chars().take(8).collect::<String>()),
@@ -218,19 +233,14 @@ impl StaticAnalyzer {
     }
 
     fn is_oshoosi_managed_tool(path: &Path) -> bool {
-        let p_raw = path.to_string_lossy().to_ascii_lowercase();
-        let p = p_raw.replace('/', "\\");
-        p.contains("\\oshoosiclaw\\")
-            || p.contains("\\.gemini\\")
-            || p.contains("\\antigravity\\")
-            || p.contains("\\target\\")
-            || p.contains("\\node_modules\\")
-            || p.contains("\\tools\\")
-            || p.contains("\\harfile\\")
-            || p.contains("\\modelfusion\\")
-            || p.contains("\\dist\\")
-            || p.contains("\\browser\\bin\\")
-            || p.contains("\\build\\bin\\")
+        // Never rely on blind directory or path string exclusions.
+        // Verify active self-process identity or cryptographic signature trust.
+        if let Ok(curr_exe) = std::env::current_exe() {
+            if path == curr_exe.as_path() {
+                return true;
+            }
+        }
+        crate::win_trust::is_trusted_signed_binary(path)
     }
 
     fn calculate_sha256_sync(path: &Path) -> anyhow::Result<String> {

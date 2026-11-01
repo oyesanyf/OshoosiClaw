@@ -1435,3 +1435,425 @@ pub fn extract_ole2_text(bytes: &[u8], max_out_bytes: usize) -> Option<String> {
         Some(out)
     }
 }
+
+// ============================================================================
+// 10. RIFF/WAVE Media Container & IEEE-754 Float vs. Shellcode/Heap-Spray Inspector
+// ============================================================================
+
+/// Structural inspection report for RIFF WAVE (`.wav`) audio containers.
+///
+/// Differentiates legitimate 32-bit IEEE floating-point audio streams (`wFormatTag = 3`
+/// without the RFC 2361 / Microsoft-mandated `fact` chunk) from disguised shellcode,
+/// NOP sleds, heap-spray sleds, and polyglot PE/ELF executables masquerading as `.wav` files.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RiffWaveInspectionReport {
+    pub is_riff_wave: bool,
+    pub declared_riff_size: u32,
+    pub actual_file_size: usize,
+    pub format_tag: u16,
+    pub format_tag_name: String,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub byte_rate: u32,
+    pub block_align: u16,
+    pub bits_per_sample: u16,
+    pub chunks_present: Vec<String>,
+    pub has_fact_chunk: bool,
+    pub missing_mandatory_fact_chunk: bool,
+    pub data_chunk_offset: usize,
+    pub data_chunk_size: usize,
+    pub valid_ieee_float_waveform: bool,
+    pub ieee_float_finite_ratio: f32,
+    pub ieee_float_normalized_ratio: f32,
+    pub shellcode_or_heapspray_indicators: Vec<String>,
+    pub requires_pcm16_canonicalization: bool,
+}
+
+/// Inspect a RIFF/WAVE (`.wav`) container for RFC 2361 compliance, 32-bit IEEE float
+/// waveform validity (`wFormatTag = 3` without a `fact` chunk), and embedded shellcode /
+/// heap-spray / polyglot executable payloads.
+pub fn inspect_riff_wave_container(bytes: &[u8]) -> Option<RiffWaveInspectionReport> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+
+    let declared_riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let actual_file_size = bytes.len();
+
+    let mut format_tag = 0u16;
+    let mut channels = 0u16;
+    let mut sample_rate = 0u32;
+    let mut byte_rate = 0u32;
+    let mut block_align = 0u16;
+    let mut bits_per_sample = 0u16;
+    let mut chunks_present = Vec::new();
+    let mut has_fact_chunk = false;
+    let mut data_chunk_offset = 0usize;
+    let mut data_chunk_size = 0usize;
+    let mut shellcode_or_heapspray_indicators = Vec::new();
+
+    let mut pos = 12usize;
+    while pos + 8 <= bytes.len() && chunks_present.len() < 64 {
+        let chunk_id = String::from_utf8_lossy(&bytes[pos..pos + 4]).to_string();
+        let chunk_size = u32::from_le_bytes([
+            bytes[pos + 4],
+            bytes[pos + 5],
+            bytes[pos + 6],
+            bytes[pos + 7],
+        ]) as usize;
+        let payload_start = pos + 8;
+
+        chunks_present.push(chunk_id.clone());
+
+        if &bytes[pos..pos + 4] == b"fmt " && payload_start + 16 <= bytes.len() {
+            format_tag = u16::from_le_bytes([bytes[payload_start], bytes[payload_start + 1]]);
+            channels = u16::from_le_bytes([bytes[payload_start + 2], bytes[payload_start + 3]]);
+            sample_rate = u32::from_le_bytes([
+                bytes[payload_start + 4],
+                bytes[payload_start + 5],
+                bytes[payload_start + 6],
+                bytes[payload_start + 7],
+            ]);
+            byte_rate = u32::from_le_bytes([
+                bytes[payload_start + 8],
+                bytes[payload_start + 9],
+                bytes[payload_start + 10],
+                bytes[payload_start + 11],
+            ]);
+            block_align =
+                u16::from_le_bytes([bytes[payload_start + 12], bytes[payload_start + 13]]);
+            bits_per_sample =
+                u16::from_le_bytes([bytes[payload_start + 14], bytes[payload_start + 15]]);
+        } else if &bytes[pos..pos + 4] == b"fact" {
+            has_fact_chunk = true;
+        } else if &bytes[pos..pos + 4] == b"data" {
+            data_chunk_offset = payload_start;
+            data_chunk_size = chunk_size.min(bytes.len().saturating_sub(payload_start));
+        }
+
+        let padded_size = chunk_size.saturating_add(chunk_size & 1);
+        let next_pos = payload_start.saturating_add(padded_size);
+        if next_pos <= pos || next_pos > bytes.len() {
+            break;
+        }
+        pos = next_pos;
+    }
+
+    let format_tag_name = match format_tag {
+        0x0001 => "WAVE_FORMAT_PCM".to_string(),
+        0x0003 => "WAVE_FORMAT_IEEE_FLOAT".to_string(),
+        0x0006 => "WAVE_FORMAT_ALAW".to_string(),
+        0x0007 => "WAVE_FORMAT_MULAW".to_string(),
+        0xFFFE => "WAVE_FORMAT_EXTENSIBLE".to_string(),
+        other => format!("WAVE_FORMAT_0x{:04X}", other),
+    };
+
+    // RFC 2361 / Microsoft Multimedia Standards Update: all non-PCM formats (including wFormatTag = 3)
+    // require a `fact` chunk or `WAVE_FORMAT_EXTENSIBLE` header. Bare 44-byte header 32-bit float WAVs
+    // omit the `fact` chunk, triggering SmartScreen / heuristic EDR shellcode/heap-spray false positives.
+    let missing_mandatory_fact_chunk = format_tag == 0x0003 && !has_fact_chunk;
+
+    let data_end = data_chunk_offset.saturating_add(data_chunk_size).min(bytes.len());
+    let data_slice = if data_chunk_offset > 0 && data_chunk_offset < data_end {
+        &bytes[data_chunk_offset..data_end]
+    } else {
+        &[]
+    };
+
+    // Inspect data chunk + any trailing slack space for polyglot executables, NOP sleds, heap sprays, and shellcode
+    let scan_window = &bytes[12..bytes.len().min(12 + 4 * 1024 * 1024)];
+
+    // 1. Check for embedded PE (`MZ` + valid `e_lfanew` -> `PE\0\0`) or ELF (`\x7fELF`) inside the audio payload
+    for (idx, w) in scan_window.windows(4).enumerate() {
+        if w == b"\x7fELF" {
+            shellcode_or_heapspray_indicators.push(format!(
+                "Embedded ELF executable header inside RIFF WAVE payload at offset 0x{:x}",
+                12 + idx
+            ));
+            break;
+        }
+        if w[0] == b'M' && w[1] == b'Z' && idx + 64 <= scan_window.len() {
+            let lfanew = u32::from_le_bytes([
+                scan_window[idx + 60],
+                scan_window[idx + 61],
+                scan_window[idx + 62],
+                scan_window[idx + 63],
+            ]) as usize;
+            if (64..=1024).contains(&lfanew)
+                && idx + lfanew + 4 <= scan_window.len()
+                && &scan_window[idx + lfanew..idx + lfanew + 4] == b"PE\0\0"
+            {
+                shellcode_or_heapspray_indicators.push(format!(
+                    "Embedded PE executable (MZ/PE\\0\\0) masquerading inside RIFF WAVE payload at offset 0x{:x}",
+                    12 + idx
+                ));
+                break;
+            }
+        }
+    }
+
+    // 2. Check for classic heap-spray / NOP-sled runs (>= 32 consecutive bytes of 0x90, 0x0c, or 0x0d)
+    for &(sled_byte, label) in &[
+        (0x90u8, "x86/x64 NOP sled (0x90)"),
+        (0x0cu8, "Heap-spray sled (0x0c0c0c0c)"),
+        (0x0du8, "Heap-spray sled (0x0d0d0d0d)"),
+    ] {
+        let sled = [sled_byte; 32];
+        if let Some(off) = find_subslice(scan_window, &sled) {
+            shellcode_or_heapspray_indicators.push(format!(
+                "{} detected inside RIFF WAVE data at offset 0x{:x}",
+                label,
+                12 + off
+            ));
+        }
+    }
+
+    // 3. Check for x86_64 shellcode prologues (CLD + AND RSP, -16 `FC 48 83 E4 F0` or GS:[0x60] PEB walk)
+    let shellcode_patterns: &[(&[u8], &str)] = &[
+        (&[0xFC, 0x48, 0x83, 0xE4, 0xF0], "x64 Metasploit/CobaltStrike stack-align prologue (cld; and rsp, -16)"),
+        (&[0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00], "x64 TEB/PEB walk (mov rax, gs:[0x60])"),
+        (&[0x65, 0x48, 0x8B, 0x14, 0x25, 0x60, 0x00, 0x00, 0x00], "x64 TEB/PEB walk (mov rdx, gs:[0x60])"),
+        (&[0x64, 0xA1, 0x30, 0x00, 0x00, 0x00], "x86 TEB/PEB walk (mov eax, fs:[0x30])"),
+    ];
+    for &(pat, desc) in shellcode_patterns {
+        if let Some(off) = find_subslice(scan_window, pat) {
+            shellcode_or_heapspray_indicators.push(format!(
+                "{} at offset 0x{:x}",
+                desc,
+                12 + off
+            ));
+        }
+    }
+
+    // 4. Statistical IEEE-754 32-bit float audio waveform validation
+    let mut ieee_float_finite_ratio = 0.0f32;
+    let mut ieee_float_normalized_ratio = 0.0f32;
+    let mut valid_ieee_float_waveform = false;
+
+    if format_tag == 0x0003 && bits_per_sample == 32 && data_slice.len() >= 16 {
+        let max_samples = (data_slice.len() / 4).min(65_536);
+        let mut finite_count = 0usize;
+        let mut normalized_count = 0usize;
+        let mut subnormal_or_huge_count = 0usize;
+
+        for i in 0..max_samples {
+            let off = i * 4;
+            let val = f32::from_le_bytes([
+                data_slice[off],
+                data_slice[off + 1],
+                data_slice[off + 2],
+                data_slice[off + 3],
+            ]);
+            if val.is_finite() {
+                finite_count += 1;
+                let abs_v = val.abs();
+                if abs_v <= 1.05 {
+                    normalized_count += 1;
+                } else if abs_v > 1.0e6 || (abs_v > 0.0 && abs_v < 1.0e-30) {
+                    subnormal_or_huge_count += 1;
+                }
+            }
+        }
+
+        if max_samples > 0 {
+            ieee_float_finite_ratio = finite_count as f32 / max_samples as f32;
+            ieee_float_normalized_ratio = normalized_count as f32 / max_samples as f32;
+            let huge_ratio = subnormal_or_huge_count as f32 / max_samples as f32;
+
+            if ieee_float_finite_ratio >= 0.99
+                && ieee_float_normalized_ratio >= 0.95
+                && huge_ratio < 0.02
+                && shellcode_or_heapspray_indicators.is_empty()
+            {
+                valid_ieee_float_waveform = true;
+            } else if ieee_float_finite_ratio < 0.85 || huge_ratio > 0.25 {
+                shellcode_or_heapspray_indicators.push(format!(
+                    "Anomalous IEEE-754 float distribution (finite={:.1}%, normalized={:.1}%, non-audio exponent spikes={:.1}%): raw binary/shellcode bytes disguised as wFormatTag=3 float WAV",
+                    ieee_float_finite_ratio * 100.0,
+                    ieee_float_normalized_ratio * 100.0,
+                    huge_ratio * 100.0
+                ));
+            }
+        }
+    }
+
+    let requires_pcm16_canonicalization = missing_mandatory_fact_chunk
+        && valid_ieee_float_waveform
+        && shellcode_or_heapspray_indicators.is_empty();
+
+    Some(RiffWaveInspectionReport {
+        is_riff_wave: true,
+        declared_riff_size,
+        actual_file_size,
+        format_tag,
+        format_tag_name,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        chunks_present,
+        has_fact_chunk,
+        missing_mandatory_fact_chunk,
+        data_chunk_offset,
+        data_chunk_size,
+        valid_ieee_float_waveform,
+        ieee_float_finite_ratio,
+        ieee_float_normalized_ratio,
+        shellcode_or_heapspray_indicators,
+        requires_pcm16_canonicalization,
+    })
+}
+
+/// Convert a non-standard 32-bit IEEE Float WAV (`wFormatTag = 3`, `bitsPerSample = 32`,
+/// bare 44-byte header without `fact` chunk) into a canonical 16-bit PCM WAV (`wFormatTag = 1`,
+/// `bitsPerSample = 16`).
+///
+/// Refuses to convert if `inspect_riff_wave_container` detects any shellcode, heap-spray, or
+/// embedded executable indicators.
+pub fn canonicalize_ieee_float_wav_to_pcm16(bytes: &[u8]) -> Result<Vec<u8>> {
+    let report = inspect_riff_wave_container(bytes)
+        .ok_or_else(|| anyhow!("Input is not a valid RIFF WAVE container"))?;
+
+    if !report.shellcode_or_heapspray_indicators.is_empty() {
+        return Err(anyhow!(
+            "Refusing to canonicalize RIFF WAVE containing shellcode/masquerading indicators: {:?}",
+            report.shellcode_or_heapspray_indicators
+        ));
+    }
+
+    if report.format_tag == 0x0001 && report.bits_per_sample == 16 {
+        return Ok(bytes.to_vec());
+    }
+
+    if report.format_tag != 0x0003 || report.bits_per_sample != 32 {
+        return Err(anyhow!(
+            "Unsupported source WAV format for PCM16 canonicalization: tag=0x{:04x}, bits={}",
+            report.format_tag,
+            report.bits_per_sample
+        ));
+    }
+
+    if report.channels == 0 || report.sample_rate == 0 || report.data_chunk_offset == 0 {
+        return Err(anyhow!("Malformed fmt/data chunks in source WAV"));
+    }
+
+    let data_end = report
+        .data_chunk_offset
+        .saturating_add(report.data_chunk_size)
+        .min(bytes.len());
+    let float_data = &bytes[report.data_chunk_offset..data_end];
+    let sample_count = float_data.len() / 4;
+    let pcm_data_size = (sample_count * 2) as u32;
+    let riff_chunk_size = 36u32.saturating_add(pcm_data_size);
+    let block_align = report.channels.saturating_mul(2);
+    let byte_rate = report.sample_rate.saturating_mul(block_align as u32);
+
+    let mut out = Vec::with_capacity(44 + sample_count * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&riff_chunk_size.to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes()); // Subchunk1Size = 16 for standard PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // wFormatTag = 1 (WAVE_FORMAT_PCM)
+    out.extend_from_slice(&report.channels.to_le_bytes());
+    out.extend_from_slice(&report.sample_rate.to_le_bytes());
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&block_align.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes()); // bitsPerSample = 16
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&pcm_data_size.to_le_bytes());
+
+    for i in 0..sample_count {
+        let off = i * 4;
+        let sample_f32 = f32::from_le_bytes([
+            float_data[off],
+            float_data[off + 1],
+            float_data[off + 2],
+            float_data[off + 3],
+        ]);
+        let clamped = if sample_f32.is_finite() {
+            sample_f32.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let pcm_i16 = (clamped * 32767.0).round() as i16;
+        out.extend_from_slice(&pcm_i16.to_le_bytes());
+    }
+
+    Ok(out)
+}
+
+/// Audit report for WebUI audio/media route integrity and multi-output hardware sink (`setSinkId`) support.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebUiMediaAuditReport {
+    pub referenced_song_ids: Vec<String>,
+    pub disk_song_ids: Vec<String>,
+    pub missing_on_disk_song_ids: Vec<String>,
+    pub has_silent_timer_fallback: bool,
+    pub supports_set_sink_id: bool,
+    pub supports_enumerate_audio_outputs: bool,
+}
+
+/// Inspect WebUI HTML/JS source and optional `storage/songs` directory for:
+/// 1. Mismatched song IDs between the UI (`/api/songs/<id>`) and disk folders (404 Not Found),
+/// 2. Silent timer fallback when `<audio>` fails to load,
+/// 3. Multi-output hardware audio routing via `HTMLMediaElement.setSinkId()` and `enumerateDevices()`.
+pub fn audit_webui_media_and_sink_integrity(
+    html_or_js: &str,
+    storage_songs_dir: Option<&Path>,
+) -> WebUiMediaAuditReport {
+    let mut referenced_song_ids = Vec::new();
+    let marker = "/api/songs/";
+    let mut search_pos = 0usize;
+    while let Some(rel) = html_or_js[search_pos..].find(marker) {
+        let start = search_pos + rel + marker.len();
+        search_pos = start;
+        let id: String = html_or_js[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        if !id.is_empty() && !referenced_song_ids.contains(&id) {
+            referenced_song_ids.push(id);
+        }
+    }
+
+    let mut disk_song_ids = Vec::new();
+    if let Some(dir) = storage_songs_dir {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        disk_song_ids.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    disk_song_ids.sort();
+
+    let missing_on_disk_song_ids = if storage_songs_dir.is_some() {
+        referenced_song_ids
+            .iter()
+            .filter(|id| !disk_song_ids.contains(id))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let has_silent_timer_fallback =
+        html_or_js.contains("setInterval") && html_or_js.to_ascii_lowercase().contains("silent");
+    let supports_set_sink_id = html_or_js.contains("setSinkId");
+    let supports_enumerate_audio_outputs =
+        html_or_js.contains("enumerateDevices") && html_or_js.contains("audiooutput");
+
+    WebUiMediaAuditReport {
+        referenced_song_ids,
+        disk_song_ids,
+        missing_on_disk_song_ids,
+        has_silent_timer_fallback,
+        supports_set_sink_id,
+        supports_enumerate_audio_outputs,
+    }
+}

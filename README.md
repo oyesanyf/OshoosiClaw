@@ -5736,9 +5736,9 @@ flowchart TD
         V3["Atomic Write via Temporary Files + fsync to Prevent Zero-Byte Corruption"]
     end
 
-    subgraph LIFECYCLE["3. Graceful Service Lifecycle & Auto-Unseal (OsoosiEDR)"]
-        L1["Service Start: Detect Encrypted Vault & Auto-Unseal Protected Variables into Process Memory"]
-        L2["Service Stop (SIGINT/SIGTERM): Immediate Re-Sealing to DPAPI Disk Vault + Memory Zeroization"]
+    subgraph LIFECYCLE["3. Graceful Service Lifecycle, Permanent UI Revert & Auto-Unseal (OsoosiEDR)"]
+        L1["Service Start: Gated by is_auto_seal_enabled() (env_seal_config.json + AUTO_SEAL_PAUSED)"]
+        L2["UI Revert / Disable (POST /api/env-gateway/revert): Restores HKCU\\Environment + .env + Shreds Vault + Pauses Auto-Seal"]
         L3["WebUI Emergency Re-Anchor & Refresh: POST /api/env-gateway/machine-binding/refresh"]
     end
 
@@ -5763,13 +5763,49 @@ flowchart TD
 2. **Dual-Layer Hardware-Anchored Vault (`ProtectedEnvBackup` in `crates/osoosi-core/src/protected_env_backup.rs`)**:
    - Secures environment variables on disk using Windows Data Protection API (`CryptProtectData`) with machine-scoped entropy or ChaCha20-Poly1305 with BLAKE3 hardware fingerprints on Linux.
    - Writes atomically through temporary staging files and explicit `fsync` barriers to prevent zero-byte corruptions during unexpected power-loss or system halts.
-3. **Graceful Service Lifecycle & Autonomous Unsealing (`crates/osoosi-cli/src/service.rs`)**:
-   - Automatically unseals protected environment variables into process memory upon service boot if machine binding verification succeeds.
-   - Zeroizes sensitive memory regions and verifies disk-sealed state upon service termination or receipt of `SIGINT` / `SIGTERM`.
+3. **Graceful Service Lifecycle, Permanent UI Revert & Autonomous Unsealing (`crates/osoosi-cli/src/service.rs` & `crates/osoosi-core/src/orchestrator/init.rs`)**:
+   - Guards both startup auto-sealing and the 10-second background watcher loop behind `ProtectedEnvBackupVault::is_auto_seal_enabled()` (`AUTO_SEAL_PAUSED` atomic flag + `database/env_seal_config.json` across workspace, release, and `ProgramData` paths) so clicking **Revert All Secrets** (`POST /api/env-gateway/revert`) or **Disable Protect .env** (`POST /api/env-gateway/toggle`) on the WebUI immediately restores `HKCU\Environment`, `.env` files, and process memory, shreds the vault, broadcasts `WM_SETTINGCHANGE`, and permanently prevents background re-sealing.
+   - Automatically unseals all protected environment variables upon service termination (`osoosi service stop` / `SIGINT` / `SIGTERM`).
 4. **Adaptive Machine Binding Quorum & REST Control (`crates/osoosi-core/src/machine_binding.rs` & `crates/osoosi-dashboard/src/routes/env_gateway.rs`)**:
    - Evaluates endpoint hardware authenticity across 5 independent telemetry rings: CPU identity, Motherboard/BIOS UUID, System MAC addresses, Physical Drive serials, and TPM 2.0 NV endorsement credentials.
    - Employs a fault-tolerant 3-of-5 quorum algorithm that tolerates network interface hot-plugging, VPN adapter creation, and dynamic MAC address changes while firmly rejecting hardware relocation, hypervisor cloning, or cross-machine disk transplantation.
    - Exposes authenticated management endpoints (`GET /api/env-gateway/machine-binding` and `POST /api/env-gateway/machine-binding/refresh`) surfaced directly in the WebUI with real-time status badges, MAC re-anchoring, and dynamic quorum verification.
+
+---
+
+### 9. RIFF WAVE Media Container Forensics, Rust `.rdata` Test-Harness Provenance (`os error 4551`), AppContainer (`S-1-15-2-1`) DACL Repair & WebUI Audio Sink Audit
+
+OpenỌ̀ṣọ́ọ̀sì includes dedicated forensic and remediation engines to distinguish legitimate high-entropy media containers and developer adversarial test binaries from disguised shellcode/heap-spray payloads while repairing Windows 11 AppContainer and WebUI audio playback issues:
+
+```mermaid
+flowchart LR
+    subgraph PILLAR1["1. RIFF WAVE Container Forensics (data.rs)"]
+        R1["RIFF WAVE Inspector<br/>(wFormatTag = 1 PCM vs 3 IEEE Float)"] --> R2{"Executable Header /<br/>NOP Sled / Shellcode?"}
+        R2 -->|"Yes"| R3["CRITICAL ALERT:<br/>RIFF_WAVE_SHELLCODE_OR_MASQUERADE"]
+        R2 -->|"No (Float32 w/o fact)"| R4["Benign Media Anomaly:<br/>canonicalize_ieee_float_wav_to_pcm16()"]
+    end
+
+    subgraph PILLAR2["2. PE/ELF .rdata Test Provenance (pe_inspector.rs)"]
+        P1["classify_pe_rust_test_harness_provenance()"] --> P2{".rdata Read-Only +<br/>Rust Test Symbols +<br/>0 RWX Imports?"}
+        P2 -->|"Verified Test Binary"| P3["Suppress os error 4551 FP +<br/>sign_rust_test_binary_for_smart_app_control()"]
+        P2 -->|"Strings in .text / RWX"| P4["Block Active Exploit Payload"]
+    end
+
+    subgraph PILLAR3["3. AppContainer DACL & WebUI Sink Audit (win_trust.rs)"]
+        A1["verify_appcontainer_read_acl()<br/>ensure_appcontainer_read_acl()"] --> A2["Grants *S-1-15-2-1:(RX)<br/>(ALL APPLICATION PACKAGES)"]
+        A3["audit_webui_media_and_sink_integrity()"] --> A4["Detects Song ID / Disk 404 Mismatch +<br/>Verifies HTMLMediaElement.setSinkId()"]
+    end
+```
+
+1. **RIFF WAVE Container Structural Inspector & PCM16 Canonicalizer (`crates/osoosi-core/src/rea/inspectors/data.rs`)**:
+   - Parses `RIFF`/`WAVE` chunks (`fmt `, `fact`, `data`) to distinguish non-standard 32-bit IEEE float WAV files (`wFormatTag = 3` or `0xFFFE` missing the Microsoft-mandated `fact` chunk) from disguised PE/ELF/Mach-O binaries, x86-64 NOP/heap-spray sleds (`0x90909090`, `0x0c0c0c0c`), and shellcode stubs (`RIFF_WAVE_SHELLCODE_OR_MASQUERADE`).
+   - Provides lossless `canonicalize_ieee_float_wav_to_pcm16()` to convert 32-bit IEEE float audio into standard 16-bit PCM WAV (`wFormatTag = 1`) so SmartScreen/MOTW and media players never misclassify high-entropy float samples.
+2. **PE/ELF `.rdata` Adversarial Test-Vector Provenance Classifier (`crates/osoosi-core/src/pe_inspector.rs` & `crates/osoosi-core/src/static_analyzer.rs`)**:
+   - Resolves `os error 4551` (*An Application Control policy has blocked this file*) without blind folder exclusions by mathematically verifying whether embedded adversarial strings (`calc.exe`, `/etc/passwd`, `DROP TABLE`, `..\\..\\..\\boot.ini`) reside strictly inside non-executable read-only sections (`.rdata` / `.rodata`) of a genuine Rust test harness binary (`rust_begin_unwind` / `test::run_test`) with zero RWX/injection imports (`VirtualAllocEx`, `WriteProcessMemory`, `CreateRemoteThread`).
+3. **Windows 11 AppContainer (`S-1-15-2-1` / `ALL APPLICATION PACKAGES`) NTFS DACL Verifier & Repair (`crates/osoosi-core/src/win_trust.rs`)**:
+   - Implements `verify_appcontainer_read_acl()`, `ensure_appcontainer_read_acl()` (`icacls <path> /grant *S-1-15-2-1:(OI)(CI)(RX)`), and `sign_rust_test_binary_for_smart_app_control()` so sandboxed Windows 11 UWP/MSIX media players (`Microsoft.ZuneMusic`) can open media files on secondary drives (`D:\`) without *"The app didn't start"* permission blocks.
+4. **WebUI Audio Route, Storage ID Parity & Multi-Output Hardware Sink Auditor (`crates/osoosi-core/src/rea/inspectors/data.rs`)**:
+   - Implements `audit_webui_media_and_sink_integrity()` to cross-check WebUI song IDs (`song_reggae_anthem_001`, `song_afrobeats_002`) against on-disk `storage/songs/` directories and verify `HTMLMediaElement.setSinkId()` + `navigator.mediaDevices.enumerateDevices()` wiring across multi-output audio endpoints.
 
 ---
 

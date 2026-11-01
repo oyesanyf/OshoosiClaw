@@ -26,6 +26,11 @@ use std::time::Duration;
 
 pub const VAULT_MAGIC: &[u8; 24] = b"OSHOOSI_ENV_BACKUP_V1\0\0\0";
 pub const DEFAULT_VAULT_PATH: &str = "database/protected_env_backup.vault";
+pub const DEFAULT_ENV_SEAL_CONFIG_PATH: &str = "database/env_seal_config.json";
+
+/// In-memory atomic flag set when the operator clicks "Revert All Secrets" or disables Protect .env,
+/// immediately halting any background auto-seal watcher loop across the process.
+pub static AUTO_SEAL_PAUSED: AtomicBool = AtomicBool::new(false);
 
 /// Wraps arbitrary bytes using Windows DPAPI (`CryptProtectData`) with machine scope
 /// and UI forbidden. Returns raw ciphertext bytes.
@@ -233,6 +238,118 @@ pub struct ProtectedEnvBackupVault;
 impl ProtectedEnvBackupVault {
     pub fn default_vault_path() -> PathBuf {
         PathBuf::from(DEFAULT_VAULT_PATH)
+    }
+
+    /// Returns candidate paths for `database/env_seal_config.json` across CWD, parent dirs, executable dirs, and `ProgramData`.
+    pub fn candidate_env_seal_config_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut add = |p: PathBuf| {
+            let k = p.to_string_lossy().to_ascii_lowercase();
+            if seen.insert(k) {
+                paths.push(p);
+            }
+        };
+        add(PathBuf::from(DEFAULT_ENV_SEAL_CONFIG_PATH));
+        add(PathBuf::from("../database/env_seal_config.json"));
+        add(PathBuf::from("../../database/env_seal_config.json"));
+        if let Ok(exe) = std::env::current_exe() {
+            let mut cur = exe.parent();
+            for _ in 0..4 {
+                if let Some(dir) = cur {
+                    add(dir.join(DEFAULT_ENV_SEAL_CONFIG_PATH));
+                    cur = dir.parent();
+                } else {
+                    break;
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            add(PathBuf::from(r"C:\ProgramData\OshoosiClaw\database\env_seal_config.json"));
+            add(PathBuf::from(r"C:\Program Files\OshoosiClaw\database\env_seal_config.json"));
+        }
+        paths
+    }
+
+    /// Returns true ONLY when background auto-sealing is explicitly enabled in `database/env_seal_config.json`
+    /// (`enabled == true` and `auto_seal == true`) AND has not been paused by an operator revert action.
+    pub fn is_auto_seal_enabled() -> bool {
+        if AUTO_SEAL_PAUSED.load(Ordering::SeqCst) {
+            return false;
+        }
+        let mut found_any = false;
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        found_any = true;
+                        let enabled = val
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let auto_seal = val
+                            .get("auto_seal")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !enabled || !auto_seal {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        found_any
+    }
+
+    /// Pauses all background auto-sealing in memory and persists `enabled: false, auto_seal: false, watcher_enabled: false`
+    /// to `database/env_seal_config.json` across all candidate locations so background watchers never re-seal `HKCU\Environment` after revert.
+    pub fn pause_auto_seal_and_persist_disabled() {
+        AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
+        let default_json = serde_json::json!({
+            "enabled": false,
+            "experimental": true,
+            "custom_paths": [],
+            "all_drives": false,
+            "auto_seal": false,
+            "selected_variables": ["GEMINI_API_KEY", "HF_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"],
+            "excluded_variables": [],
+            "watcher_enabled": false,
+            "watcher_poll_interval_secs": 5,
+            "max_files_per_drive": 500,
+            "max_dir_budget_per_drive": 2000,
+            "vault_path": null
+        });
+        let mut updated_any = false;
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(obj) = val.as_object_mut() {
+                            obj.insert("enabled".to_string(), serde_json::Value::Bool(false));
+                            obj.insert("auto_seal".to_string(), serde_json::Value::Bool(false));
+                            obj.insert(
+                                "watcher_enabled".to_string(),
+                                serde_json::Value::Bool(false),
+                            );
+                            if let Ok(out) = serde_json::to_vec_pretty(&val) {
+                                let _ = std::fs::write(&p, out);
+                                updated_any = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !updated_any {
+            let p = Path::new(DEFAULT_ENV_SEAL_CONFIG_PATH);
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(out) = serde_json::to_vec_pretty(&default_json) {
+                let _ = std::fs::write(p, out);
+            }
+        }
     }
 
     /// Returns the companion `.dpapi` file path for a given vault file path.
@@ -1196,6 +1313,7 @@ impl ProtectedEnvBackupVault {
 
     /// Automatically restores the pre-stand-in original configuration files and process memory from the vault.
     pub fn auto_revert(vault_path: &Path) -> Result<(), VaultError> {
+        Self::pause_auto_seal_and_persist_disabled();
         if !vault_path.exists() {
             return Ok(());
         }
@@ -1206,20 +1324,83 @@ impl ProtectedEnvBackupVault {
         for (k, orig_v) in &payload.original_env_vars {
             std::env::set_var(k, orig_v);
         }
-
-        // 1b. Restore Windows User Environment (HKCU\Environment) for any verified API keys
-        // that were sealed from HKCU\Environment (strictly excluding PATH and system vars)
-        #[cfg(windows)]
-        if is_production_vault_path(vault_path) && !payload.original_hkcu_vars.is_empty() {
-            restore_hkcu_original_vars(&payload.original_hkcu_vars)?;
+        for (k, orig_v) in &payload.original_hkcu_vars {
+            std::env::set_var(k, orig_v);
         }
+
+        // 1b. Restore Windows User Environment (HKCU\Environment and HKEY_USERS\S-1-5-21-*\Environment)
+        // merging original_hkcu_vars, original_env_vars, and user_sid_env (strictly excluding PATH and system vars)
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) {
+            let mut merged_hkcu: Vec<(String, String)> = payload.original_hkcu_vars.clone();
+            for (k, v) in &payload.original_env_vars {
+                if !merged_hkcu.iter().any(|(mk, _)| mk.eq_ignore_ascii_case(k)) {
+                    merged_hkcu.push((k.clone(), v.clone()));
+                }
+            }
+            for sid_vars in payload.user_sid_env.values() {
+                for (k, v) in sid_vars {
+                    if !v.starts_with("OSHOOSI_STANDIN_")
+                        && !merged_hkcu.iter().any(|(mk, _)| mk.eq_ignore_ascii_case(k))
+                    {
+                        merged_hkcu.push((k.clone(), v.clone()));
+                    }
+                }
+            }
+            restore_hkcu_original_vars(&merged_hkcu)?;
+        }
+
+        // Helper to scrub any residual OSHOOSI_STANDIN_* tokens from restored bytes using standin_mappings -> original_env_vars
+        let scrub_standin_bytes = |bytes: &[u8]| -> Vec<u8> {
+            if !bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                return bytes.to_vec();
+            }
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                let mut scrubbed = text.to_string();
+                for (k, standin) in &payload.standin_mappings {
+                    if let Some((_, orig_v)) = payload
+                        .original_env_vars
+                        .iter()
+                        .find(|(ok, _)| ok.eq_ignore_ascii_case(k))
+                        .or_else(|| {
+                            payload
+                                .original_hkcu_vars
+                                .iter()
+                                .find(|(ok, _)| ok.eq_ignore_ascii_case(k))
+                        })
+                    {
+                        if !orig_v.starts_with("OSHOOSI_STANDIN_") {
+                            scrubbed = scrubbed.replace(standin, orig_v);
+                        }
+                    }
+                }
+                scrubbed.into_bytes()
+            } else {
+                bytes.to_vec()
+            }
+        };
 
         // 2. Restore file state across all backed up files (or legacy single target)
         if !payload.files.is_empty() {
             for entry in &payload.files {
                 let p = PathBuf::from(&entry.path);
                 if entry.existed_before || !entry.original_bytes.is_empty() {
-                    let _ = Self::write_file_atomic(&p, &entry.original_bytes);
+                    let clean_bytes = scrub_standin_bytes(&entry.original_bytes);
+                    if clean_bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                        // Check if this is a synthetic .env consisting solely of standin tokens
+                        let is_only_standins = std::str::from_utf8(&clean_bytes)
+                            .map(|s| {
+                                s.lines()
+                                    .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+                                    .all(|l| l.contains("OSHOOSI_STANDIN_"))
+                            })
+                            .unwrap_or(false);
+                        if is_only_standins && p.exists() {
+                            let _ = std::fs::remove_file(&p);
+                            continue;
+                        }
+                    }
+                    let _ = Self::write_file_atomic(&p, &clean_bytes);
                 } else if p.exists() {
                     let _ = std::fs::remove_file(&p);
                 }
@@ -1230,7 +1411,8 @@ impl ProtectedEnvBackupVault {
             let _ = std::fs::remove_file(&target);
         } else if payload.target_existed_before || !payload.original_bytes.is_empty() {
             if payload.files.is_empty() {
-                let _ = Self::write_file_atomic(&target, &payload.original_bytes);
+                let clean_bytes = scrub_standin_bytes(&payload.original_bytes);
+                let _ = Self::write_file_atomic(&target, &clean_bytes);
             }
         }
 
@@ -1473,7 +1655,23 @@ impl ProtectedEnvBackupVault {
                 let mut hasher = Sha256::new();
                 hasher.update(&bytes);
                 let sha = format!("{:x}", hasher.finalize());
-                (bytes, sha, true)
+                // If the file on disk consists solely of OSHOOSI_STANDIN_ lines and was not in a prior vault,
+                // treat it as a synthetic stand-in file created by a prior seal run (`existed_before = false`).
+                let is_synthetic_standin_only = std::str::from_utf8(&bytes)
+                    .map(|s| {
+                        let non_empty: Vec<&str> = s
+                            .lines()
+                            .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+                            .collect();
+                        !non_empty.is_empty()
+                            && non_empty.iter().all(|l| l.contains("OSHOOSI_STANDIN_"))
+                    })
+                    .unwrap_or(false);
+                if is_synthetic_standin_only {
+                    (Vec::new(), String::new(), false)
+                } else {
+                    (bytes, sha, true)
+                }
             } else {
                 (Vec::new(), String::new(), false)
             };
@@ -2204,11 +2402,16 @@ impl ProtectedEnvBackupVault {
     /// Automatically restores pre-stand-in configurations from all discovered active vaults on the system,
     /// catching DACL `PermissionDenied` (os error 5) errors cleanly without crashing.
     pub fn auto_revert_all_active_vaults(custom_path: Option<&Path>) -> Result<(), VaultError> {
+        Self::pause_auto_seal_and_persist_disabled();
         let vaults = Self::locate_all_active_vault_paths(custom_path);
         if vaults.is_empty() {
             let default_rel = Self::default_vault_path();
             if default_rel.exists() {
                 return Self::auto_revert(&default_rel);
+            }
+            #[cfg(windows)]
+            {
+                let _ = restore_hkcu_original_vars(&[]);
             }
             return Ok(());
         }
@@ -2991,7 +3194,7 @@ pub fn unlock_protected_ntfs_dacl(_path: &Path) -> Result<(), VaultError> {
 }
 
 /// Returns true ONLY when `vault_path` is the canonical production vault (`database/protected_env_backup.vault`)
-/// and never during `#[cfg(test)]` or inside temporary directories (`\Temp\` / `/tmp/`).
+/// and never during `#[cfg(test)]`, Cargo test binaries (`RUST_TEST_THREADS` / `CARGO_MANIFEST_DIR`), or inside temporary directories (`\Temp\` / `/tmp/`).
 pub fn is_production_vault_path(vault_path: &Path) -> bool {
     #[cfg(test)]
     {
@@ -3000,6 +3203,18 @@ pub fn is_production_vault_path(vault_path: &Path) -> bool {
     }
     #[cfg(not(test))]
     {
+        if std::env::var_os("RUST_TEST_THREADS").is_some()
+            || std::env::var_os("CARGO_TARGET_TMPDIR").is_some()
+            || std::env::current_exe()
+                .ok()
+                .map(|p| {
+                    let es = p.to_string_lossy().to_ascii_lowercase().replace('/', "\\");
+                    es.contains("\\target\\debug\\deps\\") || es.contains("\\target\\release\\deps\\")
+                })
+                .unwrap_or(false)
+        {
+            return false;
+        }
         let s = vault_path
             .to_string_lossy()
             .to_ascii_lowercase()
@@ -3229,6 +3444,7 @@ fn write_hkcu_standin_vars(
 
 #[cfg(windows)]
 fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result<(), VaultError> {
+    use winreg::types::FromRegValue;
     let hives = open_user_environment_hives(winreg::enums::KEY_READ | winreg::enums::KEY_WRITE);
     if hives.is_empty() {
         return Err(VaultError::Io(std::io::Error::new(
@@ -3250,6 +3466,70 @@ fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result
             if env_key.get_raw_value(k).is_ok() {
                 env_key.set_value(k, orig_v).map_err(VaultError::Io)?;
                 any_restored = true;
+            }
+        }
+    }
+
+    // Fallback recovery for any remaining OSHOOSI_STANDIN_* values in user hives:
+    // If a key in HKCU\Environment still holds an OSHOOSI_STANDIN_* token (e.g., if the vault was sealed
+    // after stand-ins were already written), scan active process environment (`std::env::vars()`) and
+    // local workspace .env files for the matching key's plaintext value.
+    let mut fallback_secrets: HashMap<String, String> = HashMap::new();
+    for (k, v) in std::env::vars() {
+        let clean_v = v.trim().trim_matches('"').trim_matches('\'').trim();
+        if !clean_v.is_empty()
+            && !clean_v.starts_with("OSHOOSI_STANDIN_")
+            && !is_hard_protected_non_secret_key(&k, clean_v)
+        {
+            fallback_secrets
+                .entry(k.to_ascii_uppercase())
+                .or_insert_with(|| clean_v.to_string());
+        }
+    }
+    let candidate_env_files = [
+        PathBuf::from(".env"),
+        PathBuf::from(r"D:\harfile\OshoosiClaw\.env"),
+        PathBuf::from(r"D:\harfile\ModelFusion\.env"),
+        PathBuf::from(r"D:\harfile\KillSwitch\.env"),
+    ];
+    for ef in &candidate_env_files {
+        if ef.is_file() {
+            if let Ok(content) = std::fs::read_to_string(ef) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((rk, rv)) = trimmed.split_once('=') {
+                        let key = rk.trim().trim_start_matches("export ").trim();
+                        let val = rv.trim().trim_matches('"').trim_matches('\'').trim();
+                        if !val.is_empty()
+                            && !val.starts_with("OSHOOSI_STANDIN_")
+                            && !val.contains("your-")
+                            && !val.contains("example")
+                            && !is_hard_protected_non_secret_key(key, val)
+                        {
+                            fallback_secrets.insert(key.to_ascii_uppercase(), val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for env_key in &hives {
+        let current_items: Vec<(String, String)> = env_key
+            .enum_values()
+            .flatten()
+            .filter_map(|(k, rv)| String::from_reg_value(&rv).ok().map(|s| (k, s)))
+            .collect();
+        for (k, val) in current_items {
+            if val.starts_with("OSHOOSI_STANDIN_") && !k.eq_ignore_ascii_case("PATH") {
+                if let Some(clean_sec) = fallback_secrets.get(&k.to_ascii_uppercase()) {
+                    let _ = env_key.set_value(&k, clean_sec);
+                    std::env::set_var(&k, clean_sec);
+                    any_restored = true;
+                }
             }
         }
     }
