@@ -14,6 +14,7 @@
 pub mod agentjacking_guard;
 pub mod alignment_scanner;
 pub mod atlas_arm;
+pub mod bounded_agents_apc;
 pub mod breakout_defense;
 pub mod breakout_prevention;
 pub mod cedar_engine;
@@ -26,6 +27,7 @@ pub mod egress_proxy;
 pub mod file_lineage;
 pub mod mercury_guard;
 pub mod mesh_guard;
+pub mod oso_aws_containment;
 pub mod rasp;
 pub mod reasoner;
 pub mod rl_controller;
@@ -42,6 +44,7 @@ pub use alignment_scanner::{
     MultiTurnAlignmentSimulationResult, PinnedTaskIntent, RuntimeAlignmentScanner,
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
+pub use bounded_agents_apc::*;
 pub use breakout_defense::{
     approve_ingested_research_rule, begin_database_maintenance_lease,
     clear_all_ingested_research_rules, compute_maintenance_auth_token,
@@ -99,6 +102,7 @@ pub use mesh_guard::{
     HomologicalAgentNode, HomologicalAuditReport, HomologicalBoundaryAuditor,
     HomologicalBoundaryVerdict, HomologicalMessageEdge, MeshGuard, VerifiedMeshMessage,
 };
+pub use oso_aws_containment::*;
 pub use rasp::TaintLevel;
 pub use reasoner::SemanticReasoningEngine;
 pub use rl_controller::{
