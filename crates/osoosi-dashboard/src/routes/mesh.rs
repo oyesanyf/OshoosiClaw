@@ -831,7 +831,122 @@ pub async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Valu
     }
     match &state.join_gate {
         Some(gate) => match gate.pending_joins() {
-            Ok(pending) => Json(serde_json::to_value(&pending).unwrap_or(json!([]))),
+            Ok(mut pending) => {
+                pending.sort_by(|a, b| b.discovered_at.cmp(&a.discovered_at));
+                let enriched: Vec<Value> = pending
+                    .into_iter()
+                    .map(|mut p| {
+                        let raw_maddr = p
+                            .multiaddr
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown"))
+                            .map(|s| s.to_string());
+
+                        let resolved_maddr = match raw_maddr {
+                            Some(ref addr) => {
+                                if addr.contains("/p2p/") {
+                                    addr.clone()
+                                } else {
+                                    format!("{}/p2p/{}", addr.trim_end_matches('/'), p.peer_id)
+                                }
+                            }
+                            None => {
+                                let healed = format!("/p2p/{}", p.peer_id);
+                                p.multiaddr = Some(healed.clone());
+                                let _ = gate.memory().add_pending_join(&p);
+                                healed
+                            }
+                        };
+
+                        let parts: Vec<&str> = resolved_maddr.split('/').collect();
+                        let (host_ip, port, transport) = if parts.len() >= 5
+                            && (parts[1] == "ip4"
+                                || parts[1] == "ip6"
+                                || parts[1] == "dns4"
+                                || parts[1] == "dns6"
+                                || parts[1] == "dns")
+                        {
+                            let ip = parts[2].to_string();
+                            let prt = parts[4].parse::<u16>().unwrap_or(4001);
+                            let proto = parts[3].to_uppercase();
+                            (
+                                ip,
+                                prt,
+                                format!("{}/{} • libp2p GossipSub v1.2", proto, prt),
+                            )
+                        } else {
+                            (
+                                "P2P DHT / Relay Swarm".to_string(),
+                                4001u16,
+                                "Kademlia DHT / Circuit Relay • GossipSub v1.2".to_string(),
+                            )
+                        };
+
+                        let peer_status = gate.memory().get_peer_status(&p.peer_id).ok().flatten();
+                        let os_label = peer_status
+                            .as_ref()
+                            .map(|st| {
+                                let name = st.os_name.trim();
+                                let ver = st.os_version.trim();
+                                if !name.is_empty() && !ver.is_empty() {
+                                    format!("{} {}", name, ver)
+                                } else if !name.is_empty() {
+                                    name.to_string()
+                                } else {
+                                    "Oshoosi Endpoint Node".to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| "Oshoosi Endpoint Node".to_string());
+                        let is_patched = peer_status.as_ref().map(|st| st.is_patched).unwrap_or(true);
+                        let os_supported = peer_status
+                            .as_ref()
+                            .map(|st| st.os_supported)
+                            .unwrap_or(true);
+                        let attestation_verified = gate.is_attestation_verified(&p.peer_id);
+                        let attestation_state = if attestation_verified {
+                            "TPM 2.0 Hardware RoT Verified"
+                        } else {
+                            "TPM 2.0 Challenge Pending"
+                        };
+                        let rep_pct = (p.reputation_score * 100.0).round() as i32;
+                        let rep_tier = if p.reputation_score >= 0.85 {
+                            "Trusted Peer"
+                        } else if p.reputation_score >= 0.50 {
+                            "Neutral Baseline"
+                        } else {
+                            "Low Reputation"
+                        };
+                        let discovered_iso = p.discovered_at.to_rfc3339();
+                        let discovered_date_time = p
+                            .discovered_at
+                            .format("%Y-%m-%d %H:%M:%S UTC")
+                            .to_string();
+
+                        json!({
+                            "peer_id": p.peer_id,
+                            "multiaddr": resolved_maddr,
+                            "address": resolved_maddr,
+                            "host_ip": host_ip,
+                            "port": port,
+                            "transport": transport,
+                            "reputation_score": p.reputation_score,
+                            "reputation_label": format!("{:.2} ({}% {})", p.reputation_score, rep_pct, rep_tier),
+                            "alerts_verified": p.alerts_verified,
+                            "false_positives": p.false_positives,
+                            "discovered_at": discovered_iso,
+                            "discovered_date_time": discovered_date_time,
+                            "os": os_label,
+                            "is_patched": is_patched,
+                            "os_supported": os_supported,
+                            "attestation_verified": attestation_verified,
+                            "attestation_state": attestation_state,
+                            "status": "Awaiting Operator Approval"
+                        })
+                    })
+                    .collect();
+                Json(Value::Array(enriched))
+            }
             Err(_) => Json(json!([])),
         },
         None => Json(json!([])),

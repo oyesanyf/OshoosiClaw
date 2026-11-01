@@ -1344,12 +1344,24 @@ impl MemoryStore {
 
     pub fn add_pending_join(&self, req: &PendingJoinRequest) -> anyhow::Result<()> {
         let conn = self.conn.lock();
+        let clean_addr = req
+            .multiaddr
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown"))
+            .map(|s| s.to_string());
         conn.execute(
-            "INSERT OR REPLACE INTO pending_joins (peer_id, multiaddr, reputation_score, alerts_verified, false_positives, discovered_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO pending_joins (peer_id, multiaddr, reputation_score, alerts_verified, false_positives, discovered_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(peer_id) DO UPDATE SET
+                 multiaddr = COALESCE(excluded.multiaddr, pending_joins.multiaddr),
+                 reputation_score = excluded.reputation_score,
+                 alerts_verified = excluded.alerts_verified,
+                 false_positives = excluded.false_positives,
+                 discovered_at = excluded.discovered_at",
             params![
                 req.peer_id,
-                req.multiaddr,
+                clean_addr,
                 req.reputation_score,
                 req.alerts_verified,
                 req.false_positives,
