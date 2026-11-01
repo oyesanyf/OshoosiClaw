@@ -54,7 +54,7 @@ windows = { workspace = true, features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging"
 ] }
-wmi = "0.13"
+wmi = "0.18"
 ferrisetw = "1.2.0"
 winapi = { workspace = true, features = ["namedpipeapi", "fileapi", "winbase"] }
 

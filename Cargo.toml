@@ -129,7 +129,7 @@ wintun = "0.4"
 managed = "0.8"
 ndarray = "0.16"
 parking_lot = "0.12"
-wmi = "0.13"
+wmi = "0.18"
 tokenizers = "0.19"
 tempfile = "3"
 # Legacy tools replaced by Zero-Process Stack

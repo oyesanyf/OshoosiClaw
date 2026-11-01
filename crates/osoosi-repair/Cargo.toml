@@ -24,4 +24,4 @@ libc.workspace = true
 winapi = { workspace = true }
 windows = { workspace = true }
 winreg = { workspace = true }
-wmi = "0.13"
+wmi = "0.18"

@@ -101,7 +101,7 @@ windows = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_Security",
 ] }
-wmi = "0.13"
+wmi = "0.18"
 wintun = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
