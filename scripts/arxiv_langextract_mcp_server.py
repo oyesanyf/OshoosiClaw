@@ -9,6 +9,7 @@ OshoosiClaw, KillSwitch, and AgentOctopus.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -27,8 +28,14 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from mcp.server.mcpserver import MCPServer
-import langextract as lx
-import arxiv
+try:
+    import langextract as lx
+except ImportError:
+    lx = None  # type: ignore
+try:
+    import arxiv
+except ImportError:
+    arxiv = None  # type: ignore
 
 from arxiv_langextract_feed import (
     BREAKOUT_SIGNATURES,
@@ -47,7 +54,12 @@ from arxiv_langextract_feed import (
     search_and_rank_articles,
     search_breakout_papers,
 )
-from arxiv_paper2code_generator import synthesize_production_rust_and_cedar
+import arxiv_paper2code_generator
+
+
+def synthesize_production_rust_and_cedar(paper: dict, extractions: list) -> dict:
+    importlib.reload(arxiv_paper2code_generator)
+    return arxiv_paper2code_generator.synthesize_production_rust_and_cedar(paper, extractions)
 
 server = MCPServer("arxiv-langextract")
 

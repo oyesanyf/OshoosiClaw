@@ -321,33 +321,23 @@ class DaemonLifecycle:
             cmd = [str(debug_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
         elif deploy_bin.exists():
             cmd = [str(deploy_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
-        elif sys.platform == "win32":
-            wsl_repo = "/mnt/" + str(REPO_ROOT).replace(":", "").replace("\\", "/").lower()
-            wsl_cmd = (
-                f"export OSOOSI_DASHBOARD_PORT={self.port}; "
-                f"export OSOOSI_DASHBOARD_BIND_ALL=1; "
-                f"export OSOOSI_DAEMON_DURATION_SECS=3600; "
-                f"export PATH=/root/.cargo/bin:/usr/bin:/bin; "
-                f"export CARGO_TARGET_DIR=/root/osoosi-linux-target-aplus; "
-                f"cd {wsl_repo}; "
-                f"bin=$(ls -t /root/osoosi-linux-target-aplus/debug/deps/port3030_daemon* 2>/dev/null | grep -v '\\.d$' | head -n1); "
-                f"if [ -n \"$bin\" ] && [ -x \"$bin\" ]; then "
-                f"  exec \"$bin\" --nocapture; "
-                f"elif [ -x /root/osoosi-linux-target-aplus/debug/osoosi ]; then "
-                f"  exec /root/osoosi-linux-target-aplus/debug/osoosi dashboard -p {self.port} --no-browser --lite; "
-                f"else "
-                f"  exec cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture; "
-                f"fi"
-            )
-            cmd = ["wsl", "-u", "root", "--", "bash", "-c", wsl_cmd]
         elif harfile_bin.exists():
             cmd = [str(harfile_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
         else:
-            cmd = [
-                "cargo", "test", "-p", "osoosi-dashboard",
-                "--test", "port3030_daemon", "run_live_port_3030_daemon",
-                "--", "--nocapture"
-            ]
+            deps_dir = REPO_ROOT / "target" / "debug" / "deps"
+            prebuilt_candidates = [
+                p for p in deps_dir.glob("port3030_daemon*")
+                if not str(p).endswith(".d") and not str(p).endswith(".pdb")
+            ] if deps_dir.exists() else []
+            if prebuilt_candidates:
+                prebuilt_candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                cmd = [str(prebuilt_candidates[0]), "run_live_port_3030_daemon", "--nocapture"]
+            else:
+                cmd = [
+                    "cargo", "test", "-p", "osoosi-dashboard",
+                    "--test", "port3030_daemon", "run_live_port_3030_daemon",
+                    "--", "--nocapture"
+                ]
 
         print(f"[*] Launching daemon subprocess: {' '.join(cmd[:4])}...")
         self.proc = subprocess.Popen(

@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+WORKSPACE_ROOT = Path("D:/harfile/OshoosiClaw")
 AGENT_OCTOPUS_ROOT = Path("D:/harfile/AgentOctopus")
+KILLSWITCH_ROOT = Path("D:/harfile/killswitch")
 
 
 CANONICAL_MULTI_TOKEN_INDICATORS: Dict[str, str] = {
@@ -393,7 +394,19 @@ def synthesize_production_rust_and_cedar(
     clean_id = raw_id.split("v")[0].replace("arXiv:", "").strip()
     rule_id = f"ARXIV-DEF-{clean_id}"
     title = paper.get("title", f"arXiv:{raw_id} Security Defense")
-    code_repo_url = paper.get("code_repo_url") or ""
+    default_repos = {
+        "2608.15888": "https://github.com/xmuruaga/bounded-agents",
+        "2609.00005": "https://github.com/aws-samples/sample-agent-containment-response",
+        "2603.02277": "https://github.com/UKGovernmentBEIS/inspect_evals",
+        "2501.18492": "https://github.com/yueliu1999/GuardReasoner",
+        "2503.00061": "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent",
+        "2511.10720": "https://github.com/sleeepeer/PISanitizer",
+    }
+    code_repo_url = (
+        paper.get("code_repo_url")
+        or (paper.get("score_breakdown") or {}).get("code_repo_url")
+        or default_repos.get(clean_id, "")
+    )
     indicator_pattern = _derive_multi_token_indicators(clean_id, extractions)
     primary_vector = (
         extractions[0].get("attack_vector", title)

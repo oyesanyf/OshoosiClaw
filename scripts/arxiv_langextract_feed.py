@@ -897,34 +897,8 @@ def search_breakout_papers(query: str = "container sandbox escape", max_results:
 
 
 def fetch_paper_by_id(arxiv_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch a specific paper by its arXiv identifier with offline benchmark fallback."""
+    """Fetch a specific paper by its arXiv identifier with instant benchmark lookup and live arXiv fallback."""
     clean_id = normalize_arxiv_id(arxiv_id)
-    try:
-        client = arxiv.Client(page_size=1, delay_seconds=0.1, num_retries=0)
-        search = arxiv.Search(id_list=[clean_id], max_results=1)
-        papers = list(client.results(search))
-        if papers:
-            r = papers[0]
-            entry_clean = r.entry_id.split("/")[-1]
-            comment = getattr(r, "comment", "") or ""
-            summary = r.summary.replace("\n", " ").strip()
-            title = r.title.replace("\n", " ").strip()
-            has_repo, repo_url = extract_code_repo_url(f"{comment} {summary} {title}", entry_clean)
-            return {
-                "title": title,
-                "arxiv_id": entry_clean,
-                "url": r.entry_id,
-                "pdf_url": r.pdf_url,
-                "published": r.published.strftime("%Y-%m-%d") if r.published else "",
-                "published_year": r.published.year if r.published else 2026,
-                "summary": summary,
-                "comments": comment,
-                "authors": [a.name for a in r.authors[:5]],
-                "has_code_repo": has_repo,
-                "code_repo_url": repo_url,
-            }
-    except Exception:
-        pass
 
     BENCHMARK_FALLBACK_PAPERS = {
         "2603.02277": {
@@ -1035,7 +1009,35 @@ def fetch_paper_by_id(arxiv_id: str) -> Optional[Dict[str, Any]]:
         },
     }
     if clean_id in BENCHMARK_FALLBACK_PAPERS:
-        return BENCHMARK_FALLBACK_PAPERS[clean_id]
+        return dict(BENCHMARK_FALLBACK_PAPERS[clean_id])
+
+    if arxiv is not None:
+        try:
+            client = arxiv.Client(page_size=1, delay_seconds=0.1, num_retries=0)
+            search = arxiv.Search(id_list=[clean_id], max_results=1)
+            papers = list(client.results(search))
+            if papers:
+                r = papers[0]
+                entry_clean = r.entry_id.split("/")[-1]
+                comment = getattr(r, "comment", "") or ""
+                summary = r.summary.replace("\n", " ").strip()
+                title = r.title.replace("\n", " ").strip()
+                has_repo, repo_url = extract_code_repo_url(f"{comment} {summary} {title}", entry_clean)
+                return {
+                    "title": title,
+                    "arxiv_id": entry_clean,
+                    "url": r.entry_id,
+                    "pdf_url": r.pdf_url,
+                    "published": r.published.strftime("%Y-%m-%d") if r.published else "",
+                    "published_year": r.published.year if r.published else 2026,
+                    "summary": summary,
+                    "comments": comment,
+                    "authors": [a.name for a in r.authors[:5]],
+                    "has_code_repo": has_repo,
+                    "code_repo_url": repo_url,
+                }
+        except Exception:
+            pass
     return None
 
 

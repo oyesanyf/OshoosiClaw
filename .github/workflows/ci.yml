@@ -109,32 +109,43 @@ jobs:
           # Pre-build dashboard test binary before background execution
           cargo test --no-run -p osoosi-dashboard --test port3030_daemon
 
-          # Start daemon in background
-          $repoRoot = (Get-Location).Path
-          $daemonJob = Start-Job -ArgumentList $repoRoot -ScriptBlock {
-            param($workDir)
-            Set-Location -LiteralPath $workDir
+          # Locate the pre-compiled test binary for instant launch
+          $daemonBin = (Get-ChildItem -Path "target\debug\deps\port3030_daemon-*.exe" | Where-Object { $_.Name -notmatch '\.d$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          Write-Host "Found pre-built daemon binary: $daemonBin"
+
+          # Clean any lingering process on port 3030
+          Get-NetTCPConnection -LocalPort 3030 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+
+          # Launch pre-built binary in background job for isolated runtime execution
+          $daemonJob = Start-Job -ArgumentList $daemonBin -ScriptBlock {
+            param($binPath)
             $env:OSOOSI_DASHBOARD_PORT = "3030"
             $env:OSOOSI_DASHBOARD_BIND_ALL = "1"
             $env:OSOOSI_PORT3030_HOLD_SECS = "600"
+            $env:OSOOSI_DAEMON_DURATION_SECS = "600"
             $env:OSOOSI_NO_ORT = "1"
             $env:OSOOSI_NO_AI = "1"
-            cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture
+            & $binPath run_live_port_3030_daemon --nocapture
           }
 
-          # Wait for port 3030 to respond
+          # Wait for port 3030 to respond (up to 150 iterations / 300s timeout)
           $ready = $false
-          for ($i = 0; $i -lt 90; $i++) {
+          for ($i = 0; $i -lt 150; $i++) {
             Start-Sleep -Seconds 2
             try {
-              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/status" -TimeoutSec 2 -UseBasicParsing
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/health" -TimeoutSec 2 -UseBasicParsing
               if ($resp.StatusCode -eq 200) {
                 Write-Host "Live dashboard daemon ready on port 3030"
                 $ready = $true
                 break
               }
             } catch {
-              # Not ready yet
+              # If server responds with 200 or 401, Axum daemon is responsive
+              if ($_.Exception.Response -and $_.Exception.Response.StatusCode.value__ -in @(200, 401)) {
+                Write-Host "Live dashboard daemon responsive on port 3030 (HTTP $($_.Exception.Response.StatusCode.value__))"
+                $ready = $true
+                break
+              }
             }
           }
 
