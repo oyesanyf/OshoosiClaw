@@ -189,10 +189,9 @@ impl BehavioralClassifier {
         let openjev_model = std::env::var("OPENJEV_MODEL")
             .or_else(|_| std::env::var("OSOOSI_LLM_MODEL"))
             .unwrap_or_else(|_| "openjev-latest".to_string());
-        let openjev_api_key = std::env::var("OPENJEV_API_KEY")
-            .or_else(|_| std::env::var("TYPESAFE_API_KEY"))
-            .or_else(|_| std::env::var("OSOOSI_LLM_API_KEY"))
-            .ok();
+        let openjev_api_key = osoosi_types::resolve_env_or_standin("OPENJEV_API_KEY")
+            .or_else(|| osoosi_types::resolve_env_or_standin("TYPESAFE_API_KEY"))
+            .or_else(|| osoosi_types::resolve_env_or_standin("OSOOSI_LLM_API_KEY"));
         let openjev_client = crate::decision_model::OpenJevClient::new(
             openjev_base,
             openjev_model,

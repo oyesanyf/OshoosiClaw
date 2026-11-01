@@ -805,12 +805,37 @@ fn analyze_syscall_sequence(sequence: &[String]) -> bool {
     false
 }
 
+/// Decodes a single layer of percent-encoded (%XX) sequences.
+fn percent_decode_once(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = bytes[i + 1];
+            let h2 = bytes[i + 2];
+            let c1 = (h1 as char).to_digit(16);
+            let c2 = (h2 as char).to_digit(16);
+            if let (Some(d1), Some(d2)) = (c1, c2) {
+                let byte = ((d1 << 4) | d2) as u8;
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Validates and joins a candidate relative path inside a sandbox root, defending against:
 /// 1. `Path::join` replacement via absolute paths, drive letters (`C:\`), or leading slashes/backslashes.
 /// 2. UNC network paths (`\\server\share`).
-/// 3. Percent-encoded traversal (`%2e`, `%2f`, `%5c`, `%00`) or null bytes.
+/// 3. Percent-encoded traversal (`%2e`, `%2f`, `%5c`, `%00`) or null bytes, including multi-round/double encoding (`%252e`, `%252f`, `%255c`).
 /// 4. NTFS Alternate Data Streams (`report.txt:hidden_stream`).
 /// 5. Parent directory traversal (`..` / `Component::ParentDir`).
+/// 6. Symlink escapes via canonicalization checks.
 pub fn validate_sandbox_relative_path(
     sandbox_root: &std::path::Path,
     candidate_rel: &str,
@@ -819,18 +844,44 @@ pub fn validate_sandbox_relative_path(
     if trimmed.is_empty() {
         return Err("Empty sandbox path rejected".to_string());
     }
-    if trimmed.contains('\0') {
-        return Err("Null byte in path rejected".to_string());
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    for encoded in ["%2e", "%2f", "%5c", "%00"] {
-        if lower.contains(encoded) {
-            return Err(format!(
-                "Percent-encoded traversal sequence '{}' rejected",
-                encoded
-            ));
+
+    // Iterative percent-decoding defense (up to 4 rounds)
+    let mut current = trimmed.to_string();
+    for round in 0..=4 {
+        if current.contains('\0') {
+            return Err("Null byte in path rejected".to_string());
+        }
+        let lower = current.to_ascii_lowercase();
+        if lower.contains("%00") {
+            return Err("Null byte sequence '%00' in path rejected".to_string());
+        }
+        for encoded in ["%2e", "%2f", "%5c", "%252e", "%252f", "%255c"] {
+            if lower.contains(encoded) {
+                return Err(format!(
+                    "Percent-encoded traversal sequence '{}' rejected",
+                    encoded
+                ));
+            }
+        }
+        if lower.contains("..") {
+            return Err("Parent directory traversal sequence '..' rejected".to_string());
+        }
+        if lower.contains(':') {
+            return Err(
+                "Drive letter or NTFS Alternate Data Stream (':') rejected (Path::join replacement defense)"
+                    .to_string(),
+            );
+        }
+
+        if round < 4 {
+            let decoded = percent_decode_once(&current);
+            if decoded == current {
+                break;
+            }
+            current = decoded;
         }
     }
+
     if trimmed.starts_with('/') || trimmed.starts_with('\\') {
         return Err(
             "Leading slash/backslash or UNC path rejected (Path::join replacement defense)"
@@ -865,7 +916,37 @@ pub fn validate_sandbox_relative_path(
             }
         }
     }
-    Ok(sandbox_root.join(rel_path))
+
+    let joined = sandbox_root.join(rel_path);
+
+    // Canonicalization verification: defense against symlink escapes
+    if sandbox_root.exists() {
+        if let Ok(canon_root) = std::fs::canonicalize(sandbox_root) {
+            if joined.exists() {
+                if let Ok(canon_joined) = std::fs::canonicalize(&joined) {
+                    if !canon_joined.starts_with(&canon_root) {
+                        return Err(format!(
+                            "CONFINED_OPEN_REPARSE_DIR_BLOCKED: Path canonicalization escape detected: {:?} escapes sandbox root {:?}",
+                            canon_joined, canon_root
+                        ));
+                    }
+                }
+            } else if let Some(parent) = joined.parent() {
+                if parent.exists() {
+                    if let Ok(canon_parent) = std::fs::canonicalize(parent) {
+                        if !canon_parent.starts_with(&canon_root) {
+                            return Err(format!(
+                                "CONFINED_OPEN_REPARSE_DIR_BLOCKED: Parent directory canonicalization escape detected: {:?} escapes sandbox root {:?}",
+                                canon_parent, canon_root
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(joined)
 }
 
 #[cfg(test)]
@@ -882,6 +963,10 @@ mod tests {
         assert!(validate_sandbox_relative_path(root, r"\\10.0.0.5\c$\secrets.txt").is_err());
         assert!(validate_sandbox_relative_path(root, "..%2f..%2fetc/passwd").is_err());
         assert!(validate_sandbox_relative_path(root, "%2e%2e%5cWindows%5cwin.ini").is_err());
+        assert!(validate_sandbox_relative_path(root, "..%252f..%252fetc/passwd").is_err());
+        assert!(
+            validate_sandbox_relative_path(root, "%252e%252e%255cWindows%255cwin.ini").is_err()
+        );
         assert!(validate_sandbox_relative_path(root, "report.txt%00.png").is_err());
         assert!(validate_sandbox_relative_path(root, "report.txt:hidden_ads").is_err());
         assert!(validate_sandbox_relative_path(root, "../../etc/passwd").is_err());

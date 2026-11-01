@@ -297,11 +297,6 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
 
-        let clean_install_dir = install_dir
-            .to_string_lossy()
-            .trim_start_matches(r"\\?\")
-            .to_string();
-
         // 0. Always pre-create required data directories in install_dir and grant permissions to Users
         let subfolders = [
             "database",
@@ -318,19 +313,26 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
         }
         let icacls_exe = osoosi_types::resolve_system_binary("icacls.exe");
         if icacls_exe.is_file() {
-            let mut perm_cmd = Command::new(&icacls_exe);
-            perm_cmd.stdout(std::process::Stdio::null());
-            perm_cmd.stderr(std::process::Stdio::null());
-            perm_cmd.creation_flags(0x08000000);
-            perm_cmd.args([
-                &clean_install_dir,
-                "/grant",
-                "*S-1-5-32-545:(OI)(CI)M",
-                "/T",
-                "/C",
-                "/Q",
-            ]);
-            let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
+            for sub in ["logs", "runs"] {
+                let target_dir = install_dir.join(sub);
+                let clean_target = target_dir
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+                    .to_string();
+                let mut perm_cmd = Command::new(&icacls_exe);
+                perm_cmd.stdout(std::process::Stdio::null());
+                perm_cmd.stderr(std::process::Stdio::null());
+                perm_cmd.creation_flags(0x08000000);
+                perm_cmd.args([
+                    &clean_target,
+                    "/grant",
+                    "*S-1-5-32-545:(OI)(CI)M",
+                    "/T",
+                    "/C",
+                    "/Q",
+                ]);
+                let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
+            }
         }
 
         // Ensure OsoosiEDR service interactive user start/stop ACLs are configured without forced auto-restart loops
@@ -340,7 +342,14 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             fail_cmd.stdout(std::process::Stdio::null());
             fail_cmd.stderr(std::process::Stdio::null());
             fail_cmd.creation_flags(0x08000000);
-            fail_cmd.args(["failure", "OsoosiEDR", "reset=", "0", "actions=", ""]);
+            fail_cmd.args([
+                "failure",
+                "OsoosiEDR",
+                "reset=",
+                "86400",
+                "actions=",
+                "restart/5000/restart/5000/restart/5000",
+            ]);
             let _ = timeout(Duration::from_secs(5), fail_cmd.status()).await;
 
             let mut sd_cmd = Command::new(&sc_exe);
@@ -350,7 +359,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             sd_cmd.args([
                 "sdset",
                 "OsoosiEDR",
-                "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+                "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWRPLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
             ]);
             let _ = timeout(Duration::from_secs(5), sd_cmd.status()).await;
         }

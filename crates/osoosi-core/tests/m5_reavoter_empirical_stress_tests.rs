@@ -465,7 +465,7 @@ fn test_empirical_vault_cryptographic_tamper_defense() {
     let env_path = temp_dir.path().join("app.env");
     let vault_path = temp_dir.path().join("secure_env.vault");
 
-    let original_env = "DATABASE_URL=postgres://user:super_secret_pw@localhost:5432/db\nAPI_KEY=sk_live_very_secret_key\n";
+    let original_env = "DATABASE_URL=postgres://user:super_secret_pw@localhost:5432/db\nAPI_KEY=sk_test_very_secret_key\n";
     std::fs::write(&env_path, original_env).expect("write original env");
 
     let grant = HardenedSealedGrant::new(
@@ -474,7 +474,7 @@ fn test_empirical_vault_cryptographic_tamper_defense() {
         [0x99u8; 32],
         None,
         "api.example.com",
-        ZeroizingLockedSecret::new(b"sk_live_very_secret_key"),
+        ZeroizingLockedSecret::new(b"sk_test_very_secret_key"),
     );
 
     // Seal and backup

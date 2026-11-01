@@ -104,7 +104,14 @@ pub fn preprocess_binary<P: AsRef<Path>>(
         .with_context(|| format!("Failed to open binary for MalConv: {:?}", path.as_ref()))?;
 
     let mut buffer = vec![0u8; max_len];
-    let _ = file.read(&mut buffer)?;
+    let mut total_read = 0;
+    while total_read < max_len {
+        let n = file.read(&mut buffer[total_read..])?;
+        if n == 0 {
+            break;
+        }
+        total_read += n;
+    }
 
     let mut embedded_data = vec![0.0f32; 8 * max_len];
 

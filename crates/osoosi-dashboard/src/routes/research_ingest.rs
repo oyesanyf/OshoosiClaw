@@ -3513,13 +3513,19 @@ mod tests {
                 severity_weight: Some(9.8),
                 evasion_technique: Some("Host PID namespace join".to_string()),
                 mitigation: Some("AppContainer + BreakoutDefenseCoordinator".to_string()),
-                mathematical_formulation: Some("S_k(x) = (z - mu_k)^T Sigma_k^+ (z - mu_k)".to_string()),
-                defense_countermeasure: Some("Block /var/run/docker.sock and enroll source P_{K+1}".to_string()),
+                mathematical_formulation: Some(
+                    "S_k(x) = (z - mu_k)^T Sigma_k^+ (z - mu_k)".to_string(),
+                ),
+                defense_countermeasure: Some(
+                    "Block /var/run/docker.sock and enroll source P_{K+1}".to_string(),
+                ),
                 target_crate_enhancement: None,
                 novelty_delta_score: Some(91.5),
                 source_char_start: Some(12),
                 source_char_end: Some(74),
-                source_quote: Some("nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh && novel_arxiv_exploit_marker_991".to_string()),
+                source_quote: Some(
+                    "nsenter --target 1 | novel_arxiv_exploit_marker_991".to_string(),
+                ),
                 ..Default::default()
             }],
             max_recursion_limit: Some(8),
@@ -3584,7 +3590,7 @@ mod tests {
             .technical
             .detected_vectors
             .iter()
-            .any(|v| v.contains("[ArXiv-Active-Defense:2603.02277]")));
+            .any(|v| v.contains("[ArXiv-Active-Defense:2603.02277")));
 
         // Verify Human-in-the-Loop Approval Gate: require_user_approval = Some(true)
         osoosi_agent_anomaly::breakout_defense::reset_research_defense_registry();

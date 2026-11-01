@@ -96,36 +96,41 @@ pub fn get_process_name(pid: u32) -> String {
             TH32CS_SNAPPROCESS,
         };
         if let Ok(snapshot) = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) } {
-            let mut entry = PROCESSENTRY32 {
-                dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
-                ..Default::default()
-            };
-            unsafe {
-                if Process32First(snapshot, &mut entry).is_ok() {
-                    let mut found_name = None;
-                    loop {
-                        if entry.th32ProcessID == pid {
-                            let name: String = entry
-                                .szExeFile
-                                .iter()
-                                .take_while(|&&c| c != 0)
-                                .map(|&c| c as u8 as char)
-                                .collect();
-                            if !name.is_empty() {
-                                found_name = Some(name);
+            if snapshot == windows::Win32::Foundation::INVALID_HANDLE_VALUE || snapshot.is_invalid()
+            {
+                // Ignore invalid snapshot handle
+            } else {
+                let mut entry = PROCESSENTRY32 {
+                    dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
+                    ..Default::default()
+                };
+                unsafe {
+                    if Process32First(snapshot, &mut entry).is_ok() {
+                        let mut found_name = None;
+                        loop {
+                            if entry.th32ProcessID == pid {
+                                let name: String = entry
+                                    .szExeFile
+                                    .iter()
+                                    .take_while(|&&c| c != 0)
+                                    .map(|&c| c as u8 as char)
+                                    .collect();
+                                if !name.is_empty() {
+                                    found_name = Some(name);
+                                }
+                                break;
                             }
-                            break;
+                            if Process32Next(snapshot, &mut entry).is_err() {
+                                break;
+                            }
                         }
-                        if Process32Next(snapshot, &mut entry).is_err() {
-                            break;
+                        let _ = CloseHandle(snapshot);
+                        if let Some(name) = found_name {
+                            return name;
                         }
+                    } else {
+                        let _ = CloseHandle(snapshot);
                     }
-                    let _ = CloseHandle(snapshot);
-                    if let Some(name) = found_name {
-                        return name;
-                    }
-                } else {
-                    let _ = CloseHandle(snapshot);
                 }
             }
         }
@@ -153,6 +158,10 @@ fn is_child_of_current_process(pid: u32) -> bool {
     let my_pid = std::process::id();
     unsafe {
         if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            if snapshot == windows::Win32::Foundation::INVALID_HANDLE_VALUE || snapshot.is_invalid()
+            {
+                return false;
+            }
             let mut entry = PROCESSENTRY32 {
                 dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
                 ..Default::default()

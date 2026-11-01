@@ -1126,6 +1126,13 @@ impl CognitiveFusionSupervisor {
                     // Periodically probe installed Ollama models (every 10 loops = 20s)
                     if loop_count.is_multiple_of(10) {
                         cached_installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+                        if loop_count == 0 {
+                            let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
+                            let (dynamic_deep_model, _) = osoosi_behavioral::hardware_selection::select_dynamic_model_by_available_memory(&hw_res);
+                            if !cached_installed_models.iter().any(|i| osoosi_behavioral::hardware_selection::model_matches(dynamic_deep_model, i)) {
+                                osoosi_behavioral::hardware_selection::ensure_ollama_model_installed_background(&ai_cfg.reasoning_url, dynamic_deep_model);
+                            }
+                        }
                     }
                     loop_count = loop_count.wrapping_add(1);
 

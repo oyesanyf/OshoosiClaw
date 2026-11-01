@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-10-31T02:45:47.590982+00:00",
+  "last_updated": "2026-10-31T20:43:02.788239+00:00",
   "submissions": [
     {
       "submission_id": "178b69f6-b4c1-4964-91ef-bd15ed324090",
@@ -15148,7 +15148,142 @@
       "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer) v1.2.0 (SHA-256: 6bbfee3430dcf1d96953d4d2f2e9e31e0d8d37a892ceb9a831a3ab148dd7991e). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
       "tier": "Tier 3: Resilient Fallback Manifest",
       "status": "manifest_created"
+    },
+    {
+      "submission_id": "97b8f68d-9875-4eac-934a-8b6072e5f899",
+      "timestamp": "2026-10-31T20:42:48.167241+00:00",
+      "file_path": "D:\\harfile\\OshoosiClaw\\target\\release\\osoosi.exe",
+      "file_name": "osoosi.exe",
+      "file_size_bytes": 78896896,
+      "file_size_mb": 75.24,
+      "sha256": "bd11b6dd0559a56fcf0fe6877cda70e58da6c2898a12601b2628939ab05c4993",
+      "md5": "ffe1344959d34453be3ae228b24041ce",
+      "product": "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Core Engine",
+      "version": "1.2.0",
+      "company": "Oshoosi Security",
+      "email": "oyesanyf@outlook.com",
+      "signature": {
+        "signed": true,
+        "status": "UnknownError",
+        "status_message": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider",
+        "subject": "CN=Oshoosi Developer",
+        "issuer": "CN=Oshoosi Developer",
+        "thumbprint": "9A6D3B509500813058EC63183476464FAC8F015B",
+        "verifier": "PowerShell Get-AuthenticodeSignature"
+      },
+      "portal_url": "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper",
+      "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Core Engine v1.2.0 (SHA-256: bd11b6dd0559a56fcf0fe6877cda70e58da6c2898a12601b2628939ab05c4993). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
+      "tier": "Tier 3: Resilient Fallback Manifest",
+      "status": "manifest_created"
+    },
+    {
+      "submission_id": "3fa2a91a-5e60-449a-8196-e33fb95118a6",
+      "timestamp": "2026-10-31T20:42:52.090432+00:00",
+      "file_path": "D:\\harfile\\OshoosiClaw\\deploy\\osoosi.exe",
+      "file_name": "osoosi.exe",
+      "file_size_bytes": 78896896,
+      "file_size_mb": 75.24,
+      "sha256": "bd11b6dd0559a56fcf0fe6877cda70e58da6c2898a12601b2628939ab05c4993",
+      "md5": "ffe1344959d34453be3ae228b24041ce",
+      "product": "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Core Engine",
+      "version": "1.2.0",
+      "company": "Oshoosi Security",
+      "email": "oyesanyf@outlook.com",
+      "signature": {
+        "signed": true,
+        "status": "UnknownError",
+        "status_message": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider",
+        "subject": "CN=Oshoosi Developer",
+        "issuer": "CN=Oshoosi Developer",
+        "thumbprint": "9A6D3B509500813058EC63183476464FAC8F015B",
+        "verifier": "PowerShell Get-AuthenticodeSignature"
+      },
+      "portal_url": "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper",
+      "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Core Engine v1.2.0 (SHA-256: bd11b6dd0559a56fcf0fe6877cda70e58da6c2898a12601b2628939ab05c4993). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
+      "tier": "Tier 3: Resilient Fallback Manifest",
+      "status": "manifest_created"
+    },
+    {
+      "submission_id": "6c29f8a1-ff98-40db-8bde-bff69f49ec6d",
+      "timestamp": "2026-10-31T20:42:54.187813+00:00",
+      "file_path": "D:\\harfile\\OshoosiClaw\\OshoosiClaw.msi",
+      "file_name": "OshoosiClaw.msi",
+      "file_size_bytes": 70037504,
+      "file_size_mb": 66.79,
+      "sha256": "ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42",
+      "md5": "b4ccc28d0b6f9e7b3fd93c383ba1e5aa",
+      "product": "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer)",
+      "version": "1.2.0",
+      "company": "Oshoosi Security",
+      "email": "oyesanyf@outlook.com",
+      "signature": {
+        "signed": true,
+        "status": "UnknownError",
+        "status_message": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider",
+        "subject": "CN=Oshoosi Developer",
+        "issuer": "CN=Oshoosi Developer",
+        "thumbprint": "9A6D3B509500813058EC63183476464FAC8F015B",
+        "verifier": "PowerShell Get-AuthenticodeSignature"
+      },
+      "portal_url": "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper",
+      "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer) v1.2.0 (SHA-256: ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
+      "tier": "Tier 3: Resilient Fallback Manifest",
+      "status": "manifest_created"
+    },
+    {
+      "submission_id": "a12a0f4e-5add-46db-afbd-a535c2efe68b",
+      "timestamp": "2026-10-31T20:42:56.651540+00:00",
+      "file_path": "D:\\harfile\\OshoosiClaw\\deploy\\OshoosiClaw.msi",
+      "file_name": "OshoosiClaw.msi",
+      "file_size_bytes": 70037504,
+      "file_size_mb": 66.79,
+      "sha256": "ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42",
+      "md5": "b4ccc28d0b6f9e7b3fd93c383ba1e5aa",
+      "product": "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer)",
+      "version": "1.2.0",
+      "company": "Oshoosi Security",
+      "email": "oyesanyf@outlook.com",
+      "signature": {
+        "signed": true,
+        "status": "UnknownError",
+        "status_message": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider",
+        "subject": "CN=Oshoosi Developer",
+        "issuer": "CN=Oshoosi Developer",
+        "thumbprint": "9A6D3B509500813058EC63183476464FAC8F015B",
+        "verifier": "PowerShell Get-AuthenticodeSignature"
+      },
+      "portal_url": "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper",
+      "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer) v1.2.0 (SHA-256: ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
+      "tier": "Tier 3: Resilient Fallback Manifest",
+      "status": "manifest_created"
+    },
+    {
+      "submission_id": "9901c643-15db-4a9c-af96-f3ae6e9b15b3",
+      "timestamp": "2026-10-31T20:43:02.787806+00:00",
+      "file_path": "D:\\harfile\\OshoosiClaw\\deploy\\windows\\OshoosiClaw.msi",
+      "file_name": "OshoosiClaw.msi",
+      "file_size_bytes": 70037504,
+      "file_size_mb": 66.79,
+      "sha256": "ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42",
+      "md5": "b4ccc28d0b6f9e7b3fd93c383ba1e5aa",
+      "product": "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer)",
+      "version": "1.2.0",
+      "company": "Oshoosi Security",
+      "email": "oyesanyf@outlook.com",
+      "signature": {
+        "signed": true,
+        "status": "UnknownError",
+        "status_message": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider",
+        "subject": "CN=Oshoosi Developer",
+        "issuer": "CN=Oshoosi Developer",
+        "thumbprint": "9A6D3B509500813058EC63183476464FAC8F015B",
+        "verifier": "PowerShell Get-AuthenticodeSignature"
+      },
+      "portal_url": "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper",
+      "comments": "Clean, Authenticode digitally signed open-source release build of OpenỌ̀ṣọ́ọ̀sì Autonomous EDR (MSI Installer) v1.2.0 (SHA-256: ee43e9b5a1cc2e3fbc0145da761bd9d0c955ce0831bec533bb52060e73572c42). Requesting automated verification, reputation build, and SmartScreen false-positive suppression.",
+      "tier": "Tier 3: Resilient Fallback Manifest",
+      "status": "manifest_created"
     }
   ],
-  "total_submissions": 561
+  "total_submissions": 566
 }

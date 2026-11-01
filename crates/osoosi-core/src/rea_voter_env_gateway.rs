@@ -197,10 +197,11 @@ impl ReaVoterEnvGateway {
     pub fn on_service_stop(&self) {
         self.service_active.store(false, Ordering::SeqCst);
 
-        // 1. Auto-revert protected env backup before wiping in-memory secrets
-        if let Some(ref path) = *Self::read_lock(&self.vault_path) {
-            let _ = crate::protected_env_backup::ProtectedEnvBackupVault::auto_revert(path);
-        }
+        // 1. Auto-revert all active vaults on the system before wiping in-memory secrets
+        let custom = Self::read_lock(&self.vault_path).clone();
+        let _ = crate::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+            custom.as_deref(),
+        );
 
         // 2. Clear quarantine holds
         Self::write_lock(&self.quarantined_pids).clear();
@@ -916,7 +917,8 @@ pub fn resolve_pid_script_hash(
         let cmdline = unsafe {
             let ustr = &*(cmd_buf.as_ptr() as *const UnicodeString);
             if !ustr.buffer.is_null() && ustr.length > 0 {
-                let char_len = (ustr.length as usize) / 2;
+                let byte_len = (ustr.length as usize) & !1;
+                let char_len = (byte_len / 2).min(65536);
                 let slice = std::slice::from_raw_parts(ustr.buffer, char_len);
                 String::from_utf16_lossy(slice)
             } else {

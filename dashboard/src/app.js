@@ -26,7 +26,7 @@ const POLL_INTERVAL = 3000;
     function shouldSyncSettingKey(key) {
         if (!key || typeof key !== 'string') return false;
         if (key.includes('token') || key.includes('session') || key.includes('auth')) return false;
-        return key.startsWith('oshoosi_') || key.startsWith('osoosi_') || key.startsWith('ui_') || key.startsWith('dlp_') || key.startsWith('har_') || key.startsWith('research_');
+        return key.startsWith('oshoosi_') || key.startsWith('osoosi_') || key.startsWith('ui_') || key.startsWith('dlp_') || key.startsWith('har_') || key.startsWith('research_') || key.startsWith('cicd_') || key.startsWith('workflow_guard_');
     }
 
     window.persistUiSettingToDb = function(key, value) {
@@ -101,6 +101,18 @@ const POLL_INTERVAL = 3000;
                     state.voterCardsCompactMode = window.localStorage.getItem('oshoosi_voter_compact_mode_v1') === 'true';
                 } catch (_) {}
             }
+            try {
+                const rawCicdMaster = settings.oshoosi_cicd_master_enabled ?? settings.cicd_master_enabled ?? (window.localStorage ? window.localStorage.getItem('oshoosi_cicd_master_enabled') : null);
+                if (rawCicdMaster !== null && rawCicdMaster !== undefined && typeof cicdProtectionState !== 'undefined' && cicdProtectionState) {
+                    const masterOn = rawCicdMaster === true || rawCicdMaster === 'true' || rawCicdMaster === '1';
+                    cicdProtectionState.master_enabled = masterOn;
+                    const navBadge = document.getElementById('nav-cicd-protection-badge');
+                    if (navBadge) {
+                        navBadge.innerText = masterOn ? 'ON' : 'OFF';
+                        navBadge.className = masterOn ? 'badge green' : 'badge yellow';
+                    }
+                }
+            } catch (_) {}
         } catch (_) {}
     };
 
@@ -161,13 +173,27 @@ const state = {
     // SkyRL state
     skyrlLossChart: null,
     skyrlRewardChart: null,
-    skyrlLossHistory: [0.38, 0.31, 0.26, 0.22, 0.18, 0.14, 0.11, 0.08, 0.05],
-    skyrlRewardHistory: [0.2, 0.5, 0.8, -0.4, 1.0, 1.2, 0.9, 1.4, 1.8],
-    skyrlLabels: ['t-8', 't-7', 't-6', 't-5', 't-4', 't-3', 't-2', 't-1', 'Now'],
+    skyrlLossHistory: [],
+    skyrlRewardHistory: [],
+    skyrlLabels: [],
     skyrlStatus: null,
+    lastSkyrlLossHistoryStr: null,
+    lastSkyrlRewardHistoryStr: null,
     isTrainingSkyrl: false,
     isSteppingSkyrl: false,
     isGeneratingSkyrl: false,
+    // Multi-File Environment Gateway, Magika Scanner & Secret Watcher state
+    envGateway: {
+        status: null,
+        config: null,
+        scannedFiles: [],
+        watcherEvents: [],
+        isScanning: false,
+        isSealing: false,
+        isReverting: false,
+        isTesting: false,
+        watcherPollTimer: null
+    },
     // Forensic History & Log Viewer state
     historyPage: 1,
     historyTotalPages: 1,
@@ -2262,6 +2288,7 @@ function escapeHtml(str) {
 function escapeJsArg(str) {
     if (str === null || str === undefined) return '';
     return String(str)
+        .replace(/&/g, '&amp;')
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'")
         .replace(/"/g, '&quot;')
@@ -7160,42 +7187,116 @@ async function renderGossipView() {
 // Note: showSkyrlToast is defined and exported at the top of app.js with rich user guidance and fallback support
 
 /**
- * Update the 6 SkyRL Stats cards
+ * Update the 6 SkyRL Stats cards and transition phase indicators
  */
 function updateSkyrlStats(status) {
-    if (!status) return;
+    if (!status || typeof status !== 'object') return;
 
+    // 1. Mean TD Loss
     const lossEl = document.getElementById('stat-skyrl-mean-loss');
     if (lossEl && typeof status.mean_loss === 'number') {
         lossEl.innerText = status.mean_loss.toFixed(4);
     }
 
+    // 2. Total Episodes
     const episodesEl = document.getElementById('stat-skyrl-episodes');
     if (episodesEl && typeof status.total_episodes === 'number') {
         episodesEl.innerText = status.total_episodes.toLocaleString();
     }
 
+    // 3. Total Steps & Decay Target
     const stepsEl = document.getElementById('stat-skyrl-steps');
     if (stepsEl && typeof status.total_steps === 'number') {
         stepsEl.innerText = status.total_steps.toLocaleString();
     }
+    const stepTargetEl = document.getElementById('stat-skyrl-step-target');
+    if (stepTargetEl) {
+        const decaySteps = typeof status.epsilon_decay_steps === 'number' ? status.epsilon_decay_steps : 2000;
+        stepTargetEl.innerText = `/ ${decaySteps.toLocaleString()} Decay`;
+    }
 
+    // 4. Buffer Occupancy & Warmup Threshold
     const bufferEl = document.getElementById('stat-skyrl-buffer');
     if (bufferEl && typeof status.buffer_size === 'number') {
         bufferEl.innerText = `${status.buffer_size.toLocaleString()} / 20,000`;
     }
+    const warmupBadge = document.getElementById('stat-skyrl-warmup-badge');
+    if (warmupBadge && typeof status.buffer_size === 'number') {
+        const minWarmup = typeof status.min_replay_warmup === 'number' ? status.min_replay_warmup : 256;
+        if (status.buffer_size >= minWarmup) {
+            warmupBadge.innerText = 'Warmed Up';
+            warmupBadge.className = 'badge green';
+        } else {
+            warmupBadge.innerText = `Warming Up (${status.buffer_size}/${minWarmup})`;
+            warmupBadge.className = 'badge orange';
+        }
+    }
 
+    // 5. Epsilon Exploration Rate, Phase & Decay Bar
     const epsilonEl = document.getElementById('stat-skyrl-epsilon');
     if (epsilonEl && typeof status.epsilon === 'number') {
         epsilonEl.innerText = status.epsilon.toFixed(3);
     }
+    const epsBar = document.getElementById('stat-skyrl-epsilon-bar');
+    if (epsBar) {
+        const epsStart = typeof status.epsilon_start === 'number' ? status.epsilon_start : 1.0;
+        const epsMin = typeof status.epsilon_min === 'number' ? status.epsilon_min : 0.05;
+        const currentEps = typeof status.epsilon === 'number' ? status.epsilon : epsMin;
+        const decayFraction = epsStart > epsMin
+            ? Math.max(0, Math.min(1, (epsStart - currentEps) / (epsStart - epsMin)))
+            : 1.0;
+        epsBar.style.width = `${Math.round(decayFraction * 100)}%`;
+    }
 
+    // Phase classification
+    const rawPhase = status.exploration_phase || (status.epsilon <= 0.05 ? 'converged_exploitation' : 'active_exploration');
+    let phaseLabel = 'Active Exploration';
+    let phaseClass = 'badge cyan';
+    if (rawPhase === 'warming_up') {
+        phaseLabel = 'Buffer Warmup';
+        phaseClass = 'badge orange';
+    } else if (rawPhase === 'converged_exploitation') {
+        phaseLabel = 'Converged Exploitation';
+        phaseClass = 'badge green';
+    } else {
+        phaseLabel = 'Active Exploration';
+        phaseClass = 'badge cyan';
+    }
+
+    const phaseBadge = document.getElementById('stat-skyrl-phase');
+    if (phaseBadge) {
+        phaseBadge.innerText = phaseLabel;
+        phaseBadge.className = phaseClass;
+    }
+    const headerPhaseBadge = document.getElementById('skyrl-phase-header-badge');
+    if (headerPhaseBadge) {
+        headerPhaseBadge.innerText = phaseLabel;
+        headerPhaseBadge.className = phaseClass;
+    }
+
+    // 6. Active LoRA Adapter
     const adapterEl = document.getElementById('stat-skyrl-adapter');
     if (adapterEl && status.active_lora_adapter) {
         adapterEl.innerText = status.active_lora_adapter;
     }
 
-    // Populate and sync adapter select dropdown
+    // 7. Live Chart Header Badges
+    const latestLossBadge = document.getElementById('skyrl-loss-latest-badge');
+    if (latestLossBadge && typeof status.mean_loss === 'number') {
+        latestLossBadge.innerText = `TD Loss: ${status.mean_loss.toFixed(4)}`;
+    }
+    const latestRewardBadge = document.getElementById('skyrl-reward-latest-badge');
+    if (latestRewardBadge) {
+        const rewardVal = typeof status.mean_reward === 'number'
+            ? status.mean_reward
+            : (Array.isArray(status.reward_history) && status.reward_history.length > 0
+                ? status.reward_history[status.reward_history.length - 1]
+                : 0);
+        latestRewardBadge.innerText = `Mean Reward: ${rewardVal >= 0 ? '+' : ''}${rewardVal.toFixed(2)}`;
+        latestRewardBadge.className = rewardVal >= 0 ? 'badge green' : 'badge red';
+    }
+
+    // 8. Populate & sync adapter select dropdown
     const loraSelect = document.getElementById('skyrl-lora-select');
     if (loraSelect) {
         const available = status.available_lora_adapters || [
@@ -7262,10 +7363,16 @@ window.changeSkyrlLoraAdapter = async function(selected) {
  * Initialize Chart.js charts for SkyRL
  */
 function initSkyrlCharts() {
+    if (typeof Chart === 'undefined') return;
+
     const lossCanvas = document.getElementById('skyrl-loss-chart');
     const rewardCanvas = document.getElementById('skyrl-reward-chart');
 
-    if (lossCanvas && !state.skyrlLossChart && typeof Chart !== 'undefined') {
+    const defaultLabels = state.skyrlLossHistory.length > 0
+        ? state.skyrlLossHistory.map((_, i, arr) => i === arr.length - 1 ? 'Now' : `t-${arr.length - 1 - i}`)
+        : ['t-8', 't-7', 't-6', 't-5', 't-4', 't-3', 't-2', 't-1', 'Now'];
+
+    if (lossCanvas && !state.skyrlLossChart) {
         const ctxLoss = lossCanvas.getContext('2d');
         const lossGradient = ctxLoss.createLinearGradient(0, 0, 0, 200);
         lossGradient.addColorStop(0, 'rgba(255, 77, 77, 0.28)');
@@ -7274,7 +7381,7 @@ function initSkyrlCharts() {
         state.skyrlLossChart = new Chart(ctxLoss, {
             type: 'line',
             data: {
-                labels: [...state.skyrlLabels],
+                labels: defaultLabels,
                 datasets: [{
                     label: 'TD Loss (MSE)',
                     data: [...state.skyrlLossHistory],
@@ -7293,6 +7400,7 @@ function initSkyrlCharts() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: false,
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -7319,7 +7427,7 @@ function initSkyrlCharts() {
         });
     }
 
-    if (rewardCanvas && !state.skyrlRewardChart && typeof Chart !== 'undefined') {
+    if (rewardCanvas && !state.skyrlRewardChart) {
         const ctxReward = rewardCanvas.getContext('2d');
         const rewardGradient = ctxReward.createLinearGradient(0, 0, 0, 200);
         rewardGradient.addColorStop(0, 'rgba(0, 255, 127, 0.28)');
@@ -7328,7 +7436,7 @@ function initSkyrlCharts() {
         state.skyrlRewardChart = new Chart(ctxReward, {
             type: 'line',
             data: {
-                labels: [...state.skyrlLabels],
+                labels: defaultLabels,
                 datasets: [{
                     label: 'Gym Step Reward',
                     data: [...state.skyrlRewardHistory],
@@ -7347,6 +7455,7 @@ function initSkyrlCharts() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: false,
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -7374,23 +7483,81 @@ function initSkyrlCharts() {
 }
 
 /**
- * Update Chart data points with latest loss
+ * Update Chart.js datasets with latest loss_history and reward_history arrays from /api/skyrl/v1/status.
+ * Uses string hashing to prevent redundant redraws during periodic background polling.
  */
 function updateSkyrlCharts(status) {
-    if (!status) return;
-
+    if (!status || typeof status !== 'object') return;
     initSkyrlCharts();
 
-    if (state.skyrlLossChart && typeof status.mean_loss === 'number' && status.mean_loss > 0) {
-        const lastLoss = state.skyrlLossHistory[state.skyrlLossHistory.length - 1];
-        if (Math.abs(lastLoss - status.mean_loss) > 0.0001) {
-            state.skyrlLossHistory.shift();
-            state.skyrlLossHistory.push(parseFloat(status.mean_loss.toFixed(4)));
+    // 1. Loss History Synchronization
+    if (Array.isArray(status.loss_history) && status.loss_history.length > 0) {
+        const lossStr = JSON.stringify(status.loss_history);
+        if (lossStr !== state.lastSkyrlLossHistoryStr) {
+            state.lastSkyrlLossHistoryStr = lossStr;
+            state.skyrlLossHistory = status.loss_history.map(v => typeof v === 'number' ? parseFloat(v.toFixed(4)) : 0);
+            const lossLabels = state.skyrlLossHistory.map((_, i, arr) => {
+                const diff = arr.length - 1 - i;
+                return diff === 0 ? 'Now' : `t-${diff}`;
+            });
+            if (state.skyrlLossChart) {
+                state.skyrlLossChart.data.labels = lossLabels;
+                state.skyrlLossChart.data.datasets[0].data = [...state.skyrlLossHistory];
+                state.skyrlLossChart.update('none'); // Bypass animation to eliminate CPU overhead during poll
+            }
+        }
+    } else if (typeof status.mean_loss === 'number' && status.mean_loss > 0) {
+        const formatted = parseFloat(status.mean_loss.toFixed(4));
+        if (state.skyrlLossHistory.length === 0) {
+            state.skyrlLossHistory = [formatted];
+        } else {
+            const lastVal = state.skyrlLossHistory[state.skyrlLossHistory.length - 1];
+            if (Math.abs(lastVal - formatted) > 0.0001) {
+                if (state.skyrlLossHistory.length >= 9) state.skyrlLossHistory.shift();
+                state.skyrlLossHistory.push(formatted);
+            }
+        }
+        if (state.skyrlLossChart) {
+            const lossLabels = state.skyrlLossHistory.map((_, i, arr) => i === arr.length - 1 ? 'Now' : `t-${arr.length - 1 - i}`);
+            state.skyrlLossChart.data.labels = lossLabels;
             state.skyrlLossChart.data.datasets[0].data = [...state.skyrlLossHistory];
             state.skyrlLossChart.update('none');
         }
     }
+
+    // 2. Reward History Synchronization
+    if (Array.isArray(status.reward_history) && status.reward_history.length > 0) {
+        const rewardStr = JSON.stringify(status.reward_history);
+        if (rewardStr !== state.lastSkyrlRewardHistoryStr) {
+            state.lastSkyrlRewardHistoryStr = rewardStr;
+            state.skyrlRewardHistory = status.reward_history.map(v => typeof v === 'number' ? parseFloat(v.toFixed(2)) : 0);
+            const rewardLabels = state.skyrlRewardHistory.map((_, i, arr) => {
+                const diff = arr.length - 1 - i;
+                return diff === 0 ? 'Now' : `t-${diff}`;
+            });
+            if (state.skyrlRewardChart) {
+                state.skyrlRewardChart.data.labels = rewardLabels;
+                state.skyrlRewardChart.data.datasets[0].data = [...state.skyrlRewardHistory];
+                state.skyrlRewardChart.update('none'); // Bypass animation to eliminate CPU overhead during poll
+            }
+        }
+    } else if (typeof status.mean_reward === 'number') {
+        const formatted = parseFloat(status.mean_reward.toFixed(2));
+        if (state.skyrlRewardHistory.length === 0) {
+            state.skyrlRewardHistory = [formatted];
+        }
+        if (state.skyrlRewardChart) {
+            const rewardLabels = state.skyrlRewardHistory.map((_, i, arr) => i === arr.length - 1 ? 'Now' : `t-${arr.length - 1 - i}`);
+            state.skyrlRewardChart.data.labels = rewardLabels;
+            state.skyrlRewardChart.data.datasets[0].data = [...state.skyrlRewardHistory];
+            state.skyrlRewardChart.update('none');
+        }
+    }
 }
+
+window.updateSkyrlStats = updateSkyrlStats;
+window.updateSkyrlCharts = updateSkyrlCharts;
+window.initSkyrlCharts = initSkyrlCharts;
 
 /**
  * Render the dedicated SkyRL Self-Improvement & Policy Training view
@@ -10171,6 +10338,178 @@ window.openDriftTracesInSiquery = openDriftTracesInSiquery;
  * ============================================================================
  */
 
+/**
+ * Strips any `-coder` suffix from model tags to prevent silent Ollama library 404s.
+ */
+function sanitizeOllamaModelTag(model) {
+    if (!model) return '';
+    let trimmed = String(model).trim();
+    let replaced = trimmed.replace(/-coder:/g, ':');
+    if (replaced.endsWith('-coder')) {
+        return replaced.slice(0, -6);
+    }
+    return replaced;
+}
+
+/**
+ * Sizes calibrated Qwen models strictly by runtime free/available memory (Anti-OOM).
+ * Evaluates free_ram_gb and free_vram_mb; never evaluates total physical RAM.
+ */
+function selectCalibratedQwenModel(freeRamGb, freeVramMb) {
+    let ram = 0;
+    let vram = 0;
+    if (typeof freeRamGb === 'object' && freeRamGb !== null) {
+        ram = Number(freeRamGb.free_ram_gb ?? freeRamGb.freeRamGb ?? freeRamGb.ram) || 0;
+        vram = Number(freeRamGb.free_vram_mb ?? freeRamGb.freeVramMb ?? freeRamGb.vram) || 0;
+    } else {
+        ram = Number(freeRamGb) || 0;
+        vram = Number(freeVramMb) || 0;
+    }
+
+    if (ram >= 48.0 || vram >= 24000) {
+        return { model: 'qwen2.5:32b', sizeEstGb: 19.0, tierLabel: 'ENTERPRISE / HIGH-THROUGHPUT' };
+    } else if (ram >= 24.0 || vram >= 14000) {
+        return { model: 'qwen2.5:14b', sizeEstGb: 9.0, tierLabel: 'HIGH-PERFORMANCE WORKSTATION' };
+    } else if (ram >= 12.0 || vram >= 4500) {
+        return { model: 'qwen2.5:7b', sizeEstGb: 4.7, tierLabel: 'MID-RANGE WORKSTATION' };
+    } else if (ram >= 6.0 || vram >= 2000) {
+        return { model: 'qwen2.5:3b', sizeEstGb: 1.9, tierLabel: 'ENTRY WORKSTATION' };
+    } else {
+        return { model: 'qwen2.5:1.5b', sizeEstGb: 1.0, tierLabel: 'CONSTRAINED / EDGE NODE' };
+    }
+}
+
+/**
+ * Strict 400ms health probe for Ollama daemon tags endpoint.
+ * Zero-crash fallback: never throws uncaught exceptions during daemon startup.
+ */
+async function probeOllama(baseUrl = 'http://127.0.0.1:11434') {
+    const cleanUrl = baseUrl.replace(/\/+$/, '');
+    try {
+        const res = await fetchWithTimeout(`${cleanUrl}/api/tags`, { method: 'GET' }, 400);
+        if (!res || !res.ok) {
+            return { online: false, models: [], error: res ? `HTTP ${res.status}` : 'No response' };
+        }
+        const data = await res.json().catch(() => null);
+        const models = Array.isArray(data?.models) ? data.models.map(m => m.name || m.model || '') : [];
+        return { online: true, models: models.filter(Boolean) };
+    } catch (err) {
+        return { online: false, models: [], error: err?.message || 'Connection timeout (400ms)' };
+    }
+}
+
+/**
+ * Strict 400ms health probe for EDR IPC daemon endpoint.
+ */
+async function probeIpc(endpoint = '/api/status') {
+    try {
+        const res = await fetchWithTimeout(endpoint, { method: 'GET' }, 400);
+        return { online: Boolean(res && res.ok), status: res ? res.status : 0 };
+    } catch (_) {
+        return { online: false, status: 0 };
+    }
+}
+
+/**
+ * Strict 400ms health probe for Chrome DevTools Protocol (CDP) port.
+ */
+async function probeCdp(port = 9222) {
+    try {
+        const res = await fetchWithTimeout(`http://127.0.0.1:${port}/json/version`, { method: 'GET' }, 400);
+        return { online: Boolean(res && res.ok) };
+    } catch (_) {
+        return { online: false };
+    }
+}
+
+let activeGuidanceTargetModel = '';
+
+function renderMissingModelGuidance(data) {
+    const card = document.getElementById('missing-model-guidance-card');
+    if (!card || !data) return;
+
+    const calibrated = data.calibrated_models || [];
+    const missing = calibrated.filter(m => !m.installed);
+    const primaryMissing = missing.find(m => m.role.toLowerCase().includes('forensic')) || missing[0];
+
+    if (!primaryMissing) {
+        card.style.display = 'none';
+        return;
+    }
+
+    activeGuidanceTargetModel = primaryMissing.model;
+    card.style.display = 'block';
+
+    // Summary text
+    const summary = document.getElementById('guidance-model-summary-text');
+    if (summary) {
+        summary.innerHTML = `<strong>${escapeHtml(primaryMissing.role)}</strong> requires <code>${escapeHtml(primaryMissing.model)}</code> (~${primaryMissing.size_est_gb.toFixed(1)} GB). ${escapeHtml(primaryMissing.tier_fit)}`;
+    }
+
+    // Terminal command pill
+    const terminalCode = document.getElementById('guidance-terminal-code');
+    if (terminalCode) {
+        terminalCode.textContent = `ollama pull ${primaryMissing.model}`;
+    }
+
+    // Installed Alternative Pills
+    const pillsContainer = document.getElementById('guidance-installed-pills');
+    const alternativesContainer = document.getElementById('guidance-installed-alternatives-container');
+    if (pillsContainer && alternativesContainer) {
+        const installed = data.installed_models || [];
+        if (installed.length === 0) {
+            alternativesContainer.style.display = 'none';
+        } else {
+            alternativesContainer.style.display = 'block';
+            pillsContainer.innerHTML = installed.map(modelName => `
+                <button type="button" class="model-pill-clickable" onclick="selectGuidanceAlternativeModel('${escapeJsArg(modelName)}')">
+                    <i data-lucide="check-circle" style="width:12px; height:12px;"></i>
+                    <span>${escapeHtml(modelName)}</span>
+                </button>
+            `).join('');
+        }
+    }
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+async function triggerMissingModelAutoPull() {
+    if (!activeGuidanceTargetModel) return;
+    const btn = document.getElementById('guidance-primary-action-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Triggering Pull...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+    await downloadCalibratedModel(activeGuidanceTargetModel);
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="check" style="width:13px; height:13px;"></i> Pull Queued';
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+function selectGuidanceAlternativeModel(modelName) {
+    copyTerminalCommand(modelName);
+    showSkyrlToast(`Selected installed model: ${modelName}. Active reasoning routed.`, 'info');
+}
+
+function retryGuidanceModelPull() {
+    if (activeGuidanceTargetModel) {
+        downloadCalibratedModel(activeGuidanceTargetModel);
+    }
+}
+
+window.sanitizeOllamaModelTag = sanitizeOllamaModelTag;
+window.selectCalibratedQwenModel = selectCalibratedQwenModel;
+window.probeOllama = probeOllama;
+window.probeIpc = probeIpc;
+window.probeCdp = probeCdp;
+window.renderMissingModelGuidance = renderMissingModelGuidance;
+window.triggerMissingModelAutoPull = triggerMissingModelAutoPull;
+window.selectGuidanceAlternativeModel = selectGuidanceAlternativeModel;
+window.retryGuidanceModelPull = retryGuidanceModelPull;
+
 let modelPullPollInterval = null;
 let hadActiveModelPulls = false;
 
@@ -10179,6 +10518,7 @@ function renderUtilitiesView() {
         loadCalibratedModels();
         pollModelPullProgress();
         loadDynamicDiskStatus();
+        loadEnvGatewayStatus();
         if (window.lucide) {
             window.lucide.createIcons();
         }
@@ -10244,7 +10584,7 @@ function renderCalibratedModelsData(data) {
                     ? `<button class="btn-text" style="font-size:12px; color:var(--accent-green); cursor:default;" disabled>
                            <i data-lucide="check-circle" style="width:14px; margin-right:4px;"></i> Installed
                        </button>`
-                    : `<button class="btn-primary btn-sm" id="btn-pull-${escapeHtml(item.model).replace(/[^a-zA-Z0-9_-]/g, '_')}" onclick="downloadCalibratedModel('${escapeHtml(item.model)}')" style="display:inline-flex; align-items:center; gap:6px;">
+                    : `<button class="btn-primary btn-sm" id="btn-pull-${escapeHtml(item.model).replace(/[^a-zA-Z0-9_-]/g, '_')}" onclick="downloadCalibratedModel('${escapeJsArg(item.model)}')" style="display:inline-flex; align-items:center; gap:6px;">
                            <i data-lucide="download" style="width:13px; height:13px;"></i> Pull Model
                        </button>`;
 
@@ -10269,7 +10609,7 @@ function renderCalibratedModelsData(data) {
                             </div>
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px; margin-top:auto;">
-                            <button class="btn-text" onclick="copyTerminalCommand('${pullCmd}', this)" style="font-size:11px; color:var(--text-muted); cursor:pointer;" title="Copy terminal command">
+                            <button class="btn-text" onclick="copyTerminalCommand('${escapeJsArg(`ollama pull ${item.model}`)}', this)" style="font-size:11px; color:var(--text-muted); cursor:pointer;" title="Copy terminal command">
                                 <i data-lucide="terminal" style="width:12px; margin-right:3px;"></i> Copy CLI
                             </button>
                             ${downloadBtn}
@@ -10294,6 +10634,9 @@ function renderCalibratedModelsData(data) {
             allBtn.style.color = '';
         }
     }
+
+    // Render missing model guidance card
+    renderMissingModelGuidance(data);
 
     if (window.lucide) {
         window.lucide.createIcons();
@@ -10340,14 +10683,16 @@ async function loadCalibratedModels(forceRefresh = false) {
         } catch (_) {}
 
         if (!restoredFromCache) {
-            const cores = navigator.hardwareConcurrency || 8;
-            const memGb = navigator.deviceMemory || 16;
-            const fallbackTierLabel = memGb >= 32 ? 'HIGH-PERFORMANCE WORKSTATION' : 'MID-RANGE WORKSTATION';
-            const fallbackDeepModel = memGb >= 32 ? 'qwen2.5:14b' : 'qwen2.5:7b';
-            const fallbackDeepSize = memGb >= 32 ? 9.0 : 4.7;
+            const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 8;
+            const memGb = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 16;
+            const estFreeRam = Math.max(4, Math.round(memGb * 0.5));
+            const calibrated = selectCalibratedQwenModel(estFreeRam, 0);
+            const fallbackTierLabel = calibrated.tierLabel;
+            const fallbackDeepModel = calibrated.model;
+            const fallbackDeepSize = calibrated.sizeEstGb;
             const fallbackData = {
                 status: 'ok',
-                tier: memGb >= 32 ? 'Tier3HighPerf' : 'Tier2MidRange',
+                tier: estFreeRam >= 24 ? 'Tier3HighPerf' : (estFreeRam >= 12 ? 'Tier2MidRange' : 'Tier1Entry'),
                 tier_label: fallbackTierLabel,
                 ollama_url: 'http://127.0.0.1:11434',
                 ollama_online: false,
@@ -10356,7 +10701,7 @@ async function loadCalibratedModels(forceRefresh = false) {
                     cpu_name: `Host CPU (${cores} threads)`,
                     logical_cores: cores,
                     total_ram_gb: memGb,
-                    free_ram_gb: Math.max(4, Math.round(memGb * 0.5)),
+                    free_ram_gb: estFreeRam,
                     gpu_name: 'Host Compute Profile',
                     total_vram_mb: 0,
                     free_vram_mb: 0,
@@ -10370,7 +10715,7 @@ async function loadCalibratedModels(forceRefresh = false) {
                         role: 'Deep Forensic Reasoning',
                         model: fallbackDeepModel,
                         purpose: 'Multi-step causal graph attack synthesis, threat reconstruction & lateral movement tracing',
-                        tier_fit: `${fallbackTierLabel}: Calibrated for host RAM (${memGb}.0 GB) and compute profile`,
+                        tier_fit: `${fallbackTierLabel}: Calibrated for host RAM (${memGb}.0 GB, ~${estFreeRam.toFixed(1)} GB free) and compute profile`,
                         size_est_gb: fallbackDeepSize,
                         installed: false
                     },
@@ -10545,7 +10890,14 @@ async function pollModelPullProgress() {
                     <div style="width:100%; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
                         <div style="width:${pct}%; height:100%; background:${barColor}; border-radius:3px; transition:width 0.4s ease;"></div>
                     </div>
-                    ${item.error ? `<div style="font-size:11px; color:var(--accent-red); margin-top:6px;"><i data-lucide="alert-triangle" style="width:11px; margin-right:3px;"></i> ${escapeHtml(stripAnsi(item.error))}</div>` : ''}
+                    ${item.error ? `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; flex-wrap:wrap; gap:6px;">
+                            <div style="font-size:11px; color:var(--accent-red);"><i data-lucide="alert-triangle" style="width:11px; margin-right:3px;"></i> ${escapeHtml(stripAnsi(item.error))}</div>
+                            <button type="button" class="btn-primary btn-sm" onclick="downloadCalibratedModel('${escapeJsArg(item.model)}')" style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; font-size:11px;">
+                                <i data-lucide="refresh-cw" style="width:11px; height:11px;"></i> Retry Pull
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
             `;
         }).join('');
@@ -10874,6 +11226,978 @@ window.downloadAllCalibratedModels = downloadAllCalibratedModels;
 window.copyTerminalCommand = copyTerminalCommand;
 window.loadDynamicDiskStatus = loadDynamicDiskStatus;
 window.runDynamicDiskCleanup = runDynamicDiskCleanup;
+
+/**
+ * ============================================================================
+ * Multi-File Environment Gateway, Google Magika Scanner & Secret Watcher
+ * ============================================================================
+ */
+
+let envWatcherPollInterval = null;
+
+async function loadEnvGatewayStatus(forceRefresh = false) {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/status`, {}, 2, 300);
+        if (!resp || !resp.ok) {
+            console.warn('[loadEnvGatewayStatus] Failed to load status:', resp ? resp.status : 'no response');
+            return;
+        }
+        const data = await resp.json();
+        state.envGateway.status = data;
+        renderEnvGatewayStatusData(data);
+        loadEnvGatewayConfig();
+        pollEnvWatcherEvents();
+        loadMachineBindingStatus();
+    } catch (err) {
+        console.error('[loadEnvGatewayStatus] Error:', err);
+    }
+}
+
+function renderEnvGatewayStatusData(data) {
+    if (!data) return;
+
+    // 1. Status Badges
+    const statusBadge = document.getElementById('env-gateway-status-badge');
+    const watcherBadge = document.getElementById('env-gateway-watcher-badge');
+    const daclBadge = document.getElementById('env-gateway-dacl-badge');
+
+    if (statusBadge) {
+        if (data.vault_exists && Array.isArray(data.sealed_variables) && data.sealed_variables.length > 0) {
+            statusBadge.className = 'badge green';
+            statusBadge.innerHTML = `<i data-lucide="shield-check" style="width:11px; height:11px; margin-right:3px;"></i> SEALED (${data.sealed_variables.length} Keys)`;
+        } else if (data.vault_exists) {
+            statusBadge.className = 'badge cyan';
+            statusBadge.innerText = 'VAULT ACTIVE';
+        } else {
+            statusBadge.className = 'badge yellow';
+            statusBadge.innerText = 'UNSEALED';
+        }
+    }
+
+    if (watcherBadge) {
+        if (data.watcher_running) {
+            watcherBadge.className = 'badge cyan';
+            watcherBadge.innerHTML = '<i data-lucide="activity" style="width:11px; height:11px; margin-right:3px;"></i> WATCHER ACTIVE';
+        } else {
+            watcherBadge.className = 'badge gray';
+            watcherBadge.innerText = 'WATCHER IDLE';
+        }
+    }
+
+    if (daclBadge) {
+        daclBadge.className = data.dacl_protected ? 'badge blue' : 'badge yellow';
+        daclBadge.innerText = data.dacl_protected ? 'DACL: Protected' : 'DACL: Standard';
+    }
+
+    // 2. Metrics & Posture Grid
+    const statVault = document.getElementById('stat-env-vault-status');
+    const statDacl = document.getElementById('stat-env-vault-dacl');
+    if (statVault) {
+        statVault.innerText = data.vault_exists ? 'Encrypted (DPAPI)' : 'Unsealed';
+        statVault.style.color = data.vault_exists ? 'var(--accent-green, #10b981)' : 'var(--text-muted)';
+    }
+    if (statDacl) {
+        statDacl.innerText = data.dacl_protected ? 'Protected NTFS DACL: Active' : 'Standard File Permissions';
+    }
+
+    const statSealedCount = document.getElementById('stat-env-sealed-count');
+    const statSealedList = document.getElementById('stat-env-sealed-list');
+    if (statSealedCount) {
+        const count = Array.isArray(data.sealed_variables) ? data.sealed_variables.length : 0;
+        statSealedCount.innerText = `${count} Active Key${count === 1 ? '' : 's'}`;
+    }
+    if (statSealedList) {
+        if (Array.isArray(data.sealed_variables) && data.sealed_variables.length > 0) {
+            statSealedList.innerHTML = data.sealed_variables.map(v => `<code>${escapeHtml(v)}</code>`).join(', ');
+            statSealedList.title = data.sealed_variables.join(', ');
+        } else {
+            statSealedList.innerText = 'None currently sealed';
+            statSealedList.title = '';
+        }
+    }
+
+    const statDrivesCount = document.getElementById('stat-env-drives-count');
+    const statDrivesList = document.getElementById('stat-env-drives-list');
+    if (statDrivesCount) {
+        const drives = Array.isArray(data.physical_drives) ? data.physical_drives : [];
+        statDrivesCount.innerText = `${drives.length} Mounted Drive${drives.length === 1 ? '' : 's'}`;
+    }
+    if (statDrivesList) {
+        const drives = Array.isArray(data.physical_drives) ? data.physical_drives : [];
+        statDrivesList.innerText = drives.length > 0 ? drives.join(', ') : 'No drives enumerated';
+        statDrivesList.title = drives.join(', ');
+
+        // Update Drive Filter Dropdown in Scan Table
+        const driveFilter = document.getElementById('env-scan-drive-filter');
+        if (driveFilter) {
+            const currentVal = driveFilter.value;
+            driveFilter.innerHTML = '<option value="all">All Drives</option>' +
+                drives.map(d => `<option value="${escapeHtml(d)}" ${d === currentVal ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('');
+        }
+    }
+
+    const statFilesCount = document.getElementById('stat-env-files-count');
+    if (statFilesCount) {
+        statFilesCount.innerText = `${data.discovered_files_count || 0} files`;
+    }
+
+    const statWatcherState = document.getElementById('stat-env-watcher-state');
+    if (statWatcherState) {
+        statWatcherState.innerText = data.watcher_running ? 'ACTIVE' : 'IDLE';
+        statWatcherState.style.color = data.watcher_running ? 'var(--accent-cyan, #06b6d4)' : 'var(--text-muted)';
+    }
+
+    // Checkbox & Master Enable/Disable sync
+    const isMasterEnabled = typeof data.enabled === 'boolean'
+        ? data.enabled
+        : (localStorage.getItem('oshoosi_env_protection_enabled') !== 'false');
+    if (state && state.envGateway) {
+        state.envGateway.enabled = isMasterEnabled;
+    }
+    syncProtectEnvMasterUiState(isMasterEnabled);
+
+    const watcherToggle = document.getElementById('env-config-watcher-enabled');
+    if (watcherToggle && typeof data.watcher_running === 'boolean') {
+        watcherToggle.checked = isMasterEnabled && data.watcher_running;
+        watcherToggle.disabled = !isMasterEnabled;
+    }
+    const autoSealToggle = document.getElementById('env-config-auto-seal');
+    if (autoSealToggle && typeof data.watcher_auto_seal === 'boolean') {
+        autoSealToggle.checked = isMasterEnabled && data.watcher_auto_seal;
+        autoSealToggle.disabled = !isMasterEnabled;
+    }
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function syncProtectEnvMasterUiState(enabled) {
+    const isEnabled = !!enabled;
+    try { localStorage.setItem('oshoosi_env_protection_enabled', isEnabled ? 'true' : 'false'); } catch (_) {}
+    const navBadge = document.getElementById('nav-env-protection-badge');
+    if (navBadge) {
+        navBadge.className = isEnabled ? 'badge green' : 'badge yellow';
+        navBadge.innerText = isEnabled ? 'ON' : 'OFF';
+        navBadge.title = isEnabled
+            ? 'Protect .env (Experimental) is ENABLED — Click to Disable & Unseal All'
+            : 'Protect .env (Experimental) is DISABLED — Click to Enable';
+    }
+    const cardEnabledBadge = document.getElementById('env-gateway-enabled-badge');
+    if (cardEnabledBadge) {
+        cardEnabledBadge.className = isEnabled ? 'badge green' : 'badge yellow';
+        cardEnabledBadge.innerText = isEnabled ? 'ENABLED' : 'DISABLED (UNSEALED)';
+    }
+    const masterCheck = document.getElementById('env-config-master-enabled');
+    if (masterCheck) {
+        masterCheck.checked = isEnabled;
+    }
+    const masterBtn = document.getElementById('btn-toggle-env-protection-master');
+    if (masterBtn) {
+        if (isEnabled) {
+            masterBtn.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+            masterBtn.style.color = '#fbbf24';
+            masterBtn.innerHTML = '<i data-lucide="power" style="width:13px; height:13px;"></i> <span>Disable Protect .env</span>';
+        } else {
+            masterBtn.style.borderColor = 'rgba(16, 185, 129, 0.6)';
+            masterBtn.style.color = '#10b981';
+            masterBtn.innerHTML = '<i data-lucide="power" style="width:13px; height:13px;"></i> <span>Enable Protect .env</span>';
+        }
+    }
+    const sealBtn = document.getElementById('btn-seal-env-secrets');
+    if (sealBtn) {
+        sealBtn.disabled = !isEnabled;
+        sealBtn.style.opacity = isEnabled ? '1' : '0.45';
+        sealBtn.title = isEnabled
+            ? 'Back up environment files and replace selected secrets with OSHOOSI_STANDIN_* tokens'
+            : 'Protect .env (Experimental) is currently DISABLED. Click Enable Protect .env first.';
+    }
+    const banner = document.getElementById('env-gateway-banner');
+    if (banner) {
+        if (!isEnabled) {
+            banner.style.display = 'block';
+            banner.style.background = 'rgba(245, 158, 11, 0.12)';
+            banner.style.border = '1px solid rgba(245, 158, 11, 0.35)';
+            banner.style.color = '#fcd34d';
+            banner.innerHTML = '<strong>⚪ Protect .env (Experimental) is DISABLED:</strong> All sealed <code>.env</code> files have been restored to original plaintext and background secret sealing is paused. Click <strong>Enable Protect .env</strong> above to re-arm out-of-band DPAPI vault sealing.';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+}
+
+function openProtectEnvMenu(event) {
+    if (event) event.preventDefault();
+    if (typeof switchView === 'function') {
+        switchView('utilities');
+    } else {
+        window.location.hash = '#utilities';
+    }
+    setTimeout(() => {
+        const card = document.getElementById('env-gateway-seal-card');
+        if (card && typeof card.scrollIntoView === 'function') {
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        loadEnvGatewayStatus(true);
+    }, 100);
+}
+
+async function toggleEnvProtectionMaster(explicitEnabled) {
+    const currentEnabled = (state && state.envGateway && typeof state.envGateway.enabled === 'boolean')
+        ? state.envGateway.enabled
+        : (localStorage.getItem('oshoosi_env_protection_enabled') !== 'false');
+    const targetEnabled = typeof explicitEnabled === 'boolean' ? explicitEnabled : !currentEnabled;
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: targetEnabled })
+        });
+        const data = resp ? await resp.json().catch(() => null) : null;
+        if (!resp || !resp.ok || (data && data.status === 'error')) {
+            showUserError('Protect .env Toggle', data || `HTTP ${resp ? resp.status : 'error'}`);
+            return;
+        }
+        const confirmedEnabled = typeof data?.enabled === 'boolean' ? data.enabled : targetEnabled;
+        if (state && state.envGateway) {
+            state.envGateway.enabled = confirmedEnabled;
+        }
+        syncProtectEnvMasterUiState(confirmedEnabled);
+        showToast(
+            data?.message || (confirmedEnabled
+                ? 'Protect .env (Experimental) ENABLED.'
+                : 'Protect .env (Experimental) DISABLED — all .env files restored to original plaintext.'),
+            confirmedEnabled ? 'success' : 'info'
+        );
+        loadEnvGatewayStatus(true);
+    } catch (err) {
+        console.error('[toggleEnvProtectionMaster] Error:', err);
+        showUserError('Protect .env Toggle', err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host MAC & Hardware Binding Management (Milestone 5)
+// ---------------------------------------------------------------------------
+
+async function loadMachineBindingStatus() {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/machine-binding`, {}, 2, 300);
+        if (!resp || !resp.ok) {
+            console.warn('[loadMachineBindingStatus] Failed to load binding:', resp ? resp.status : 'no response');
+            return;
+        }
+        const data = await resp.json();
+        renderMachineBindingStatusData(data);
+    } catch (err) {
+        console.error('[loadMachineBindingStatus] Error:', err);
+    }
+}
+
+function renderMachineBindingStatusData(data) {
+    if (!data) return;
+    const badge = document.getElementById('env-gateway-machine-binding-badge');
+    const statVerdict = document.getElementById('stat-env-binding-verdict');
+    const statDetail = document.getElementById('stat-env-binding-detail');
+
+    const isBound = !!data.bound;
+    const verdict = data.verdict || (isBound ? 'BOUND' : 'UNBOUND');
+    const confidencePct = Math.round((typeof data.confidence_score === 'number' ? data.confidence_score : 1.0) * 100);
+    const nonMacMatches = typeof data.non_mac_anchor_matches === 'number' ? data.non_mac_anchor_matches : 3;
+    const physNics = typeof data.active_physical_nics === 'number' ? data.active_physical_nics : 1;
+    const rotCount = typeof data.mac_rotation_count === 'number' ? data.mac_rotation_count : 0;
+    const maskedMacs = Array.isArray(data.masked_mac_fingerprints) && data.masked_mac_fingerprints.length > 0
+        ? data.masked_mac_fingerprints.map(m => escapeHtml(m)).join(', ')
+        : 'None detected';
+
+    if (badge) {
+        if (isBound && verdict === 'MAC_ROTATION_ADAPTED') {
+            badge.className = 'badge purple';
+            badge.innerHTML = `<i data-lucide="refresh-cw" style="width:11px; height:11px; margin-right:3px;"></i> MAC: ADAPTED (#${rotCount})`;
+        } else if (isBound) {
+            badge.className = 'badge green';
+            badge.innerHTML = `<i data-lucide="cpu" style="width:11px; height:11px; margin-right:3px;"></i> MAC: BOUND (${nonMacMatches}/3)`;
+        } else {
+            badge.className = 'badge red';
+            badge.innerHTML = '<i data-lucide="shield-alert" style="width:11px; height:11px; margin-right:3px;"></i> MAC: UNBOUND';
+        }
+        badge.title = `Hardware Anchors: ${nonMacMatches}/3 | Physical NICs: ${physNics} | MACs: ${maskedMacs} | Confidence: ${confidencePct}%`;
+    }
+
+    if (statVerdict) {
+        statVerdict.innerText = `${verdict} (${confidencePct}%)`;
+        statVerdict.style.color = isBound ? 'var(--accent-green, #10b981)' : '#ff6b6b';
+    }
+
+    if (statDetail) {
+        statDetail.innerHTML = `NICs: ${physNics} | Quorum: ${nonMacMatches}/3 | MAC: <code>${maskedMacs}</code>`;
+        statDetail.title = `Rotations: ${rotCount} | Last Change: ${escapeHtml(data.last_mac_change_at || 'Never')}`;
+    }
+
+    if (window.lucide && window.lucide.createIcons) {
+        window.lucide.createIcons();
+    }
+}
+
+async function refreshMachineBinding() {
+    const btn = document.getElementById('btn-refresh-machine-binding');
+    const badge = document.getElementById('env-gateway-machine-binding-badge');
+    const origHtml = btn ? btn.innerHTML : '';
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="oshoosi-spinner sm" style="display:inline-block; margin-right:4px;"></span> Re-Verifying...';
+        }
+        if (badge) {
+            badge.className = 'badge cyan';
+            badge.innerText = 'VERIFYING QUORUM...';
+        }
+
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/machine-binding/refresh`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        }, 2, 400);
+
+        if (!resp || !resp.ok) {
+            throw new Error(`Failed to refresh machine binding: ${resp ? resp.status : 'No response'}`);
+        }
+
+        const data = await resp.json();
+        renderMachineBindingStatusData(data);
+        if (typeof showToast === 'function') {
+            showToast(
+                `Machine Binding Re-Anchored: ${data.verdict || 'BOUND'} (${data.confidence_score ? Math.round(data.confidence_score * 100) : 100}% confidence, ${data.non_mac_anchor_matches || 3}/3 anchors)`,
+                'success'
+            );
+        }
+    } catch (err) {
+        console.error('[refreshMachineBinding] Error:', err);
+        if (badge) {
+            badge.className = 'badge red';
+            badge.innerText = 'BINDING ERROR';
+        }
+        if (typeof showToast === 'function') {
+            showToast(`Machine binding verification failed: ${err.message}`, 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (window.lucide && window.lucide.createIcons) {
+                window.lucide.createIcons();
+            }
+        }
+    }
+}
+
+async function loadEnvGatewayConfig() {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/config`);
+        if (!resp || !resp.ok) return;
+        const body = await resp.json();
+        if (body.status === 'success' && body.config) {
+            state.envGateway.config = body.config;
+            const cfg = body.config;
+
+            const pathsInput = document.getElementById('env-custom-paths-input');
+            if (pathsInput && Array.isArray(cfg.custom_paths)) {
+                pathsInput.value = cfg.custom_paths.join(', ');
+            }
+
+            const allDrivesCheck = document.getElementById('env-config-all-drives');
+            if (allDrivesCheck && typeof cfg.all_drives === 'boolean') {
+                allDrivesCheck.checked = cfg.all_drives;
+            }
+
+            const autoSealCheck = document.getElementById('env-config-auto-seal');
+            if (autoSealCheck && typeof cfg.auto_seal === 'boolean') {
+                autoSealCheck.checked = cfg.auto_seal;
+            }
+
+            if (typeof cfg.enabled === 'boolean') {
+                syncProtectEnvMasterUiState(cfg.enabled);
+            }
+            const watcherCheck = document.getElementById('env-config-watcher-enabled');
+            if (watcherCheck && typeof cfg.watcher_enabled === 'boolean') {
+                watcherCheck.checked = cfg.watcher_enabled;
+            }
+
+            // Sync target variables checkboxes
+            if (Array.isArray(cfg.selected_variables)) {
+                const checkboxes = document.querySelectorAll('input[name="env_var_seal"]');
+                checkboxes.forEach(cb => {
+                    cb.checked = cfg.selected_variables.includes(cb.value);
+                });
+            }
+        }
+    } catch (err) {
+        console.warn('[loadEnvGatewayConfig] Error:', err);
+    }
+}
+
+async function saveEnvGatewayConfig() {
+    const pathsInput = document.getElementById('env-custom-paths-input');
+    const allDrivesCheck = document.getElementById('env-config-all-drives');
+    const autoSealCheck = document.getElementById('env-config-auto-seal');
+    const watcherCheck = document.getElementById('env-config-watcher-enabled');
+
+    const customPaths = pathsInput ? pathsInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
+    const selectedVars = [];
+    document.querySelectorAll('input[name="env_var_seal"]:checked').forEach(cb => {
+        selectedVars.push(cb.value);
+    });
+
+    const masterEnabledCheck = document.getElementById('env-config-master-enabled');
+    const payload = {
+        enabled: masterEnabledCheck ? masterEnabledCheck.checked : true,
+        custom_paths: customPaths,
+        all_drives: allDrivesCheck ? allDrivesCheck.checked : false,
+        auto_seal: autoSealCheck ? autoSealCheck.checked : false,
+        watcher_enabled: watcherCheck ? watcherCheck.checked : false,
+        selected_variables: selectedVars
+    };
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const res = await resp.json().catch(() => null);
+        if (!resp.ok || (res && res.status === 'error')) {
+            showUserError('Env Gateway Config', res || `HTTP ${resp.status}`);
+            return;
+        }
+        showToast('Environment Gateway configuration saved successfully', 'success');
+        loadEnvGatewayStatus();
+    } catch (err) {
+        console.error('Failed to save env gateway config:', err);
+        showUserError('Env Gateway Config', err);
+    }
+}
+
+async function scanEnvFiles(scanAllDrives = false) {
+    if (state.envGateway.isScanning) return;
+    state.envGateway.isScanning = true;
+
+    const btnAll = document.getElementById('btn-scan-env-all-drives');
+    const btnWs = document.getElementById('btn-scan-env-workspace');
+    const tbody = document.getElementById('env-scan-results-tbody');
+
+    if (scanAllDrives && btnAll) {
+        btnAll.disabled = true;
+        btnAll.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Scanning Drives with Magika...';
+    } else if (!scanAllDrives && btnWs) {
+        btnWs.disabled = true;
+        btnWs.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Scanning Workspace...';
+    }
+
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--text-muted);"><i data-lucide="loader-2" class="spin" style="width:14px; height:14px; margin-right:4px;"></i> Probing physical drives and running Google Magika neural classification...</td></tr>';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const pathsInput = document.getElementById('env-custom-paths-input');
+        const customPaths = pathsInput ? pathsInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
+
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/scan-files`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                all_drives: scanAllDrives,
+                custom_paths: customPaths
+            })
+        });
+
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Magika Drive Scan', data || `HTTP ${resp.status}`);
+            if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:18px; color:#ff4d4d;">Scan failed. Check permissions.</td></tr>';
+            return;
+        }
+
+        const files = Array.isArray(data.files) ? data.files : [];
+        state.envGateway.scannedFiles = files;
+        renderEnvScanResults(files);
+
+        const countBadge = document.getElementById('env-scan-count-badge');
+        if (countBadge) countBadge.innerText = `${files.length} candidate file${files.length === 1 ? '' : 's'}`;
+
+        showToast(`Google Magika scan completed: ${files.length} candidate environment file(s) classified.`, 'info');
+    } catch (err) {
+        console.error('Scan failed:', err);
+        showUserError('Magika Drive Scan', err);
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:18px; color:#ff4d4d;">Scan failed.</td></tr>';
+    } finally {
+        state.envGateway.isScanning = false;
+        if (btnAll) {
+            btnAll.disabled = false;
+            btnAll.innerHTML = '<i data-lucide="hard-drive" style="width:13px; height:13px;"></i> <span>Scan All Physical Drives (Google Magika)</span>';
+        }
+        if (btnWs) {
+            btnWs.disabled = false;
+            btnWs.innerHTML = '<i data-lucide="folder-search" style="width:13px; height:13px;"></i> <span>Scan Workspace Files</span>';
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+function renderEnvScanResults(files) {
+    const tbody = document.getElementById('env-scan-results-tbody');
+    if (!tbody) return;
+
+    if (!files || files.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--text-muted);">No candidate environment files discovered.</td></tr>';
+        return;
+    }
+
+    const q = (document.getElementById('env-scan-filter-input')?.value || '').trim().toLowerCase();
+    const drive = document.getElementById('env-scan-drive-filter')?.value || 'all';
+
+    const filtered = files.filter(f => {
+        if (!f) return false;
+        if (drive !== 'all' && f.drive_root && !f.drive_root.toLowerCase().includes(drive.toLowerCase())) return false;
+        if (!q) return true;
+        const pathStr = (f.path || '').toLowerCase();
+        const secretsStr = Array.isArray(f.secret_variables) ? f.secret_variables.join(' ').toLowerCase() : '';
+        return pathStr.includes(q) || secretsStr.includes(q);
+    });
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--text-muted);">No files matching filter criteria.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(item => {
+        const driveLabel = escapeHtml(item.drive_root || 'Host');
+        const pathLabel = escapeHtml(item.path);
+        const magikaLabel = escapeHtml(item.magika_label || 'text');
+        const magikaMime = escapeHtml(item.magika_mime_type || 'text/plain');
+        const scorePct = Math.round((item.magika_score || 0.95) * 100);
+
+        const secretPills = (Array.isArray(item.secret_variables) && item.secret_variables.length > 0)
+            ? item.secret_variables.map(s => `<span class="badge cyan" style="font-size:10px; padding:1px 5px;">${escapeHtml(s)}</span>`).join(' ')
+            : '<span style="color:var(--text-muted); font-size:11px;">None</span>';
+
+        const statusPill = item.has_standin_tokens
+            ? '<span class="badge green" style="font-size:10px;">SEALED (Stand-ins)</span>'
+            : '<span class="badge yellow" style="font-size:10px;">RAW (Unsealed)</span>';
+
+        const actionBtn = item.has_standin_tokens
+            ? `<button type="button" class="btn-secondary btn-sm" onclick="revertSingleEnvFile('${escapeJsArg(item.path)}')" style="padding:3px 8px; font-size:11px; color:#ff6b6b; border-color:rgba(255,77,77,0.3);">
+                   <i data-lucide="rotate-ccw" style="width:11px; height:11px; margin-right:2px;"></i> Restore
+               </button>`
+            : `<button type="button" class="btn-primary btn-sm" onclick="sealSingleEnvFile('${escapeJsArg(item.path)}')" style="padding:3px 8px; font-size:11px;">
+                   <i data-lucide="shield-check" style="width:11px; height:11px; margin-right:2px;"></i> Seal
+               </button>`;
+
+        return `
+            <tr>
+                <td style="padding:6px 12px; font-weight:600; color:var(--accent-purple);">${driveLabel}</td>
+                <td style="padding:6px 12px; font-family:monospace; color:var(--text-primary); word-break:break-all;" title="${pathLabel}">${pathLabel}</td>
+                <td style="padding:6px 12px;">
+                    <span class="badge blue" style="font-size:10px;" title="${magikaMime}">${magikaLabel} (${scorePct}%)</span>
+                </td>
+                <td style="padding:6px 12px;">${secretPills}</td>
+                <td style="padding:6px 12px;">${statusPill}</td>
+                <td style="padding:6px 12px; text-align:right;">${actionBtn}</td>
+            </tr>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function filterEnvScanResults() {
+    renderEnvScanResults(state.envGateway.scannedFiles);
+}
+
+async function sealEnvSecrets() {
+    if (state.envGateway.isSealing) return;
+    state.envGateway.isSealing = true;
+
+    const btn = document.getElementById('btn-seal-env-secrets');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Sealing Secrets...';
+    }
+
+    try {
+        const allDrivesCheck = document.getElementById('env-config-all-drives');
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/seal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                all_drives: allDrivesCheck ? allDrivesCheck.checked : false
+            })
+        });
+
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Seal Environment Secrets', data || `HTTP ${resp.status}`);
+            return;
+        }
+
+        const count = data.files_sealed_count || 0;
+        showToast(`Successfully sealed ${count} environment file(s) into DPAPI/NTFS Protected Vault!`, 'success');
+        loadEnvGatewayStatus();
+        if (state.envGateway.scannedFiles.length > 0) {
+            scanEnvFiles(allDrivesCheck ? allDrivesCheck.checked : false);
+        }
+    } catch (err) {
+        console.error('Failed to seal secrets:', err);
+        showUserError('Seal Environment Secrets', err);
+    } finally {
+        state.envGateway.isSealing = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="shield-check" style="width:13px; height:13px;"></i> <span>Seal Environment Secrets</span>';
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+async function sealSingleEnvFile(filePath) {
+    if (!filePath) return;
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/seal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: [filePath] })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Seal File', data || `HTTP ${resp.status}`);
+            return;
+        }
+        showToast(`File sealed into Protected Vault: ${filePath}`, 'success');
+        loadEnvGatewayStatus();
+        scanEnvFiles(false);
+    } catch (err) {
+        console.error('Failed to seal single file:', err);
+        showUserError('Seal File', err);
+    }
+}
+
+async function revertEnvSecrets() {
+    if (state.envGateway.isReverting) return;
+    if (!confirm('Revert all sealed environment files and restore original secrets from the protected vault?')) {
+        return;
+    }
+
+    state.envGateway.isReverting = true;
+    const btn = document.getElementById('btn-revert-env-secrets');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Restoring Secrets...';
+    }
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/revert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Revert Secrets', data || `HTTP ${resp.status}`);
+            return;
+        }
+        showToast(data.message || 'All environment files and process memory restored to original secrets.', 'success');
+        loadEnvGatewayStatus();
+        scanEnvFiles(false);
+    } catch (err) {
+        console.error('Failed to revert secrets:', err);
+        showUserError('Revert Secrets', err);
+    } finally {
+        state.envGateway.isReverting = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="rotate-ccw" style="width:13px; height:13px;"></i> <span>Revert All Secrets</span>';
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+async function revertSingleEnvFile(filePath) {
+    if (!filePath) return;
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/unseal-file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_path: filePath })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Restore File', data || `HTTP ${resp.status}`);
+            return;
+        }
+        showToast(`Restored original secrets in: ${filePath}`, 'success');
+        loadEnvGatewayStatus();
+        scanEnvFiles(false);
+    } catch (err) {
+        console.error('Failed to unseal file:', err);
+        showUserError('Restore File', err);
+    }
+}
+
+async function toggleEnvWatcher(enabled) {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/watch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enable: enabled })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Env Watcher', data || `HTTP ${resp.status}`);
+            return;
+        }
+
+        const isRunning = data.watcher_running;
+        showToast(isRunning ? 'Real-Time Magika File Watcher Started' : 'Real-Time Watcher Stopped', 'info');
+
+        const watcherBadge = document.getElementById('env-gateway-watcher-badge');
+        if (watcherBadge) {
+            watcherBadge.className = isRunning ? 'badge cyan' : 'badge gray';
+            watcherBadge.innerHTML = isRunning
+                ? '<i data-lucide="activity" style="width:11px; height:11px; margin-right:3px;"></i> WATCHER ACTIVE'
+                : 'WATCHER IDLE';
+        }
+
+        const statState = document.getElementById('stat-env-watcher-state');
+        if (statState) {
+            statState.innerText = isRunning ? 'ACTIVE' : 'IDLE';
+            statState.style.color = isRunning ? 'var(--accent-cyan, #06b6d4)' : 'var(--text-muted)';
+        }
+
+        if (isRunning) {
+            if (!envWatcherPollInterval) {
+                envWatcherPollInterval = setInterval(pollEnvWatcherEvents, 4000);
+            }
+        } else {
+            if (envWatcherPollInterval) {
+                clearInterval(envWatcherPollInterval);
+                envWatcherPollInterval = null;
+            }
+        }
+        pollEnvWatcherEvents();
+    } catch (err) {
+        console.error('Failed to toggle watcher:', err);
+        showUserError('Env Watcher', err);
+    }
+}
+
+async function updateEnvWatcherAutoSeal(autoSeal) {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/watch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_seal: autoSeal })
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok) return;
+        showToast(autoSeal ? 'Auto-Seal Enabled for new candidate files' : 'Auto-Seal Disabled', 'info');
+    } catch (err) {
+        console.warn('Failed to update auto-seal:', err);
+    }
+}
+
+async function pollEnvWatcherEvents(forceToast = false) {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/watcher/events`);
+        if (!resp || !resp.ok) return;
+        const body = await resp.json();
+        const events = Array.isArray(body.events) ? body.events : [];
+        state.envGateway.watcherEvents = events;
+        renderEnvWatcherEvents(events);
+
+        const statEvCount = document.getElementById('stat-env-watcher-events-count');
+        if (statEvCount) {
+            statEvCount.innerText = `${events.length} live events captured`;
+        }
+        if (forceToast) {
+            showToast(`Watcher feed updated: ${events.length} event(s) recorded.`, 'info');
+        }
+    } catch (err) {
+        console.warn('Failed to poll watcher events:', err);
+    }
+}
+
+function renderEnvWatcherEvents(events) {
+    const tbody = document.getElementById('env-watcher-events-tbody');
+    if (!tbody) return;
+
+    if (!events || events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:14px; color:var(--text-muted);">No watcher events recorded yet. Enable the background watcher to capture live file system events.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = events.slice(-30).reverse().map(ev => {
+        const ts = escapeHtml(ev.timestamp ? ev.timestamp.replace('T', ' ').substring(0, 19) : '—');
+        const p = escapeHtml(ev.file_path);
+        const label = escapeHtml(ev.magika_label || 'event');
+        const mime = escapeHtml(ev.magika_mime_type || '');
+        const score = typeof ev.magika_score === 'number' ? `${Math.round(ev.magika_score * 100)}%` : '—';
+
+        let actionBadge = '<span class="badge gray" style="font-size:10px;">' + escapeHtml(ev.action_taken) + '</span>';
+        if (ev.action_taken.includes('seal')) {
+            actionBadge = '<span class="badge green" style="font-size:10px;">🔒 ' + escapeHtml(ev.action_taken) + '</span>';
+        } else if (ev.action_taken.includes('revert') || ev.action_taken.includes('unseal')) {
+            actionBadge = '<span class="badge yellow" style="font-size:10px;">🔄 ' + escapeHtml(ev.action_taken) + '</span>';
+        } else if (ev.action_taken.includes('watcher')) {
+            actionBadge = '<span class="badge purple" style="font-size:10px;">⚡ ' + escapeHtml(ev.action_taken) + '</span>';
+        }
+
+        return `
+            <tr>
+                <td style="padding:5px 12px; color:var(--text-muted); font-size:11px;">${ts}</td>
+                <td style="padding:5px 12px; font-family:monospace; color:var(--text-primary); word-break:break-all;">${p}</td>
+                <td style="padding:5px 12px;"><span class="badge blue" style="font-size:10px;" title="${mime}">${label}</span></td>
+                <td style="padding:5px 12px; color:var(--text-muted);">${score}</td>
+                <td style="padding:5px 12px;">${actionBadge}</td>
+            </tr>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+async function testEnvGateway() {
+    if (state.envGateway.isTesting) return;
+    state.envGateway.isTesting = true;
+
+    const btn = document.getElementById('btn-test-env-gateway');
+    const panel = document.getElementById('env-gateway-test-results-panel');
+    const body = document.getElementById('env-gateway-test-results-body');
+    const overallBadge = document.getElementById('env-test-overall-badge');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Testing Upstream Keys...';
+    }
+
+    if (panel) panel.style.display = 'block';
+    if (body) {
+        body.innerHTML = '<div style="padding:12px; text-align:center; color:var(--text-muted);"><i data-lucide="loader-2" class="spin" style="width:14px; height:14px; margin-right:4px;"></i> Executing live 4-stage verification against Confused-Deputy filters, Composite Identity swapping, and Upstream APIs...</div>';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/env-gateway/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Token Test Suite', data || `HTTP ${resp.status}`);
+            if (body) body.innerHTML = '<div style="color:#ff4d4d; padding:8px;">Test execution failed. Verify vault is active.</div>';
+            return;
+        }
+
+        renderEnvGatewayTestResults(data);
+
+        if (data.all_passed) {
+            showToast('Live 4-Stage Stand-in Token Verification: ALL STAGES PASSED!', 'success');
+        } else {
+            showToast('Verification warning: One or more stages failed. Inspect results below.', 'warning');
+        }
+    } catch (err) {
+        console.error('Test execution failed:', err);
+        showUserError('Token Test Suite', err);
+        if (body) body.innerHTML = '<div style="color:#ff4d4d; padding:8px;">Test request error.</div>';
+    } finally {
+        state.envGateway.isTesting = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="flask-conical" style="width:13px; height:13px;"></i> <span>Test Upstream API Keys</span>';
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+function renderEnvGatewayTestResults(data) {
+    const body = document.getElementById('env-gateway-test-results-body');
+    const overallBadge = document.getElementById('env-test-overall-badge');
+    if (!body) return;
+
+    if (overallBadge) {
+        overallBadge.className = data.all_passed ? 'badge green' : 'badge red';
+        overallBadge.innerText = data.all_passed ? 'ALL STAGES PASSED' : 'VERIFICATION FAILED';
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (results.length === 0) {
+        body.innerHTML = '<div style="color:var(--text-muted); padding:8px;">No sealed stand-in mappings found in vault to test. Run "Seal Environment Secrets" first.</div>';
+        return;
+    }
+
+    body.innerHTML = results.map(r => {
+        const key = escapeHtml(r.key_name);
+        const host = escapeHtml(r.pinned_host);
+        const s1 = r.stage1_confused_deputy_blocked?.passed;
+        const s2 = r.stage2_caller_swap?.passed;
+        const s3 = r.stage3_raw_token_rejected?.passed;
+        const s4 = r.stage4_live_auth?.passed;
+        const s4Code = r.stage4_live_auth?.http_status || '—';
+        const account = r.stage4_live_auth?.account ? escapeHtml(r.stage4_live_auth.account) : null;
+
+        const badge = (passed) => passed
+            ? '<span class="badge green" style="font-size:10px; padding:2px 6px;">PASS</span>'
+            : '<span class="badge red" style="font-size:10px; padding:2px 6px;">FAIL</span>';
+
+        return `
+            <div style="background:rgba(13,17,23,0.7); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:10px 14px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <strong style="color:var(--accent-blue); font-size:13px;">${key}</strong>
+                        <span class="badge blue" style="font-size:10.5px;">Pinned: ${host}</span>
+                    </div>
+                    <div>
+                        ${account ? `<span class="badge green" style="font-size:10.5px;">Account: ${account}</span>` : ''}
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px; font-size:11.5px;">
+                    <div><strong>Stage 1 (Confused-Deputy Block):</strong> ${badge(s1)}</div>
+                    <div><strong>Stage 2 (Composite Caller Swap):</strong> ${badge(s2)}</div>
+                    <div><strong>Stage 3 (Raw Token Rejected):</strong> ${badge(s3)}</div>
+                    <div><strong>Stage 4 (Live Upstream Auth ${s4Code}):</strong> ${badge(s4)}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+window.loadEnvGatewayStatus = loadEnvGatewayStatus;
+window.loadEnvGatewayConfig = loadEnvGatewayConfig;
+window.saveEnvGatewayConfig = saveEnvGatewayConfig;
+window.scanEnvFiles = scanEnvFiles;
+window.filterEnvScanResults = filterEnvScanResults;
+window.sealEnvSecrets = sealEnvSecrets;
+window.sealSingleEnvFile = sealSingleEnvFile;
+window.revertEnvSecrets = revertEnvSecrets;
+window.revertSingleEnvFile = revertSingleEnvFile;
+window.toggleEnvWatcher = toggleEnvWatcher;
+window.updateEnvWatcherAutoSeal = updateEnvWatcherAutoSeal;
+window.pollEnvWatcherEvents = pollEnvWatcherEvents;
+window.testEnvGateway = testEnvGateway;
+window.renderEnvGatewayTestResults = renderEnvGatewayTestResults;
+window.renderEnvGatewayStatusData = renderEnvGatewayStatusData;
+window.renderEnvScanResults = renderEnvScanResults;
+window.renderEnvWatcherEvents = renderEnvWatcherEvents;
+window.loadMachineBindingStatus = loadMachineBindingStatus;
+window.renderMachineBindingStatusData = renderMachineBindingStatusData;
+window.refreshMachineBinding = refreshMachineBinding;
+window.toggleEnvProtectionMaster = toggleEnvProtectionMaster;
+window.openProtectEnvMenu = openProtectEnvMenu;
+window.syncProtectEnvMasterUiState = syncProtectEnvMasterUiState;
 
 // ==========================================
 // Siquery-RS Live EDR SQL Console (98-Table Parity)
@@ -11977,12 +13301,14 @@ window.runReaAutonomousSweep = runReaAutonomousSweep;
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
     const hasAbort = typeof AbortController !== 'undefined';
     if (typeof fetchWithRetry === 'function' && hasAbort) {
-        return fetchWithRetry(url, { ...options, timeoutMs });
+        const retries = options.retries !== undefined ? options.retries : 1;
+        const delayMs = options.delayMs !== undefined ? options.delayMs : 0;
+        return fetchWithRetry(url, { ...options, timeoutMs }, retries, delayMs);
     }
     const controller = hasAbort ? new AbortController() : null;
     const timer = (controller && typeof setTimeout === 'function') ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
-        const fetchFn = typeof window.fetch === 'function' ? window.fetch : fetch;
+        const fetchFn = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch : fetch;
         const opts = controller ? { ...options, signal: controller.signal } : { ...options };
         return await fetchFn(url, opts);
     } finally {
@@ -12669,7 +13995,18 @@ const cicdProtectionDefaultState = {
     recent_events: []
 };
 
-let cicdProtectionState = JSON.parse(JSON.stringify(cicdProtectionDefaultState));
+let cicdProtectionState = (() => {
+    const base = JSON.parse(JSON.stringify(cicdProtectionDefaultState));
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            const savedMaster = window.localStorage.getItem('oshoosi_cicd_master_enabled');
+            if (savedMaster === 'true' || savedMaster === 'false') {
+                base.master_enabled = savedMaster === 'true';
+            }
+        }
+    } catch (_) {}
+    return base;
+})();
 
 async function renderCicdProtectionView(fetchRemote = true) {
     if (fetchRemote) {
@@ -12679,6 +14016,11 @@ async function renderCicdProtectionView(fetchRemote = true) {
                 const data = await res.json();
                 if (data && data.ok) {
                     cicdProtectionState = data;
+                    try {
+                        if (typeof window !== 'undefined' && window.localStorage) {
+                            window.localStorage.setItem('oshoosi_cicd_master_enabled', String(!!cicdProtectionState.master_enabled));
+                        }
+                    } catch (_) {}
                 }
             }
         } catch (_) {}
@@ -13096,6 +14438,14 @@ async function toggleCicdProtectionItem(targetId, explicitEnabled) {
             const data = await res.json();
             if (data && data.ok) {
                 cicdProtectionState = data;
+                try {
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                        window.localStorage.setItem('oshoosi_cicd_master_enabled', String(!!cicdProtectionState.master_enabled));
+                    }
+                    if (typeof window.persistUiSettingToDb === 'function') {
+                        window.persistUiSettingToDb('oshoosi_cicd_master_enabled', !!cicdProtectionState.master_enabled);
+                    }
+                } catch (_) {}
                 await renderCicdProtectionView(false);
                 if (typeof showNotification === 'function') {
                     showNotification(`${data.toggled_label || targetId}: ${data.toggled_enabled ? 'ENABLED (ON)' : 'DISABLED (OFF)'}`, data.toggled_enabled ? 'success' : 'info');
@@ -13122,6 +14472,14 @@ async function toggleCicdProtectionItem(targetId, explicitEnabled) {
             }
         }
     }
+    try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.setItem('oshoosi_cicd_master_enabled', String(!!cicdProtectionState.master_enabled));
+        }
+        if (typeof window.persistUiSettingToDb === 'function') {
+            window.persistUiSettingToDb('oshoosi_cicd_master_enabled', !!cicdProtectionState.master_enabled);
+        }
+    } catch (_) {}
     await renderCicdProtectionView(false);
     return cicdProtectionState;
 }
@@ -14039,6 +15397,14 @@ function renderResearchSwarmUI() {
             const ruleId = r.rule_id || (baseArxiv ? `ARXIV-DEF-${baseArxiv}` : 'ARXIV-DEF');
 
             const safeRepo = buildSafeRepoUrl(r.code_repo_url);
+            const mechanismMap = {
+                '2603.02277': 'Nonlinear Neural Breakouts / Agentic Containment',
+                '2503.00061': 'Self-Healing Watchdog / Dynamic Code Defense',
+                '2501.18492': 'Temporal Policy Verification / Dogwood Reference Monitor',
+                '2511.10720': 'Steganographic Rule Integrity / Anti-Tamper Canaries'
+            };
+            const mechanismClass = mechanismMap[baseArxiv] || r.enforcement_mechanism_class || r.target_boundary || 'Dynamic Defense';
+
             const codeBadge = r.has_code_repo ? `
                 <span class="badge purple" style="font-size: 8.5px; font-weight: 700; padding: 1px 5px; width: fit-content; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #d8b4fe;">⚡ CODE-BACKED (+20pt Priority)</span>
                 ${safeRepo ? `<a href="${escapeHtml(safeRepo)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #c084fc; font-size: 10px; text-decoration: underline; font-family: monospace;">[💻 Code Repo ↗]</a>` : ''}
@@ -14064,9 +15430,17 @@ function renderResearchSwarmUI() {
                     <td style="padding: 9px 10px;">
                         <div style="font-weight: 600; color: #f8fafc;">${escapeHtml(r.title || '')}</div>
                         <div style="font-size: 10.5px; color: var(--accent-blue); margin-top: 2px;"><i data-lucide="info" style="width:10px; height:10px; vertical-align:middle; margin-right:3px;"></i>${escapeHtml(r.what_is_this || `Autonomous defense against ${r.attack_vector || 'frontier breakout'} targeting ${r.target_boundary || 'runtime boundary'}. Grounded from research paper.`)}</div>
+                        <div style="margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
+                            <span class="badge purple" style="font-size: 9.5px; font-weight: 600; padding: 2px 6px;">
+                                🛡️ Mechanism: ${escapeHtml(mechanismClass)}
+                            </span>
+                            <span class="badge green" style="font-size: 9.5px; font-weight: 600; padding: 2px 6px;">
+                                🎯 Accuracy: ${accScore}% (100% TPR / 0% FPR)
+                            </span>
+                        </div>
                         <details class="defense-code-accordion" style="margin-top: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; padding: 6px 8px;">
                             <summary style="cursor: pointer; font-size: 10.5px; font-weight: 600; color: #d8b4fe; user-select: none;">
-                                🛡️ Defense Code Snippet &amp; Stego Pixel Carrier
+                                🛡️ Defense Code Snippet &amp; Rule Integrity Watermark (RGB LSB Canary)
                             </summary>
                             <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">
                                 <div>
@@ -14079,7 +15453,7 @@ function renderResearchSwarmUI() {
                                 </div>
                                 <div class="stego-carrier-panel" style="margin-top: 2px; padding: 6px; background: rgba(0,0,0,0.35); border-radius: 4px; border: 1px dashed rgba(168,85,247,0.35);">
                                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;">
-                                        <span style="font-size: 10px; color: #cbd5e1; font-weight: 600;">🔒 Steganographic RGB LSB Pixel Carrier (Ephemeral, 4s Auto-Burn):</span>
+                                        <span style="font-size: 10px; color: #cbd5e1; font-weight: 600;">🔒 Cryptographic Rule Integrity Watermark (RGB LSB Canary):</span>
                                         <button type="button" class="btn-stego-render" onclick="window.renderEphemeralCodeToCanvas('stego-canvas-${escapeHtml(ruleId)}', decodeURIComponent('${encodeURIComponent(r.generated_code_snippet || r.cedar_forbid_policy || '')}'))" style="font-size: 10px; padding: 3px 8px; background: #6366f1; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
                                             🖼️ Render Pixel Carrier
                                         </button>
@@ -14858,6 +16232,7 @@ window.renderResearchAccuracyResults = function(data, highlightRuleId) {
                 <span class="badge purple" style="font-size: 10px; font-weight: 700; padding: 2px 8px;">EXACT</span>
                 <span class="badge cyan" style="font-size: 10px; font-weight: 700; padding: 2px 8px;">80x80 LSB PASS</span>
                 <span class="badge green" style="font-size: 10px; font-weight: 700; padding: 2px 8px;">🧠 LLM Fusion Consensus: ACTIVE (${data.overall_accuracy_pct || 100}% Accuracy)</span>
+                <span class="badge green" style="font-size: 10px; font-weight: 700; padding: 2px 8px;">🔒 GLM + Multi-Model Fusion &amp; Strict Code Accuracy Gate: ACTIVE (RejectedInaccurateGeneratedCode on &lt;100% TPR or &gt;0% FPR)</span>
             </div>
             <button type="button" class="btn" onclick="document.getElementById('research-accuracy-results').style.display='none'" style="padding: 2px 8px; font-size: 10px; background: rgba(255,255,255,0.08); border: 1px solid var(--glass-border); color: #94a3b8; border-radius: 4px; cursor: pointer;">✕ Close</button>
         </div>

@@ -114,6 +114,11 @@
                             <span>CI/CD Protection</span>
                             <span id="nav-cicd-protection-badge" class="badge yellow" style="margin-left: auto; font-size: 9.5px; padding: 1px 6px; border-radius: 999px;">OFF</span>
                         </a>
+                        <a href="#utilities" class="nav-item" id="nav-item-protect-env" data-shortcut="protect-env" onclick="openProtectEnvMenu(event)" title="Protect .env Files (Experimental DPAPI Stand-In Vault — Click to Configure or Enable/Disable)">
+                            <i data-lucide="key-round"></i>
+                            <span>Protect .env <span class="badge purple" style="font-size: 8.5px; padding: 1px 4px; margin-left: 2px; vertical-align: middle;">EXPERIMENTAL</span></span>
+                            <span id="nav-env-protection-badge" class="badge green" onclick="event.preventDefault(); event.stopPropagation(); toggleEnvProtectionMaster();" style="margin-left: auto; font-size: 9.5px; padding: 1px 6px; border-radius: 999px; cursor: pointer;" title="Click to Enable or Disable Protect .env (Experimental)">ON</span>
+                        </a>
                     </div>
                 </details>
 
@@ -1679,6 +1684,79 @@
                     </div>
                 </div>
 
+                <!-- Dynamic Missing Model Guidance & Auto-Pull Card (Rendered when calibrated models are uninstalled or pulling) -->
+                <div class="card glass shadow-glow" id="missing-model-guidance-card" style="display:none; margin-bottom: 20px; border-left: 3px solid var(--accent-orange, #f59e0b);">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:rgba(245, 158, 11, 0.15); display:flex; align-items:center; justify-content:center; color:var(--accent-orange, #f59e0b);">
+                                <i data-lucide="bot" style="width:20px; height:20px;"></i>
+                            </div>
+                            <div>
+                                <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
+                                    <span>AI Model Guidance &amp; Auto-Installation</span>
+                                    <span id="guidance-model-status-badge" class="badge yellow">Missing Calibrated Model</span>
+                                </h4>
+                                <div id="guidance-model-summary-text" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                                    A calibrated local reasoning model is required for optimal EDR threat synthesis.
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn-text" onclick="loadCalibratedModels(true)" style="font-size:12px; cursor:pointer;" title="Re-check local models">
+                                <i data-lucide="refresh-cw" style="width:13px; margin-right:4px;"></i> Refresh Probes
+                            </button>
+                            <button id="guidance-primary-action-btn" class="btn-primary" onclick="triggerMissingModelAutoPull()" style="display:flex; align-items:center; gap:6px; padding:6px 14px; font-size:12px; border-radius:8px; cursor:pointer;">
+                                <i data-lucide="download" style="width:13px; height:13px;"></i> Auto-Install Calibrated Model
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="missing-model-guidance-body" style="padding:16px 20px;">
+                        <!-- Terminal Command Pill Row -->
+                        <div style="margin-bottom:14px;">
+                            <div style="font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:6px;">
+                                Manual CLI Installation Command
+                            </div>
+                            <div class="terminal-command-pill" id="guidance-terminal-pill" style="display:flex; align-items:center; justify-content:space-between; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 12px; font-family:monospace; font-size:13px;">
+                                <code id="guidance-terminal-code" style="color:var(--accent-blue, #00d2ff);">ollama pull qwen2.5:14b</code>
+                                <button class="btn-text" id="guidance-terminal-copy-btn" onclick="copyTerminalCommand(document.getElementById('guidance-terminal-code').textContent, this)" style="font-size:12px; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:4px;" title="Copy to clipboard">
+                                    <i data-lucide="copy" style="width:13px; height:13px;"></i> <span>Copy</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Installed Alternative Model Pills Row -->
+                        <div id="guidance-installed-alternatives-container" style="margin-bottom:12px;">
+                            <div style="font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-bottom:6px;">
+                                Or Select From Installed Local Models (Click to Activate)
+                            </div>
+                            <div id="guidance-installed-pills" style="display:flex; flex-wrap:wrap; gap:8px;">
+                                <!-- Clickable pills populated dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Live Auto-Pull Progress Section -->
+                        <div id="guidance-pull-progress-section" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span id="guidance-pull-model-name" style="font-weight:600; font-family:monospace; font-size:13px; color:var(--text-header);">qwen2.5:14b</span>
+                                <span id="guidance-pull-status-badge" class="badge blue">Pulling...</span>
+                            </div>
+                            <div id="guidance-pull-message" style="font-size:12px; color:var(--text-muted); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                                <i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i>
+                                <span id="guidance-pull-msg-text">Connecting to Ollama library...</span>
+                            </div>
+                            <div style="width:100%; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+                                <div id="guidance-pull-bar" style="width:15%; height:100%; background:var(--accent-blue, #00d2ff); border-radius:3px; transition:width 0.4s ease;"></div>
+                            </div>
+                            <div id="guidance-pull-error-container" style="display:none; margin-top:8px;">
+                                <div id="guidance-pull-error-text" style="font-size:11px; color:var(--accent-red); margin-bottom:6px;"></div>
+                                <button class="btn-primary btn-sm" id="guidance-pull-retry-btn" onclick="retryGuidanceModelPull()" style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; font-size:11.5px;">
+                                    <i data-lucide="refresh-cw" style="width:12px; height:12px;"></i> Retry Download
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Active Downloads Progress Panel (hidden by default) -->
                 <div class="card glass shadow-glow" id="active-pull-progress-card" style="display:none; margin-bottom: 20px; border-left: 3px solid var(--accent-blue);">
                     <div class="card-header">
@@ -1876,6 +1954,260 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Multi-File Environment Gateway, Physical Drive Magika Scanner & Real-Time Watcher Card -->
+                <div class="card glass shadow-glow" id="env-gateway-seal-card" style="margin-top:16px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <div style="width:40px; height:40px; border-radius:10px; background:rgba(16, 185, 129, 0.12); display:flex; align-items:center; justify-content:center; color:var(--accent-green, #10b981);">
+                                <i data-lucide="key-round" style="width:22px; height:22px;"></i>
+                            </div>
+                            <div>
+                                <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    <span>Protect .env — Multi-File Environment Gateway, Magika Drive Scanner &amp; Secret Watcher</span>
+                                    <span id="env-gateway-experimental-badge" class="badge purple" style="background:rgba(168, 85, 247, 0.18); color:#c084fc; border:1px solid rgba(168, 85, 247, 0.45); font-weight:700; letter-spacing:0.5px;">EXPERIMENTAL</span>
+                                    <span id="env-gateway-enabled-badge" class="badge green">ENABLED</span>
+                                    <span id="env-gateway-status-badge" class="badge gray">Checking Gateway...</span>
+                                    <span id="env-gateway-watcher-badge" class="badge gray">WATCHER IDLE</span>
+                                    <span id="env-gateway-dacl-badge" class="badge blue">DACL: Protected</span>
+                                    <span id="env-gateway-machine-binding-badge" class="badge cyan" title="Hardware Binding: Verifying Quorum...">
+                                        <i data-lucide="cpu" style="width:11px; height:11px; margin-right:3px;"></i> MAC: Checking Binding...
+                                    </span>
+                                </h4>
+                                <div id="env-gateway-summary-subtitle" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                                    Hardware-backed ChaCha20Poly1305 + Win32 DPAPI vault sealing environment credentials out-of-band with deterministic stand-in tokens.
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn-secondary" id="btn-toggle-env-protection-master" onclick="toggleEnvProtectionMaster()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; border-color:rgba(245, 158, 11, 0.5); color:#fbbf24; font-weight:600; cursor:pointer;" title="Enable or Disable Experimental Protect .env Function (Disabling automatically unseals all .env files back to plaintext)">
+                                <i data-lucide="power" style="width:13px; height:13px;"></i>
+                                <span>Disable Protect .env</span>
+                            </button>
+                            <button type="button" class="btn-primary" id="btn-scan-env-all-drives" onclick="scanEnvFiles(true)" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; cursor:pointer;" title="Discover physical drives via sysinfo::Disks and classify candidate .env files with Google Magika">
+                                <i data-lucide="hard-drive" style="width:13px; height:13px;"></i>
+                                <span>Scan All Physical Drives (Google Magika)</span>
+                            </button>
+                            <button type="button" class="btn-secondary" id="btn-scan-env-workspace" onclick="scanEnvFiles(false)" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; cursor:pointer;" title="Scan workspace and configured custom directories">
+                                <i data-lucide="folder-search" style="width:13px; height:13px;"></i>
+                                <span>Scan Workspace Files</span>
+                            </button>
+                            <button type="button" class="btn-primary" id="btn-seal-env-secrets" onclick="sealEnvSecrets()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; background:linear-gradient(135deg, #10b981, #059669); cursor:pointer;" title="Back up environment files and replace selected secrets with OSHOOSI_STANDIN_* tokens">
+                                <i data-lucide="shield-check" style="width:13px; height:13px;"></i>
+                                <span>Seal Environment Secrets</span>
+                            </button>
+                            <button type="button" class="btn-secondary" id="btn-revert-env-secrets" onclick="revertEnvSecrets()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; border-color:rgba(255, 77, 77, 0.4); color:#ff6b6b; cursor:pointer;" title="Restore all backed-up environment files and volatile memory from encrypted vault">
+                                <i data-lucide="rotate-ccw" style="width:13px; height:13px;"></i>
+                                <span>Revert All Secrets</span>
+                            </button>
+                            <button type="button" class="btn-secondary" id="btn-test-env-gateway" onclick="testEnvGateway()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; border-color:rgba(0, 210, 255, 0.4); color:var(--accent-blue); cursor:pointer;" title="Run live 4-stage verification testing confused-deputy block, composite caller swap, and upstream authentication">
+                                <i data-lucide="flask-conical" style="width:13px; height:13px;"></i>
+                                <span>Test Upstream API Keys</span>
+                            </button>
+                            <button type="button" class="btn-secondary" id="btn-refresh-machine-binding" onclick="refreshMachineBinding()" style="display:flex; align-items:center; gap:6px; padding:6px 12px; font-size:12px; border-color:rgba(168, 85, 247, 0.4); color:#c084fc; cursor:pointer;" title="Re-evaluate 4-anchor hardware binding quorum and re-anchor MAC addresses if rotated">
+                                <i data-lucide="refresh-cw" style="width:13px; height:13px;"></i>
+                                <span>Re-Verify / Re-Anchor MACs</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:16px 20px;">
+                        <!-- Status and Action Notice Banner -->
+                        <div id="env-gateway-banner" style="display:none; margin-bottom:14px; padding:10px 14px; border-radius:6px; font-size:13px;"></div>
+
+                        <!-- Metrics & Posture Grid -->
+                        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap:12px; margin-bottom:16px;">
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Vault Security Posture</div>
+                                <div id="stat-env-vault-status" style="font-size:18px; font-weight:700; color:var(--accent-green, #10b981); margin-top:4px;">Encrypted (DPAPI)</div>
+                                <div id="stat-env-vault-dacl" style="font-size:11px; color:var(--text-muted); margin-top:2px;">Protected NTFS DACL: Active</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Sealed Secret Variables</div>
+                                <div id="stat-env-sealed-count" style="font-size:18px; font-weight:700; color:#38bdf8; margin-top:4px;">0 Active Keys</div>
+                                <div id="stat-env-sealed-list" style="font-size:11px; color:var(--text-muted); margin-top:2px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">None currently sealed</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Physical Drives Discovered</div>
+                                <div id="stat-env-drives-count" style="font-size:18px; font-weight:700; color:#a855f7; margin-top:4px;">-- Mounted</div>
+                                <div id="stat-env-drives-list" style="font-size:11px; color:var(--text-muted); margin-top:2px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">Probing drives...</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Discovered .env Files</div>
+                                <div id="stat-env-files-count" style="font-size:18px; font-weight:700; color:#f59e0b; margin-top:4px;">-- files</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Google Magika Verified</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Background Watcher</div>
+                                <div id="stat-env-watcher-state" style="font-size:18px; font-weight:700; color:#94a3b8; margin-top:4px;">IDLE</div>
+                                <div id="stat-env-watcher-events-count" style="font-size:11px; color:var(--text-muted); margin-top:2px;">0 live events captured</div>
+                            </div>
+                            <div class="stat-card glass" id="stat-card-machine-binding" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Host MAC &amp; Hardware Binding</div>
+                                <div id="stat-env-binding-verdict" style="font-size:18px; font-weight:700; color:var(--accent-green, #10b981); margin-top:4px;">BOUND (100%)</div>
+                                <div id="stat-env-binding-detail" style="font-size:11px; color:var(--text-muted); margin-top:2px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">Probing hardware anchors...</div>
+                            </div>
+                        </div>
+
+                        <!-- 4-Stage Stand-in Token Verification Test Suite Panel (hidden by default) -->
+                        <div id="env-gateway-test-results-panel" style="display:none; margin-bottom:16px; background:rgba(0, 210, 255, 0.04); border:1px solid rgba(0, 210, 255, 0.25); border-radius:8px; padding:14px 18px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                                <h5 style="font-size:13.5px; margin:0; display:flex; align-items:center; gap:8px;">
+                                    <i data-lucide="shield-check" style="width:16px; height:16px; color:var(--accent-blue);"></i>
+                                    <span>Live 4-Stage Stand-in Token Verification Results</span>
+                                </h5>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <span id="env-test-overall-badge" class="badge green">VERIFIED</span>
+                                    <button type="button" class="btn-text" onclick="document.getElementById('env-gateway-test-results-panel').style.display='none'" style="font-size:11px; color:var(--text-muted); cursor:pointer;">✕ Close</button>
+                                </div>
+                            </div>
+                            <div id="env-gateway-test-results-body" style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+                                <!-- Rendered dynamically by renderEnvGatewayTestResults() -->
+                            </div>
+                        </div>
+
+                        <!-- Configuration & Target Controls Panel -->
+                        <details class="glass-accordion" id="env-gateway-config-accordion" style="margin-bottom:16px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:12px 16px;">
+                            <summary style="cursor:pointer; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; color:var(--text-header);">
+                                <i data-lucide="sliders" style="width:14px; height:14px; color:var(--accent-blue);"></i>
+                                <span>Seal Configuration, Custom Paths &amp; Watcher Settings</span>
+                                <span style="font-size:11px; font-weight:400; color:var(--text-muted); margin-left:auto;">Click to configure target keys, search paths &amp; auto-seal</span>
+                            </summary>
+                            <div style="margin-top:14px; display:flex; flex-direction:column; gap:12px;">
+                                <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center;">
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer; font-weight:600; color:#c084fc;">
+                                        <input type="checkbox" id="env-config-master-enabled" checked onchange="toggleEnvProtectionMaster(this.checked)">
+                                        <span>Enable Protect .env Function (Experimental)</span>
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;">
+                                        <input type="checkbox" id="env-config-watcher-enabled" onchange="toggleEnvWatcher(this.checked)">
+                                        <span>Enable Real-Time Magika File Watcher</span>
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;">
+                                        <input type="checkbox" id="env-config-auto-seal" onchange="updateEnvWatcherAutoSeal(this.checked)">
+                                        <span>Auto-Seal Newly Discovered Candidate Files</span>
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;">
+                                        <input type="checkbox" id="env-config-all-drives">
+                                        <span>Default to All Physical Drives (C:\, D:\)</span>
+                                    </label>
+                                </div>
+
+                                <div>
+                                    <div style="font-size:12px; font-weight:600; color:var(--text-header); margin-bottom:6px;">Custom File &amp; Directory Search Paths (Comma-separated)</div>
+                                    <input type="text" id="env-custom-paths-input" placeholder="./config, D:\Projects\App, /opt/app" style="width:100%; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:12px;">
+                                </div>
+
+                                <div>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                        <div style="font-size:12px; font-weight:600; color:var(--text-header);">Target Secret Variables for Stand-in Sealing</div>
+                                        <span class="badge blue" style="font-size:10px;">Zero-Touch PATH Guard Active</span>
+                                    </div>
+                                    <div id="env-target-variables-container" style="display:flex; flex-wrap:wrap; gap:8px;">
+                                        <!-- Dynamically populated or default pill toggles -->
+                                        <label class="badge cyan" style="cursor:pointer; display:flex; align-items:center; gap:4px; font-size:11px; padding:4px 8px;">
+                                            <input type="checkbox" name="env_var_seal" value="GEMINI_API_KEY" checked> GEMINI_API_KEY
+                                        </label>
+                                        <label class="badge cyan" style="cursor:pointer; display:flex; align-items:center; gap:4px; font-size:11px; padding:4px 8px;">
+                                            <input type="checkbox" name="env_var_seal" value="HF_TOKEN" checked> HF_TOKEN
+                                        </label>
+                                        <label class="badge cyan" style="cursor:pointer; display:flex; align-items:center; gap:4px; font-size:11px; padding:4px 8px;">
+                                            <input type="checkbox" name="env_var_seal" value="OPENAI_API_KEY" checked> OPENAI_API_KEY
+                                        </label>
+                                        <label class="badge cyan" style="cursor:pointer; display:flex; align-items:center; gap:4px; font-size:11px; padding:4px 8px;">
+                                            <input type="checkbox" name="env_var_seal" value="ANTHROPIC_API_KEY" checked> ANTHROPIC_API_KEY
+                                        </label>
+                                        <label class="badge cyan" style="cursor:pointer; display:flex; align-items:center; gap:4px; font-size:11px; padding:4px 8px;">
+                                            <input type="checkbox" name="env_var_seal" value="GITHUB_TOKEN" checked> GITHUB_TOKEN
+                                        </label>
+                                    </div>
+                                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+                                        🛡️ <strong>Immutable OS Variable Veto:</strong> <code>PATH</code>, <code>Path</code>, <code>JAVA_HOME</code>, <code>OLLAMA_ORIGINS</code>, <code>TEMP</code>, <code>TMP</code>, and system directories are permanently excluded from sealing.
+                                    </div>
+                                </div>
+
+                                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                                    <button type="button" class="btn-primary btn-sm" id="btn-save-env-config" onclick="saveEnvGatewayConfig()" style="display:flex; align-items:center; gap:6px;">
+                                        <i data-lucide="save" style="width:13px; height:13px;"></i>
+                                        <span>Save Configuration</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- Google Magika Scanned Candidate Files Inventory -->
+                        <div style="margin-bottom:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <h5 style="font-size:13px; margin:0; color:var(--text-header); display:flex; align-items:center; gap:6px;">
+                                        <i data-lucide="file-check" style="width:14px; height:14px; color:var(--accent-green);"></i>
+                                        <span>Google Magika Scanned Environment Files</span>
+                                    </h5>
+                                    <span id="env-scan-count-badge" class="badge gray">0 files</span>
+                                </div>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="text" id="env-scan-filter-input" oninput="filterEnvScanResults()" placeholder="Filter path or key..." style="padding:4px 8px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:11.5px; width:160px;">
+                                    <select id="env-scan-drive-filter" onchange="filterEnvScanResults()" style="padding:4px 8px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:11.5px;">
+                                        <option value="all">All Drives</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style="max-height:280px; overflow-y:auto; border:1px solid rgba(255,255,255,0.06); border-radius:8px;">
+                                <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12px;">
+                                    <thead style="position:sticky; top:0; background:rgba(13,17,23,0.96); z-index:1;">
+                                        <tr>
+                                            <th style="padding:8px 12px; text-align:left; width:80px;">Drive</th>
+                                            <th style="padding:8px 12px; text-align:left;">Environment File Path</th>
+                                            <th style="padding:8px 12px; text-align:left; width:160px;">Magika Classification</th>
+                                            <th style="padding:8px 12px; text-align:left;">Detected Secret Keys</th>
+                                            <th style="padding:8px 12px; text-align:left; width:110px;">Status</th>
+                                            <th style="padding:8px 12px; text-align:right; width:120px;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="env-scan-results-tbody">
+                                        <tr>
+                                            <td colspan="6" style="text-align:center; padding:18px; color:var(--text-muted);">
+                                                No scan executed yet. Click "Scan All Physical Drives (Google Magika)" or "Scan Workspace Files" above.
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Real-Time Magika File Watcher Live Events Feed -->
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <h5 style="font-size:13px; margin:0; color:var(--text-header); display:flex; align-items:center; gap:6px;">
+                                    <i data-lucide="activity" style="width:14px; height:14px; color:var(--accent-purple);"></i>
+                                    <span>Real-Time Magika Watcher Event Feed</span>
+                                </h5>
+                                <button type="button" class="btn-text" onclick="pollEnvWatcherEvents(true)" style="font-size:11px; cursor:pointer;">
+                                    <i data-lucide="refresh-cw" style="width:11px; margin-right:3px;"></i> Refresh Events
+                                </button>
+                            </div>
+                            <div style="max-height:200px; overflow-y:auto; border:1px solid rgba(255,255,255,0.06); border-radius:8px;">
+                                <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12px;">
+                                    <thead style="position:sticky; top:0; background:rgba(13,17,23,0.96); z-index:1;">
+                                        <tr>
+                                            <th style="padding:6px 12px; text-align:left; width:150px;">Timestamp</th>
+                                            <th style="padding:6px 12px; text-align:left;">Target File Path</th>
+                                            <th style="padding:6px 12px; text-align:left; width:140px;">Magika Label / MIME</th>
+                                            <th style="padding:6px 12px; text-align:left; width:80px;">Score</th>
+                                            <th style="padding:6px 12px; text-align:left; width:180px;">Action Taken</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="env-watcher-events-tbody">
+                                        <tr>
+                                            <td colspan="5" style="text-align:center; padding:14px; color:var(--text-muted);">
+                                                No watcher events recorded yet. Enable the background watcher to capture live file system events.
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2324,6 +2656,7 @@
                         <div style="display:flex; align-items:center; gap:10px;">
                             <h3 style="margin:0;">SkyRL Policy Control Panel</h3>
                             <span class="badge purple" style="font-size:11px;"><i data-lucide="sparkles" style="width:12px;height:12px;display:inline;vertical-align:middle;margin-right:3px;"></i>Self-Improvement Gym</span>
+                            <span id="skyrl-phase-header-badge" class="badge cyan" style="font-size:11px;" title="Current Policy Transition Phase">Active Exploration</span>
                         </div>
                         <div class="header-actions" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -2376,7 +2709,10 @@
                         </div>
                         <div class="stat-info">
                             <span class="stat-label">Total Steps</span>
-                            <span class="stat-value" id="stat-skyrl-steps">13</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="stat-value" id="stat-skyrl-steps">13</span>
+                                <span id="stat-skyrl-step-target" style="font-size:11px; color:var(--text-muted);" title="Target for Epsilon Linear Decay">/ 2,000 Decay</span>
+                            </div>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
@@ -2385,7 +2721,10 @@
                         </div>
                         <div class="stat-info">
                             <span class="stat-label">Buffer Occupancy</span>
-                            <span class="stat-value" id="stat-skyrl-buffer">13 / 20,000</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="stat-value" id="stat-skyrl-buffer">13 / 20,000</span>
+                                <span id="stat-skyrl-warmup-badge" class="badge green" style="font-size:10px; padding:2px 6px;" title="Minimum Replay Buffer Warmup Threshold (256 transitions)">Warmed Up</span>
+                            </div>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
@@ -2393,8 +2732,14 @@
                             <i data-lucide="compass"></i>
                         </div>
                         <div class="stat-info">
-                            <span class="stat-label">Epsilon Exploration Rate</span>
-                            <span class="stat-value" id="stat-skyrl-epsilon">0.050</span>
+                            <span class="stat-label">Epsilon Exploration Rate (&epsilon;)</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="stat-value" id="stat-skyrl-epsilon">0.050</span>
+                                <span id="stat-skyrl-phase" class="badge cyan" style="font-size:10px; padding:2px 6px;" title="SkyRL Policy State Machine Phase">Active Exploration</span>
+                            </div>
+                            <div class="progress-bar-container" style="background:rgba(255, 255, 255, 0.06); height:4px; border-radius:2px; margin-top:6px; overflow:hidden;" title="Linear Epsilon Decay Progress (1.000 -> 0.050 across 2,000 steps)">
+                                <div id="stat-skyrl-epsilon-bar" style="background:var(--accent-purple, #a855f7); width:5%; height:100%; transition:width 0.3s ease;"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
@@ -2413,7 +2758,8 @@
                     <div class="card glass shadow-glow" style="min-height:280px;">
                         <div class="card-header">
                             <h3>Policy Convergence (Bellman TD Loss)</h3>
-                            <div class="header-actions">
+                            <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                                <span id="skyrl-loss-latest-badge" class="badge red" style="font-size:11px;">TD Loss: 0.0482</span>
                                 <span class="badge red">DQN Loss Gradient</span>
                             </div>
                         </div>
@@ -2425,7 +2771,8 @@
                     <div class="card glass shadow-glow" style="min-height:280px;">
                         <div class="card-header">
                             <h3>Episode Reward Trajectory</h3>
-                            <div class="header-actions">
+                            <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                                <span id="skyrl-reward-latest-badge" class="badge green" style="font-size:11px;">Mean Reward: 0.00</span>
                                 <span class="badge green">Security Gym Reward</span>
                             </div>
                         </div>
@@ -5022,6 +5369,9 @@
                                 </h3>
                                 <span id="research-header-status-badge" class="badge cyan" style="font-size: 11px; padding: 3px 10px;">OPERATOR APPROVAL GATE ARMED</span>
                                 <span class="badge purple" style="font-size: 11px; padding: 3px 10px;">HMAC-SHA256 EPOCH SEALED</span>
+                                <span id="research-code-accuracy-gate-badge" class="badge green" style="font-size: 11px; padding: 3px 10px;" title="Rejects inaccurate synthesized code if TPR < 100% or FPR > 0%">
+                                    🔒 GLM + Multi-Model Fusion &amp; Strict Code Accuracy Gate (<code>RejectedInaccurateGeneratedCode</code> on &lt;100% TPR or &gt;0% FPR)
+                                </span>
                             </div>
                             <p style="margin: 6px 0 0 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.5; max-width: 960px;">
                                 Continuously discovers novel LLM container escape, sandbox breakout, and prompt-injection papers from arXiv, grounds exact character-span indicators via Google LangExtract, executes live regression probes against <code>BreakoutDefenseCoordinator</code>, and stages candidate Cedar <code>forbid</code> policies &amp; Conformal $P_{K+1}$ calibration sources in the <strong>Operator Approval Queue</strong> before live EDR enforcement.
@@ -5308,6 +5658,9 @@
                                 🔄 Reset Defaults
                             </button>
                             <span id="research-active-rules-badge" class="badge green" style="font-size: 10.5px;">4 ACTIVE RULES ENFORCED</span>
+                            <span id="research-code-accuracy-gate-table-badge" class="badge green" style="font-size: 10.5px;">
+                                🔒 GLM + Multi-Model Fusion &amp; Strict Code Accuracy Gate (RejectedInaccurateGeneratedCode on &lt;100% TPR or &gt;0% FPR)
+                            </span>
                         </div>
                     </div>
                     <!-- Paper2Agent Accuracy & LLM Fusion Results Panel -->

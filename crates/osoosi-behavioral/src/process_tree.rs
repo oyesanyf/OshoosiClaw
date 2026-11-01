@@ -286,11 +286,9 @@ impl ProcessTreeEmbedder {
     // ─────────────────────────────────────────────────────────────────────────
 
     fn hash_str(&self, s: &str) -> usize {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        s.hash(&mut hasher);
-        hasher.finish() as usize
+        let h = blake3::hash(s.as_bytes());
+        let bytes: [u8; 8] = h.as_bytes()[..8].try_into().unwrap_or([0u8; 8]);
+        u64::from_le_bytes(bytes) as usize
     }
 
     fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {

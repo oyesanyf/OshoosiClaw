@@ -234,11 +234,19 @@ impl WfpDynamicSession {
         #[cfg(windows)]
         {
             use windows::core::PCWSTR;
-            use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+            use windows::Win32::System::LibraryLoader::{
+                GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+            };
 
             let dll_name: Vec<u16> = "fwpuclnt.dll\0".encode_utf16().collect();
-            let h_module = unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }
-                .map_err(|e| anyhow!("Failed to load fwpuclnt.dll: {}", e))?;
+            let h_module = unsafe {
+                LoadLibraryExW(
+                    PCWSTR(dll_name.as_ptr()),
+                    None,
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                )
+            }
+            .map_err(|e| anyhow!("Failed to load fwpuclnt.dll: {}", e))?;
 
             let get_func = |name: &'static [u8]| -> Option<*const ()> {
                 let proc = unsafe { GetProcAddress(h_module, windows::core::PCSTR(name.as_ptr())) };
@@ -768,7 +776,9 @@ pub fn has_active_tcp_socket_for_ips(ips: &[std::net::IpAddr]) -> bool {
     {
         use std::collections::HashSet;
         use windows::core::{PCSTR, PCWSTR};
-        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        use windows::Win32::System::LibraryLoader::{
+            GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        };
 
         #[repr(C)]
         #[derive(Clone, Copy)]
@@ -800,7 +810,13 @@ pub fn has_active_tcp_socket_for_ips(ips: &[std::net::IpAddr]) -> bool {
         }
 
         let dll_name: Vec<u16> = "iphlpapi.dll\0".encode_utf16().collect();
-        let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
+        let Ok(h_mod) = (unsafe {
+            LoadLibraryExW(
+                PCWSTR(dll_name.as_ptr()),
+                None,
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+        }) else {
             return false;
         };
         let Some(p_get) =
@@ -854,7 +870,9 @@ pub fn terminate_active_tcp_sockets_for_ips(ips: &[std::net::IpAddr]) -> usize {
     {
         use std::collections::HashSet;
         use windows::core::{PCSTR, PCWSTR};
-        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+        use windows::Win32::System::LibraryLoader::{
+            GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        };
 
         #[repr(C)]
         #[derive(Clone, Copy)]
@@ -888,7 +906,13 @@ pub fn terminate_active_tcp_sockets_for_ips(ips: &[std::net::IpAddr]) -> usize {
         }
 
         let dll_name: Vec<u16> = "iphlpapi.dll\0".encode_utf16().collect();
-        let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
+        let Ok(h_mod) = (unsafe {
+            LoadLibraryExW(
+                PCWSTR(dll_name.as_ptr()),
+                None,
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+        }) else {
             return 0;
         };
         let Some(p_get) =

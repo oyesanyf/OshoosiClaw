@@ -153,6 +153,9 @@ pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
 
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)?;
+        if snapshot == windows::Win32::Foundation::INVALID_HANDLE_VALUE || snapshot.is_invalid() {
+            return Ok(patches);
+        }
         let mut entry = MODULEENTRY32W {
             dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32,
             ..Default::default()
@@ -272,6 +275,9 @@ fn inspect_stack_spoof(pid: u32) -> Result<bool> {
     let mut spoofed = false;
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)?;
+        if snapshot == windows::Win32::Foundation::INVALID_HANDLE_VALUE || snapshot.is_invalid() {
+            return Ok(spoofed);
+        }
         let mut entry = THREADENTRY32 {
             dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
             ..Default::default()

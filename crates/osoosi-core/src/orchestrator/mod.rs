@@ -276,4 +276,39 @@ pub struct EdrOrchestrator {
     pub rl_controller: Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>>,
     /// REA Voter Environment Gateway for out-of-band credential substitution and quorum freezing
     pub env_gateway: Arc<crate::rea_voter_env_gateway::ReaVoterEnvGateway>,
+    /// Hardware machine binding anchor status
+    pub machine_binding_status: Option<crate::machine_binding::MachineBindingStatus>,
+    /// Lifetime reference counter for graceful orchestrator shutdown
+    pub(crate) shutdown_sentinel: Arc<()>,
+}
+
+impl EdrOrchestrator {
+    /// Returns the verified hardware machine binding status, if evaluated.
+    pub fn machine_binding_status(&self) -> Option<&crate::machine_binding::MachineBindingStatus> {
+        self.machine_binding_status.as_ref()
+    }
+
+    /// Initiates graceful shutdown: unseals all environment vaults, clears quarantine, and disarms network.
+    pub async fn shutdown(&self) {
+        tracing::info!(
+            "EdrOrchestrator: Initiating graceful shutdown and auto-unseal of all secrets..."
+        );
+        self.env_gateway.on_service_stop();
+        let _ = crate::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+            None,
+        );
+        let _ = crate::killchain::execute_host_disarm_unauthenticated();
+    }
+}
+
+impl Drop for EdrOrchestrator {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.shutdown_sentinel) == 1 {
+            self.env_gateway.on_service_stop();
+            let _ =
+                crate::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+                    None,
+                );
+        }
+    }
 }

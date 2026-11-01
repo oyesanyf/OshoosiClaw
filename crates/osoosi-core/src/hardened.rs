@@ -457,12 +457,46 @@ pub fn tpm_attest_audit_entry(event_type: &str, data_hash: &str) -> Option<Strin
     software_attest(event_type, data_hash)
 }
 
+static ATTESTATION_SECRET: OnceLock<[u8; 32]> = OnceLock::new();
+
+pub(crate) fn get_or_create_attestation_secret_pub() -> [u8; 32] {
+    get_or_create_attestation_secret()
+}
+
+fn get_or_create_attestation_secret() -> [u8; 32] {
+    *ATTESTATION_SECRET.get_or_init(|| {
+        let key_path = Path::new("database/software_attestation.key");
+        if let Ok(bytes) = std::fs::read(key_path) {
+            if bytes.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                return key;
+            }
+        }
+        let mut key = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut key);
+        if let Some(parent) = key_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(key_path, key);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600));
+        }
+        key
+    })
+}
+
 /// Software-only attestation fallback (HMAC-SHA256 with a locally stored key).
 fn software_attest(event_type: &str, data_hash: &str) -> Option<String> {
     use hmac::{Hmac, Mac};
+    use sha2::Digest;
     type HmacSha256 = Hmac<Sha256>;
 
-    // Use a machine-specific key derived from hostname + OS info
+    let secret = get_or_create_attestation_secret();
+
+    // Use a machine-specific key derived from CSPRNG secret + hostname + OS info
     let machine_id = format!(
         "{}:{}:{}",
         hostname::get().unwrap_or_default().to_string_lossy(),
@@ -470,7 +504,18 @@ fn software_attest(event_type: &str, data_hash: &str) -> Option<String> {
         std::env::consts::ARCH
     );
 
-    let mut mac = HmacSha256::new_from_slice(machine_id.as_bytes()).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(secret);
+    hasher.update(machine_id.as_bytes());
+
+    // Mix machine binding verdict and rotation epoch into attestation key
+    if let Ok(binding_status) = crate::machine_binding::verify_default_machine_binding() {
+        hasher.update(binding_status.verdict.as_bytes());
+        hasher.update(binding_status.mac_rotation_count.to_le_bytes());
+    }
+    let derived_key = hasher.finalize();
+
+    let mut mac = HmacSha256::new_from_slice(&derived_key).ok()?;
     mac.update(event_type.as_bytes());
     mac.update(data_hash.as_bytes());
     mac.update(chrono::Utc::now().to_rfc3339().as_bytes());

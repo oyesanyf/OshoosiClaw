@@ -10,10 +10,12 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use tracing::{debug, info};
 
+pub mod audit_chain;
 pub mod encryption;
 pub mod memory_scanner;
 pub mod scanner;
 
+pub use audit_chain::*;
 pub use memory_scanner::*;
 
 pub struct MemoryStore {
@@ -54,6 +56,7 @@ impl MemoryStore {
         // Enable WAL mode for concurrent readers + single writer (no blocking reads)
         let _ = conn.execute_batch(
             "
+            PRAGMA foreign_keys = ON;
             PRAGMA journal_mode = WAL;
             PRAGMA wal_autocheckpoint = 1000;
             PRAGMA synchronous = NORMAL;
@@ -676,6 +679,24 @@ impl MemoryStore {
                 rusqlite::params![pat],
             );
         }
+
+        // Audit Chain / Tamper-evident Audit Log table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS audit_log (
+                seq_num INTEGER PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                prev_hash TEXT NOT NULL,
+                entry_hash TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)",
+            [],
+        )?;
 
         Ok(())
     }
@@ -2189,6 +2210,63 @@ impl MemoryStore {
     }
 
     /// Record a consensus evaluation finding in SQLite.
+    pub fn record_audit_entry(&self, entry: &AuditEntry) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO audit_log (
+                seq_num, timestamp, event_type, actor, details_json, prev_hash, entry_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                entry.seq_num as i64,
+                entry.timestamp,
+                entry.event_type,
+                entry.actor,
+                entry.details_json,
+                entry.prev_hash,
+                entry.entry_hash,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn fetch_audit_entries(&self) -> anyhow::Result<Vec<AuditEntry>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT seq_num, timestamp, event_type, actor, details_json, prev_hash, entry_hash
+             FROM audit_log ORDER BY seq_num ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let seq_num_i64: i64 = row.get(0)?;
+            Ok(AuditEntry {
+                seq_num: seq_num_i64 as u64,
+                timestamp: row.get(1)?,
+                event_type: row.get(2)?,
+                actor: row.get(3)?,
+                details_json: row.get(4)?,
+                prev_hash: row.get(5)?,
+                entry_hash: row.get(6)?,
+            })
+        })?;
+        let mut entries = Vec::new();
+        for r in rows {
+            entries.push(r?);
+        }
+        Ok(entries)
+    }
+
+    pub fn load_audit_chain(&self, genesis_seed: &str) -> anyhow::Result<AuditChain> {
+        let entries = self.fetch_audit_entries()?;
+        Ok(AuditChain::from_entries(genesis_seed, entries))
+    }
+
+    pub fn verify_audit_log(
+        &self,
+        genesis_seed: &str,
+    ) -> anyhow::Result<Result<(), (usize, String)>> {
+        let chain = self.load_audit_chain(genesis_seed)?;
+        Ok(chain.verify())
+    }
+
     pub fn record_consensus_finding(&self, finding: &ConsensusFinding) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(

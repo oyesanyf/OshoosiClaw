@@ -1047,7 +1047,8 @@ impl EdrOrchestrator {
             loop {
                 let fetcher_inner = fetcher.clone();
                 let orch_inner = orch.clone();
-                orch_inner.adaptive.spawn_adaptive(ResourceCategory::Net, Priority::Normal, async move {
+                let adaptive = orch_inner.adaptive.clone();
+                adaptive.spawn_adaptive(ResourceCategory::Net, Priority::Normal, async move {
                     info!("Fetching latest threat intelligence feeds...");
                     match fetcher_inner.fetch_kev().await {
                         Ok(kevs) => {
@@ -1282,8 +1283,9 @@ impl EdrOrchestrator {
                 let memory_inner = memory.clone();
                 let threat_model_inner = threat_model.clone();
                 let orch_inner = orch.clone();
+                let adaptive = orch_inner.adaptive.clone();
 
-                orch_inner.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
+                adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
                     let _ = memory_inner
                         .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
                     match memory_inner.get_threats_for_training(500) {

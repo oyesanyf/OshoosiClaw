@@ -44,9 +44,11 @@ pub use conformal_jailbreak::{
 };
 pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{
-    detect_live_resources, get_system_resources, query_installed_ollama_models,
-    query_installed_ollama_models_sync, query_system_resources, DiskResourceInfo, HardwareTier,
-    OptimalModelSelection, SystemResourceSummary,
+    detect_live_resources, ensure_ollama_model_installed_background, get_dynamic_model_pull_states,
+    get_system_resources, query_installed_ollama_models, query_installed_ollama_models_sync,
+    query_system_resources, resolve_ollama_binary, sanitize_ollama_model_tag,
+    select_dynamic_model_by_available_memory, DiskResourceInfo, DynamicModelPullState,
+    HardwareTier, OptimalModelSelection, SystemResourceSummary,
 };
 
 pub use agentic_arbitrator::{

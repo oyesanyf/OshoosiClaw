@@ -15,6 +15,39 @@ use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::sync::LazyLock;
+
+/// Maximum number of unhandled evidence signals retained in memory (M23).
+pub const MAX_PENDING_SIGNALS: usize = 4096;
+
+pub type PendingSignalEntry = (String, AgentEvidenceSignal, DateTime<Utc>);
+pub type PendingSignalQueue = Mutex<VecDeque<PendingSignalEntry>>;
+
+pub static PENDING_SIGNALS: LazyLock<PendingSignalQueue> =
+    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(MAX_PENDING_SIGNALS)));
+
+/// Enqueue an evidence signal into the bounded queue, evicting the oldest if at capacity.
+pub fn enqueue_pending_signal(subject_id: &str, signal: AgentEvidenceSignal) {
+    let mut q = PENDING_SIGNALS.lock();
+    while q.len() >= MAX_PENDING_SIGNALS {
+        q.pop_front();
+    }
+    q.push_back((subject_id.to_string(), signal, Utc::now()));
+}
+
+/// Drain pending signals from the bounded queue.
+pub fn drain_pending_signals() -> Vec<(String, AgentEvidenceSignal, DateTime<Utc>)> {
+    let mut q = PENDING_SIGNALS.lock();
+    q.drain(..).collect()
+}
+
+/// Returns the current number of queued pending signals.
+pub fn pending_signals_count() -> usize {
+    PENDING_SIGNALS.lock().len()
+}
+
 /// Dynamic signals that provide Bayesian evidence of an autonomous AI agent process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvidenceSignal {
@@ -333,6 +366,7 @@ impl DynamicAgentClassifier {
         signal: AgentEvidenceSignal,
     ) -> AgentClassificationRecord {
         let now = Utc::now();
+        enqueue_pending_signal(subject_id, signal.clone());
 
         // DashMap Lock Hygiene: Read parent info BEFORE entering entry() lock to prevent deadlock
         let parent_info = if let Some(pid_str) = parent_id {
@@ -1251,5 +1285,36 @@ mod tests {
             "Highest verified probability must be >= 0.75, got {}",
             highest_prob
         );
+    }
+
+    #[test]
+    fn test_bounded_pending_signals_queue() {
+        drain_pending_signals();
+
+        for i in 0..5000 {
+            enqueue_pending_signal(
+                &format!("agent-fifo-bounded-{}", i),
+                AgentEvidenceSignal::McpJsonRpcFraming {
+                    method: format!("call_{}", i),
+                },
+            );
+        }
+
+        let drained = drain_pending_signals();
+        assert_eq!(drained.len(), MAX_PENDING_SIGNALS);
+        // Latest inserted items must be present in drained batch
+        assert!(drained
+            .iter()
+            .any(|(id, _, _)| id == "agent-fifo-bounded-4999"));
+        // Earliest inserted items must have been evicted by bounded FIFO
+        assert!(!drained
+            .iter()
+            .any(|(id, _, _)| id == "agent-fifo-bounded-0"));
+        let remaining_fifo_signals = PENDING_SIGNALS
+            .lock()
+            .iter()
+            .filter(|(id, _, _)| id.starts_with("agent-fifo-bounded-"))
+            .count();
+        assert_eq!(remaining_fifo_signals, 0);
     }
 }

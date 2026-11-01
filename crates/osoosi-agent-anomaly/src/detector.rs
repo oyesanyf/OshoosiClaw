@@ -190,12 +190,49 @@ impl AgentAnomalyDetector {
                     .fetch_add(1, Ordering::Relaxed);
             }
 
+            // Determine appropriate OWASP agentic risk category based on breakout interception
+            let is_prompt_injection = breakout_eval
+                .composite_verdict
+                .to_ascii_lowercase()
+                .contains("prompt injection")
+                || breakout_eval.composite_verdict.contains("2511.10720")
+                || breakout_eval
+                    .behavioral
+                    .detected_deviations
+                    .iter()
+                    .any(|d| {
+                        d.to_ascii_lowercase().contains("prompt injection")
+                            || d.contains("2511.10720")
+                    })
+                || breakout_eval.technical.detected_vectors.iter().any(|v| {
+                    v.to_ascii_lowercase().contains("prompt injection") || v.contains("2511.10720")
+                });
+
+            let risk_category = if is_prompt_injection {
+                OwaspAgenticRisk::PromptInjectionASI01
+            } else if !breakout_eval.data.detected_violations.is_empty()
+                || breakout_eval
+                    .composite_verdict
+                    .to_ascii_lowercase()
+                    .contains("credential")
+                || breakout_eval
+                    .composite_verdict
+                    .to_ascii_lowercase()
+                    .contains("exfiltration")
+            {
+                OwaspAgenticRisk::DataExfiltrationASI07
+            } else if breakout_eval.ssrf_violation.is_some() {
+                OwaspAgenticRisk::ToolMisuseASI02
+            } else {
+                OwaspAgenticRisk::RogueAgentASI10
+            };
+
             // Broadcast P2P Mesh Watch-Out
             self.containment_ring
                 .record_mesh_watchout(
                     &telemetry.agent_id,
                     &telemetry.session_id,
-                    "ASI10",
+                    risk_category.as_code(),
                     &breakout_eval.composite_verdict,
                 )
                 .await;
@@ -211,7 +248,7 @@ impl AgentAnomalyDetector {
                 ),
                 session_id: telemetry.session_id.clone(),
                 agent_id: telemetry.agent_id.clone(),
-                risk_category: OwaspAgenticRisk::RogueAgentASI10,
+                risk_category,
                 severity: AlertSeverity::Critical,
                 confidence_score: 0.99,
                 rationale: format!(

@@ -891,7 +891,8 @@ fn query_live_process_image_and_cmdline(pid: u32) -> (Option<String>, Option<Str
         let cmdline = if status >= 0 && (ret_len as usize) >= std::mem::size_of::<UnicodeString>() {
             let ustr = &*(cmd_buf.as_ptr() as *const UnicodeString);
             if !ustr.buffer.is_null() && ustr.length > 0 {
-                let char_len = (ustr.length as usize) / 2;
+                let byte_len = (ustr.length as usize) & !1;
+                let char_len = (byte_len / 2).min(65536);
                 let slice = std::slice::from_raw_parts(ustr.buffer, char_len);
                 Some(String::from_utf16_lossy(slice))
             } else {

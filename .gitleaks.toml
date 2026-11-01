@@ -1,0 +1,17 @@
+# Gitleaks Configuration for OshoosiClaw
+# All test suites, synthetic test fixtures, and non-secret manifests are allowlisted here.
+
+title = "OshoosiClaw Gitleaks Configuration"
+
+[allowlist]
+description = "Global allowlist for synthetic test fixtures, reports, and manifests"
+paths = [
+    '''(?i).*\.gitleaksignore''',
+    '''(?i)[/\\]tests?[/\\]''',
+    '''(?i)crates/[^/]+/tests/.*''',
+    '''(?i)dashboard/tests/.*''',
+    '''(?i)tests/.*''',
+    '''(?i)deploy/reports/.*''',
+    '''(?i)browser-extension/manifest\.json''',
+    '''(?i)database/protected_env_backup\.dpapi''',
+]

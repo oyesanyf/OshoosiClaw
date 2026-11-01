@@ -80,9 +80,9 @@ impl BehavioralAnalyzer {
                 .unwrap_or(false);
 
         let api_key = if cloud_llm_opted_in {
-            std::env::var("OPENAI_API_KEY")
-                .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
-                .or_else(|_| std::env::var("OSOOSI_LLM_API_KEY"))
+            osoosi_types::resolve_env_or_standin("OPENAI_API_KEY")
+                .or_else(|| osoosi_types::resolve_env_or_standin("OSOOSI_OPENAI_API_KEY"))
+                .or_else(|| osoosi_types::resolve_env_or_standin("OSOOSI_LLM_API_KEY"))
                 .unwrap_or_default()
         } else {
             String::new()

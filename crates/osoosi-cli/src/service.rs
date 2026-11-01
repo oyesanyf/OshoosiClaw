@@ -660,6 +660,7 @@ pub fn stop_service() -> anyhow::Result<()> {
             || out.contains("1060")
             || out.contains("does not exist")
         {
+            let _ = osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(None);
             cleanup_stale_service_processes();
             let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
@@ -687,6 +688,7 @@ pub fn stop_service() -> anyhow::Result<()> {
             if status.contains("STOPPED")
                 && (status.contains("PID                : 0") || !status.contains("PID"))
             {
+                let _ = osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(None);
                 if osoosi_types::is_elevated() {
                     let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
                 }
@@ -708,6 +710,10 @@ pub fn stop_service() -> anyhow::Result<()> {
         }
     }
 
+    let _ =
+        osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+            None,
+        );
     cleanup_stale_service_processes();
     let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
     let _ = osoosi_core::firewall::remove_all_autoblock_rules();
@@ -913,10 +919,18 @@ pub fn start_service() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 pub fn stop_service() -> anyhow::Result<()> {
+    let _ =
+        osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+            None,
+        );
     let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
     let _ = osoosi_core::firewall::remove_all_autoblock_rules();
     let _ = run_systemctl(&["stop", "osoosi-edr.service"]);
     cleanup_stale_service_processes();
+    let _ =
+        osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(
+            None,
+        );
     println!("Service 'osoosi-edr' stopped. Host network restored.");
     Ok(())
 }
@@ -1039,13 +1053,14 @@ mod win_scm {
                     dwWin32ExitCode: NO_ERROR.0,
                     dwServiceSpecificExitCode: 0,
                     dwCheckPoint: 1,
-                    dwWaitHint: 2000,
+                    dwWaitHint: 5000,
                 };
                 let _ = SetServiceStatus(handle, &status);
                 notify_service_stop();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(1200));
                     if !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) {
+                        let _ = osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(None);
                         let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
                     }
                     let h_raw = GLOBAL_SERVICE_HANDLE_RAW.load(Ordering::SeqCst);
@@ -1167,7 +1182,7 @@ mod win_scm {
         status.dwCurrentState = SERVICE_STOP_PENDING;
         status.dwControlsAccepted = 0;
         status.dwCheckPoint = 1;
-        status.dwWaitHint = 2000;
+        status.dwWaitHint = 5000;
         let _ = SetServiceStatus(handle, &status);
 
         // Wait up to 400ms for daemon async cleanup to signal completion
@@ -1184,6 +1199,7 @@ mod win_scm {
 
         // 4. Disarm host isolation and unfreeze processes before reporting SERVICE_STOPPED
         if !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) {
+            let _ = osoosi_core::protected_env_backup::ProtectedEnvBackupVault::auto_revert_all_active_vaults(None);
             let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
             SERVICE_SHUTDOWN_DONE.store(true, Ordering::SeqCst);
         }
