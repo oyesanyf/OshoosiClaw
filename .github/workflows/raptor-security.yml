@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Run nightly at 02:30 UTC (21:30 EST / 22:30 EDT)
+    - cron: '30 2 * * *'
   workflow_dispatch:
 
 permissions: read-all
@@ -26,6 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p raptor_out
+          chmod 777 raptor_out
           echo "===================================================================="
           echo "  RAPTOR Autonomous Security Scanner (CI Required Check Gate)"
           echo "  Suites: Static SAST (scan) + Post-Quantum Crypto (crypto) + SCA"
@@ -36,6 +40,8 @@ jobs:
             RAPTOR_ENGINE_DIR="${RUNNER_TEMP}/raptor_engine"
             rm -rf "${RAPTOR_ENGINE_DIR}"
             git clone --depth 1 https://github.com/gadievron/raptor.git "${RAPTOR_ENGINE_DIR}"
+            mkdir -p "${RAPTOR_ENGINE_DIR}/out"
+            chmod -R 777 "${RAPTOR_ENGINE_DIR}"
             echo "[+] Cloned gadievron/raptor engine into ${RAPTOR_ENGINE_DIR}."
 
             python3 - "${RAPTOR_ENGINE_DIR}" << 'PATCHEOF'
@@ -70,6 +76,16 @@ jobs:
               danielcuthbert/raptor:latest \
               bash -c '
                 set -euo pipefail
+                export PATH="/root/.local/bin:/home/vscode/.local/bin:/usr/local/bin:${PATH}"
+                if ! command -v semgrep >/dev/null 2>&1; then
+                  SEMGREP_FOUND=$(sudo find / -name semgrep -type f -executable 2>/dev/null | head -n 1 || true)
+                  if [ -n "${SEMGREP_FOUND}" ]; then
+                    sudo ln -sf "${SEMGREP_FOUND}" /usr/local/bin/semgrep
+                  fi
+                fi
+                echo "[+] Active semgrep binary: $(which semgrep) ($(semgrep --version || true))"
+                sudo chown -R $(id -u):$(id -g) /workspaces/raptor /workspaces/out || true
+
                 STAGE_DIR="/tmp/raptor_ci_repo"
                 OUT_DIR="/tmp/raptor_ci_out"
                 mkdir -p "${STAGE_DIR}" "${OUT_DIR}"
