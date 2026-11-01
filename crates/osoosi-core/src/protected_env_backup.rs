@@ -266,8 +266,12 @@ impl ProtectedEnvBackupVault {
         }
         #[cfg(windows)]
         {
-            add(PathBuf::from(r"C:\ProgramData\OshoosiClaw\database\env_seal_config.json"));
-            add(PathBuf::from(r"C:\Program Files\OshoosiClaw\database\env_seal_config.json"));
+            add(PathBuf::from(
+                r"C:\ProgramData\OshoosiClaw\database\env_seal_config.json",
+            ));
+            add(PathBuf::from(
+                r"C:\Program Files\OshoosiClaw\database\env_seal_config.json",
+            ));
         }
         paths
     }
@@ -3209,7 +3213,8 @@ pub fn is_production_vault_path(vault_path: &Path) -> bool {
                 .ok()
                 .map(|p| {
                     let es = p.to_string_lossy().to_ascii_lowercase().replace('/', "\\");
-                    es.contains("\\target\\debug\\deps\\") || es.contains("\\target\\release\\deps\\")
+                    es.contains("\\target\\debug\\deps\\")
+                        || es.contains("\\target\\release\\deps\\")
                 })
                 .unwrap_or(false)
         {

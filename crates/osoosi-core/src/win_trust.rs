@@ -512,10 +512,9 @@ pub fn verify_appcontainer_read_acl(path: &Path) -> anyhow::Result<AppContainerA
             .output()?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let up = stdout.to_ascii_uppercase();
-        let has_sid_or_name =
-            up.contains("ALL APPLICATION PACKAGES") || up.contains("S-1-15-2-1");
-        let has_read_perm = has_sid_or_name
-            && (up.contains("(RX)") || up.contains("(R)") || up.contains("(F)"));
+        let has_sid_or_name = up.contains("ALL APPLICATION PACKAGES") || up.contains("S-1-15-2-1");
+        let has_read_perm =
+            has_sid_or_name && (up.contains("(RX)") || up.contains("(R)") || up.contains("(F)"));
         Ok(AppContainerAclStatus {
             path: path_str,
             has_all_application_packages_rx: has_read_perm,
@@ -559,11 +558,7 @@ pub fn ensure_appcontainer_read_acl(path: &Path) -> anyhow::Result<AppContainerA
             .arg(grant_spec)
             .status()?;
         if !status.success() {
-            anyhow::bail!(
-                "icacls /grant {} failed on {}",
-                grant_spec,
-                path.display()
-            );
+            anyhow::bail!("icacls /grant {} failed on {}", grant_spec, path.display());
         }
         let mut updated = verify_appcontainer_read_acl(path)?;
         updated.remediated = true;
@@ -619,14 +614,7 @@ pub fn sign_rust_test_binary_for_smart_app_control(path: &Path) -> anyhow::Resul
             .find(|p| p.is_file())
         {
             let _ = std::process::Command::new(signtool)
-                .args([
-                    "sign",
-                    "/n",
-                    "Oshoosi Developer",
-                    "/fd",
-                    "SHA256",
-                    "/q",
-                ])
+                .args(["sign", "/n", "Oshoosi Developer", "/fd", "SHA256", "/q"])
                 .arg(path.as_os_str())
                 .status();
         }
@@ -819,10 +807,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_appcontainer_read_acl_verify_and_ensure() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "osoosi_appcontainer_acl_{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_appcontainer_acl_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let wav_file = temp_dir.join("final_master.wav");
         std::fs::write(&wav_file, b"RIFF$\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0\x80\xbb\0\0\0\xee\x02\0\x04\0\x10\0data\0\0\0\0").unwrap();
