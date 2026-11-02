@@ -502,7 +502,7 @@ fn test_whitespace_and_newline_invariance() {
 
     let c_lf = compile_policy(yaml_lf, None).unwrap();
     let c_crlf = compile_policy(yaml_crlf, None).unwrap();
-    let c_extra = compile_policy(&yaml_extra_spaces, None).unwrap();
+    let c_extra = compile_policy(yaml_extra_spaces, None).unwrap();
     let c_compact = compile_policy(json_compact, None).unwrap();
     let c_pretty = compile_policy(json_pretty, None).unwrap();
     let c_scrambled = compile_policy(json_scrambled_keys, None).unwrap();
