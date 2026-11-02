@@ -92,13 +92,25 @@ const POLL_INTERVAL = 3000;
             }
             if (typeof state !== 'undefined' && state) {
                 try {
-                    const cp = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]');
-                    if (Array.isArray(cp)) state.collapsedPanels = new Set(cp);
-                    const ec = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_engine_cats_v1') || '[]');
-                    if (Array.isArray(ec)) state.collapsedEngineCategories = new Set(ec);
-                    const vc = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_voter_cards_v1') || '[]');
-                    if (Array.isArray(vc)) state.collapsedVoterCards = new Set(vc);
-                    state.voterCardsCompactMode = window.localStorage.getItem('oshoosi_voter_compact_mode_v1') === 'true';
+                    const rawCp = window.localStorage.getItem('oshoosi_collapsed_panels_v1');
+                    if (rawCp !== null) {
+                        const cp = JSON.parse(rawCp);
+                        if (Array.isArray(cp)) state.collapsedPanels = new Set(cp);
+                    }
+                    const rawEc = window.localStorage.getItem('oshoosi_collapsed_engine_cats_v1');
+                    if (rawEc !== null) {
+                        const ec = JSON.parse(rawEc);
+                        if (Array.isArray(ec)) state.collapsedEngineCategories = new Set(ec);
+                    }
+                    const rawVc = window.localStorage.getItem('oshoosi_collapsed_voter_cards_v1');
+                    if (rawVc !== null) {
+                        const vc = JSON.parse(rawVc);
+                        if (Array.isArray(vc)) state.collapsedVoterCards = new Set(vc);
+                    }
+                    const rawCompact = window.localStorage.getItem('oshoosi_voter_compact_mode_v1');
+                    if (rawCompact !== null) {
+                        state.voterCardsCompactMode = rawCompact === 'true';
+                    }
                 } catch (_) {}
             }
             try {
@@ -141,23 +153,50 @@ const state = {
     telemetryChart: null,
     expandedDetails: new Set(),
     collapsedPanels: new Set((() => {
+        const defaultCollapsedPanels = [
+            'telemetry-chart-body',
+            'activity-feed-body',
+            'zone-rec-body',
+            'zone-nodes-body',
+            'blocklist-manager-body',
+            'suppression-body',
+            'manual-tp-body',
+            'gossip-panel-body',
+            'malware-panel-body',
+            'consensus-panel-body',
+            'repair-panel-body',
+            'mitre-overview-body',
+            'mitre-filters-body'
+        ];
         try {
-            const arr = JSON.parse(localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]');
-            const set = new Set(Array.isArray(arr) ? arr : []);
+            const raw = localStorage.getItem('oshoosi_collapsed_panels_v1');
+            const arr = raw !== null ? JSON.parse(raw) : defaultCollapsedPanels;
+            const set = new Set(Array.isArray(arr) ? arr : defaultCollapsedPanels);
             if (localStorage.getItem('oshoosi_collapse_policy_engines') === 'true') {
                 set.add('detection-engines-body');
             }
             return Array.from(set);
-        } catch (_) { return []; }
+        } catch (_) { return defaultCollapsedPanels; }
     })()),
     collapsedEngineCategories: new Set((() => {
-        try { return JSON.parse(localStorage.getItem('oshoosi_collapsed_engine_cats_v1') || '[]'); } catch (_) { return []; }
+        const defaultCats = ['ai-agentic', 'memory-kernel', 'network-intel', 'physics-containment', 'trust-reputation'];
+        try {
+            const raw = localStorage.getItem('oshoosi_collapsed_engine_cats_v1');
+            if (raw !== null) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) return parsed;
+            }
+            return defaultCats;
+        } catch (_) { return defaultCats; }
     })()),
     collapsedVoterCards: new Set((() => {
         try { return JSON.parse(localStorage.getItem('oshoosi_collapsed_voter_cards_v1') || '[]'); } catch (_) { return []; }
     })()),
     voterCardsCompactMode: (() => {
-        try { return localStorage.getItem('oshoosi_voter_compact_mode_v1') === 'true'; } catch (_) { return false; }
+        try {
+            const raw = localStorage.getItem('oshoosi_voter_compact_mode_v1');
+            return raw !== null ? raw === 'true' : true;
+        } catch (_) { return true; }
     })(),
     lastDetectionStats: null,
     lastThreatsHash: '',
@@ -2688,7 +2727,8 @@ function renderThreats(threats) {
 
     list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
         const t = groupThreats[0];
-        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const normConf = (c) => { const v = Number(c) || 0; return v > 1 ? v / 100 : v; };
+        const maxConfidence = Math.max(...groupThreats.map(gt => normConf(gt.confidence)));
         const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
         const badgeClass = maxConfidence > 0.8 ? 'red' : (maxConfidence > 0.6 ? 'blue' : 'blue');
         const borderClass = maxConfidence > 0.8 ? 'threat-high' : (maxConfidence > 0.6 ? 'threat-medium' : 'threat-low');
@@ -2889,7 +2929,8 @@ function renderThreatsView(threats) {
 
     list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
         const t = groupThreats[0];
-        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const normConf = (c) => { const v = Number(c) || 0; return v > 1 ? v / 100 : v; };
+        const maxConfidence = Math.max(...groupThreats.map(gt => normConf(gt.confidence)));
         const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
         const badgeClass = maxConfidence > 0.8 ? 'red' : 'blue';
         const borderClass = maxConfidence > 0.8 ? 'threat-high' : 'threat-medium';
@@ -2946,7 +2987,7 @@ function renderThreatsView(threats) {
                 ${groupThreats.map(gt => `
                     <div class="reason-entry" style="font-size:12px; color:var(--text-primary); background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border-left:2px solid var(--accent-blue);">
                         ${gt.reason || 'Anomalous behavior detected'}
-                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(normConf(gt.confidence) * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
                     </div>
                 `).join('')}
                 ${t.file_path ? `<div style="font-size:11px; color:var(--accent-blue); opacity: 0.9; font-family: monospace;">Full Path: ${escapeHtml(t.file_path)}</div>` : ''}
@@ -6514,14 +6555,14 @@ const COLLAPSIBLE_PANELS = {
         btnId: 'toggle-mitre-overview-btn',
         expandLabel: 'Expand Overview',
         collapseLabel: 'Collapse Overview',
-        defaultCollapsed: false
+        defaultCollapsed: true
     },
     'mitre-filters': {
         bodyId: 'mitre-filters-body',
         btnId: 'toggle-mitre-filters-btn',
         expandLabel: 'Expand Filters',
         collapseLabel: 'Collapse Filters',
-        defaultCollapsed: false
+        defaultCollapsed: true
     },
     'mitre-techniques-matrix': {
         bodyId: 'mitre-techniques-matrix-body',
@@ -8333,7 +8374,7 @@ function isTacticCollapsed(tacticId, hasActiveFilter = false) {
     if (window.mitreCollapsedTactics && typeof window.mitreCollapsedTactics[tacticId] === 'boolean') {
         return window.mitreCollapsedTactics[tacticId];
     }
-    return false;
+    return true;
 }
 window.isTacticCollapsed = isTacticCollapsed;
 
@@ -8341,7 +8382,7 @@ function isTechCardCollapsed(techId) {
     if (window.mitreCollapsedCards && typeof window.mitreCollapsedCards[techId] === 'boolean') {
         return window.mitreCollapsedCards[techId];
     }
-    return false;
+    return true;
 }
 window.isTechCardCollapsed = isTechCardCollapsed;
 
@@ -13650,10 +13691,39 @@ function restoreSidebarCategoriesFromStorage() {
                     }
                 });
             }
+        } else {
+            document.querySelectorAll('details.nav-category-group').forEach(g => {
+                g.open = false;
+            });
         }
     } catch (_) {}
     updateSidebarCollapseExpandAllButtonLabel();
 }
+
+function initUniversalCollapsibleLongMenus() {
+    try {
+        // 1. Ensure all non-sidebar <details> menus without explicit data-default-open start collapsed by default
+        document.querySelectorAll('.content details').forEach(det => {
+            if (!det.hasAttribute('data-user-toggled') && !det.hasAttribute('data-default-open')) {
+                det.open = false;
+            }
+        });
+        // 2. Wire beforematch on <details> so browser Find-in-Page (Ctrl+F) reveals hidden sections
+        document.querySelectorAll('details').forEach(det => {
+            if (!det.dataset.beforematchWired) {
+                det.dataset.beforematchWired = 'true';
+                det.addEventListener('beforematch', () => {
+                    det.open = true;
+                });
+            }
+        });
+        // 3. Synchronize all collapsible panel DOM states with state.collapsedPanels
+        if (typeof syncCollapsedPanelsDOM === 'function') {
+            syncCollapsedPanelsDOM();
+        }
+    } catch (_) {}
+}
+window.initUniversalCollapsibleLongMenus = initUniversalCollapsibleLongMenus;
 
 function toggleSidebarRailMode(explicitState) {
     const sidebar = document.getElementById('main-sidebar') || document.querySelector('.sidebar');
@@ -13738,6 +13808,7 @@ function filterSidebarMenu(query) {
 function initCollapsibleSidebar() {
     try {
         restoreSidebarCategoriesFromStorage();
+        initUniversalCollapsibleLongMenus();
         const railCollapsed = localStorage.getItem(SIDEBAR_RAIL_STORAGE_KEY) === 'true';
         if (railCollapsed) {
             applySidebarRailMode(true);

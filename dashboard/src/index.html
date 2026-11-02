@@ -63,7 +63,7 @@
                 </div>
 
                 <!-- 2. Threat Detection -->
-                <details class="nav-category-group" data-category="threat-detection" open>
+                <details class="nav-category-group" data-category="threat-detection">
                     <summary class="nav-category-summary" title="Threat Detection (ATT&amp;CK Matrix, Malware, Threat Intel, REA)">
                         <span>🎯 Threat Detection</span>
                         <span id="cat-badge-threat-detection" class="badge blue" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">4</span>
@@ -90,7 +90,7 @@
                 </details>
 
                 <!-- 3. Agent Security -->
-                <details class="nav-category-group" data-category="agent-security" open>
+                <details class="nav-category-group" data-category="agent-security">
                     <summary class="nav-category-summary" title="Agent Security (Containment, DLP, Approval Queue, CI/CD Protection)">
                         <span>🛡️ Agent Security</span>
                         <span id="cat-badge-agent-security" class="badge cyan" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">4</span>
@@ -177,7 +177,7 @@
                 </details>
 
                 <!-- 6. Infrastructure -->
-                <details class="nav-category-group" data-category="infrastructure" open>
+                <details class="nav-category-group" data-category="infrastructure">
                     <summary class="nav-category-summary" title="Infrastructure (Mesh Network, Telemetry Map, Gossip Feed)">
                         <span>🌐 Infrastructure</span>
                         <span id="cat-badge-infrastructure" class="badge green" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">3</span>
@@ -200,7 +200,7 @@
                 </details>
 
                 <!-- 7. Settings, Operations & Tools -->
-                <details class="nav-category-group" data-category="operations-tools" open>
+                <details class="nav-category-group" data-category="operations-tools">
                     <summary class="nav-category-summary" title="Settings, Operations &amp; Tools (TPM &amp; Hardware Zone Settings, Repair Engine, Siquery SQL, Utilities &amp; Models)">
                         <span>⚙️ Settings &amp; Operations</span>
                         <span id="cat-badge-operations-tools" class="badge yellow" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">4</span>
@@ -363,8 +363,8 @@
                         </div>
                         <div class="header-actions" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                             <span class="badge purple">Consensus Quorum: 0.70</span>
-                            <button class="btn-text" id="toggle-engine-categories-btn" onclick="toggleAllEngineCategories()" style="font-size:12px; cursor:pointer;" title="Collapse or expand all 5 voter categories">Collapse Categories</button>
-                            <button class="btn-text" id="toggle-voter-compact-btn" onclick="toggleAllVoterCardsCompact()" style="font-size:12px; cursor:pointer;" title="Switch between compact pill cards and expanded voter cards">Compact Voters</button>
+                            <button class="btn-text" id="toggle-engine-categories-btn" onclick="toggleAllEngineCategories()" style="font-size:12px; cursor:pointer;" title="Collapse or expand all 5 voter categories">Expand Categories</button>
+                            <button class="btn-text" id="toggle-voter-compact-btn" onclick="toggleAllVoterCardsCompact()" style="font-size:12px; cursor:pointer;" title="Switch between compact pill cards and expanded voter cards">Expand Voters</button>
                             <button class="btn-text" id="toggle-engines-btn" onclick="toggleEnginesPanel()" style="font-size:12px; cursor:pointer; font-weight:700;">Collapse</button>
                         </div>
                     </div>
@@ -421,262 +421,6 @@
                     </div>
                 </div>
 
-                                <!-- 📐 Mathematical Mesh Defense Effectiveness ($E(N, t)$) & 3-Tier Blockchain of Ledgers -->
-                <div class="card glass shadow-glow mb-4 mesh-effectiveness-card" id="mesh-effectiveness-card-dashboard" style="padding: 20px; margin-bottom: 24px;">
-                    <!-- Header -->
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--glass-border); margin-bottom: 16px;">
-                        <div>
-                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px; cursor: pointer;" onclick="toggleMeshEffectivenessPanel()">
-                                    <span>📐 Falsifiable Non-Stationary Mesh Defense Effectiveness (<span style="font-family: monospace; color: #38bdf8;">E(N, t)</span>)</span>
-                                </h3>
-                                <span class="badge blue" style="font-size: 11px;">Adversarial ML Taxonomy</span>
-                                <span class="badge green" style="font-size: 11px;">Vassilev Equilibrium Verified</span>
-                            </div>
-                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                                3-Gate Sequential Independent Defense with Polymorphic Drift Ceiling (δ<sub>poly</sub> = 0.02) &amp; Correlated Zero-Day Floor (p<sub>corr</sub> = 0.05%).
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <span class="badge purple" style="font-family: monospace; font-size: 11px; padding: 4px 8px;" title="Polynomial Failure Probability Decay toward Correlated Floor">
-                                Residual Decay: O((ln N / N<sup>3/2</sup>) · (1 / √t)) → p<sub>corr</sub>
-                            </span>
-                            <span class="badge green" style="font-size: 11px; padding: 4px 8px;">lim<sub>N→∞</sub> E(N, t) = 99.9500%</span>
-                            <button class="btn-text" id="toggle-mesh-eff-btn" onclick="toggleMeshEffectivenessPanel()" style="font-size: 12px; cursor: pointer; font-weight: 700;">Collapse</button>
-                        </div>
-                    </div>
-                    <div id="mesh-effectiveness-body">
-
-                    <!-- Closed-Form Sequential Gate Formulas -->
-                    <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--glass-border-bright); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px;">
-                        <div style="font-size: 13.5px; font-weight: 700; color: #38bdf8; font-family: monospace; letter-spacing: 0.2px; line-height: 1.6;">
-                            E(N, t) = (1 − p<sub>corr</sub>) · [ 1 − (1 − P<sub>kernel</sub>) · (1 − S<sub>fleet</sub>(N)) · (1 − I<sub>RL</sub>(N, t)) ]
-                        </div>
-                        <div style="font-size: 12px; font-family: monospace; color: #cbd5e1; margin-top: 6px; line-height: 1.5;">
-                            P<sub>compromise</sub>(N, t) = p<sub>corr</sub> + (1 − p<sub>corr</sub>) · [ (1 − P<sub>kernel</sub>) · (1 − S<sub>fleet</sub>(N)) · (1 − I<sub>RL</sub>(N, t)) ]
-                        </div>
-                        <div style="font-size: 11.5px; font-family: monospace; color: #94a3b8; margin-top: 6px; border-top: 1px dashed rgba(255, 255, 255, 0.1); padding-top: 6px;">
-                            <span style="color: #a78bfa; font-weight: 600;">Corrected RL Convergence:</span> I<sub>RL</sub>(N, t) = (1 − δ<sub>poly</sub>) · [ 1 − d / √(d<sup>2</sup> + η<sub>BFT</sub> · N · λ<sub>probe</sub> · t) ] &nbsp;|&nbsp; Solo Boundary: E(1, 0) = 91.9540%
-                        </div>
-                    </div>
-
-                    <!-- 6 KPI Pills -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px;">
-                        <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">1. Propagation Latency</div>
-                            <div class="mesh-kpi-tau-val" style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">265.43 ms</div>
-                            <div class="mesh-kpi-tau-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(2) • +0.00ms vs 1</div>
-                        </div>
-                        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">2. Zero-Day Survival</div>
-                            <div class="mesh-kpi-survival-val" style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">23.46%</div>
-                            <div class="mesh-kpi-survival-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(2) @ λ=2 hosts/s</div>
-                        </div>
-                        <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">3. RL Policy Immunity</div>
-                            <div class="mesh-kpi-irl-val" style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">16.36%</div>
-                            <div class="mesh-kpi-irl-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(2, 1d) • Bound: 98.00%</div>
-                        </div>
-                        <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">4. Unified Effectiveness</div>
-                            <div class="mesh-kpi-eff-val" style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">94.8289%</div>
-                            <div class="mesh-kpi-eff-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(2, 1d) • Asymptote 1−p<sub>corr</sub></div>
-                        </div>
-                        <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">5. Ledger Quorum Latency</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #0ea5e9; margin-top: 2px;">&lt; 1.0 ms</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>quorum</sub> • REA Veto + ML-DSA-65</div>
-                        </div>
-                        <div style="background: rgba(236, 72, 153, 0.08); border: 1px solid rgba(236, 72, 153, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">6. Immunity Architecture</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #ec4899; margin-top: 2px;">3-Tier Rollup</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">Micro-Ledger → Zone → Global Root</div>
-                        </div>
-                    </div>
-
-                    <!-- Interactive Scale Selector & Dynamic Readout -->
-                    <div style="background: rgba(2, 6, 23, 0.5); border: 1px solid var(--glass-border); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
-                            <span style="font-size: 12px; font-weight: 700; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.5px;">Interactive Fleet Scale Selector (Horizon t = 1.0 Day)</span>
-                            <span style="font-size: 11px; color: var(--text-muted);">Exact 4-significant-figure closed-form evaluation</span>
-                        </div>
-
-                        <!-- Live Mesh Effectiveness Banner -->
-                        <div class="mesh-live-effectiveness-banner" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
-                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                <span class="badge green" style="font-size: 11px; font-weight: 700; padding: 3px 8px;">🟢 CURRENT LIVE MESH</span>
-                                <span style="font-size: 12.5px; color: #f8fafc; font-weight: 700;">Active Hosts in Mesh: <span class="mesh-live-host-count-val" style="color: #10b981; font-family: monospace;">2 Hosts (1 Local + 1 Peer)</span></span>
-                            </div>
-                            <div style="display: flex; gap: 14px; flex-wrap: wrap; font-family: monospace; font-size: 11.5px;">
-                                <span>τ<sub>prop</sub>: <strong class="mesh-live-tau-val" style="color: #38bdf8;">265.43 ms</strong></span>
-                                <span>S<sub>fleet</sub>: <strong class="mesh-live-survival-val" style="color: #10b981;">23.46%</strong></span>
-                                <span>I<sub>RL</sub>(1d): <strong class="mesh-live-irl-val" style="color: #a855f7;">16.36%</strong></span>
-                                <span>P<sub>comp</sub>: <strong class="mesh-live-pcomp-val" style="color: #f59e0b;">5.1711%</strong></span>
-                                <span>Current Effectiveness E(N<sub>live</sub>, 1d): <strong class="mesh-live-eff-val" style="color: #10b981; font-size: 13px;">94.8289%</strong></span>
-                            </div>
-                        </div>
-
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;">
-                            <button type="button" class="btn-mesh-scale active" data-n="live" onclick="window.selectMeshEffectivenessScale('live')" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981;">🟢 Live Mesh (N = <span class="mesh-live-btn-n">2</span>)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1" onclick="window.selectMeshEffectivenessScale(1)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1 (Standalone)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="10" onclick="window.selectMeshEffectivenessScale(10)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 10 (Small Cluster)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1000" onclick="window.selectMeshEffectivenessScale(1000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000 (1 Regional Zone)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="100000" onclick="window.selectMeshEffectivenessScale(100000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 100,000 (100 Zones)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000,000 (1,000 Zones)</button>
-                            <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: auto;">
-                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Custom Hosts N:</label>
-                                <input type="number" class="mesh-custom-n-input" min="1" max="100000000" step="1" placeholder="Enter N..." oninput="window.selectMeshEffectivenessScale(this.value)" style="width: 110px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--glass-border-bright); background: rgba(0,0,0,0.45); color: #38bdf8; font-family: monospace; font-size: 12px; font-weight: 700;">
-                            </div>
-                        </div>
-                        <!-- Live Readout Row -->
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px;">
-                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#10b981;">2 nodes (Live Swarm)</strong></div>
-                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">265.43 ms</strong></div>
-                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.5309 hosts</strong></div>
-                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">23.46%</strong></div>
-                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">16.36%</strong></div>
-                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#f59e0b;">5.1711%</strong></div>
-                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#10b981;">94.8289%</strong></div>
-                        </div>
-                    </div>
-
-                    <!-- 5-Tier Mathematical Verification Table -->
-                    <div style="overflow-x: auto; margin-bottom: 16px;">
-                        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid var(--glass-border-bright); background: rgba(255, 255, 255, 0.03);">
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Fleet Scale (N)</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Gossip Latency τ<sub>prop</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Exposed Cohort</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Zero-Day Survival S<sub>fleet</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Effective Episodes T<sub>eff</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">RL Policy I<sub>RL</sub> (1d)</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Compromise P<sub>comp</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Effectiveness E(N, 1d)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr class="mesh-live-table-row" style="border-bottom: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08);">
-                                    <td style="padding: 8px 10px; font-weight: 700; color: #10b981;">🟢 Live Mesh: N = <span class="mesh-live-row-n">2</span> <span style="color:#a7f3d0; font-size:10px;">(t=1d current swarm)</span></td>
-                                    <td class="mesh-live-row-tau" style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">265.43 ms</td>
-                                    <td class="mesh-live-row-exposed" style="padding: 8px 10px; font-family: monospace;">1.5309</td>
-                                    <td class="mesh-live-row-survival" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">23.46%</td>
-                                    <td class="mesh-live-row-teff" style="padding: 8px 10px; font-family: monospace;">114.4</td>
-                                    <td class="mesh-live-row-irl" style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">16.36%</td>
-                                    <td class="mesh-live-row-pcomp" style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">5.1711%</td>
-                                    <td class="mesh-live-row-eff" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 800;">94.8289%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=0 standalone)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.0000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #94a3b8;">0.0000%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.0</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #ef4444;">8.0460%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">91.9540%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=1d solo)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.0000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #94a3b8;">0.0000%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57.2</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">9.40%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #ef4444;">7.2944%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">92.7056%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 10 <span style="color:var(--text-muted); font-size:10px;">(Small Cluster)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">288.76 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.5775</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">84.22%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">572.0</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">43.51%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">0.7625%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.2375%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1,000 <span style="color:var(--text-muted); font-size:10px;">(1 Regional Zone)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">366.27 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.7325</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">99.83%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57,200</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">91.46%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0512%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.9488%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 100,000 <span style="color:var(--text-muted); font-size:10px;">(100 Zones)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">443.78 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.8876</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">99.998%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">5,720,000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">97.34%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0500%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.9500%</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8;">N = 1,000,000 <span style="color:var(--text-muted); font-size:10px;">(1,000 Zones)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">482.53 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.9651</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">99.9998%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57,200,000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">97.79%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0500%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 800;">99.9500%</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Adversarial Robustness / Vassilev Alignment Proof Table -->
-                    <div style="border-top: 1px solid var(--glass-border); padding-top: 14px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: Adversarial Robustness &amp; Vassilev Equilibrium</span>
-                            <span class="badge blue" style="font-size: 10px;">Deterministic OS Floor + Polynomial Failure Decay</span>
-                        </div>
-                        <div style="overflow-x: auto;">
-                            <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
-                                <thead>
-                                    <tr style="border-bottom: 1px solid var(--glass-border-bright); background: rgba(255, 255, 255, 0.02);">
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 25%;">Theoretical Requirement</th>
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 35%;">Traditional Security Failure</th>
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 40%;">OshoosiClaw Mathematical Proof</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Pillars I &amp; III: Deterministic Boundaries</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Probabilistic AI guardrails alone fail under adaptive prompt injection or multi-layer encoding (1 − P<sub>LLM</sub> &gt; 0).</td>
-                                        <td style="padding: 6px 8px; color: #38bdf8;"><strong>Lower-Bound Theorem (N=1, t=0):</strong> E(1, 0) = (1 − p<sub>corr</sub>)·P<sub>kernel</sub> = 91.9540%. Ring-0 ETW/eBPF, CanaryCage, and DLP enforce deterministic floor.</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Pillar II: Defeating Machine-Speed Propagation</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Centralized cloud polling scales as O(N), allowing fast worms (λ<sub>attack</sub>) to compromise fleet before signatures arrive.</td>
-                                        <td style="padding: 6px 8px; color: #10b981;"><strong>Logarithmic Survival Limit:</strong> τ<sub>prop</sub> = τ<sub>base</sub> + τ<sub>hop</sub>log<sub>k</sub>N. By L'Hôpital (ln N / N → 0), lim S<sub>fleet</sub> = 100% (99.9998% at 10⁶).</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Adversarial Taxonomy: Non-Stationary Evasion</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Isolated endpoints learn at O(1/√t), taking months or years to bound attacker action space d.</td>
-                                        <td style="padding: 6px 8px; color: #f59e0b;"><strong>√N Collective Acceleration with Drift Ceiling (δ<sub>poly</sub> = 0.02):</strong> BFT sharing compresses learning from 9.40% (N=1) to 97.79% (N=10⁶) in 1 day.</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Vassilev's Economic Equilibrium Law</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Attackers generate cheap polymorphic payloads while defenders pay high compute/analyst costs per alert.</td>
-                                        <td style="padding: 6px 8px; color: #a855f7;"><strong>Cost Asymmetry Inversion:</strong> Bounded compromise probability (0.0500% at 10⁶) forces attacker cost per breach up &gt;2,450x via CanaryCage tarpits.</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Byzantine Resilience &amp; Zero-Day Bound</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Naive P2P sharing allows rogue killswitches, or assumes 100% security ignoring synchronized zero-days.</td>
-                                        <td style="padding: 6px 8px; color: #ec4899;"><strong>Explicit Correlated Floor p<sub>corr</sub> = 0.05%:</strong> ProtectedLocalBinaryHashInventory (&lt;1ms veto) blocks rogue killswitches while p<sub>corr</sub> models synchronized zero-days.</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    </div>
-                </div>
 
                 <!-- Telemetry Graph -->
                 <div class="card glass shadow-glow mb-4" style="min-height: 80px; margin-bottom: 24px;">
@@ -919,259 +663,6 @@
                         <div class="stat-info">
                             <span class="stat-label">Quarantined Peers</span>
                             <span class="stat-value" id="stat-quarantined">0</span>
-                        </div>
-                    </div>
-                </div>
-                                <!-- 📐 Mathematical Mesh Defense Effectiveness ($E(N, t)$) & 3-Tier Blockchain of Ledgers -->
-                <div class="card glass shadow-glow mb-4 mesh-effectiveness-card" id="mesh-effectiveness-card-mesh" style="padding: 20px; margin-bottom: 24px;">
-                    <!-- Header -->
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--glass-border); margin-bottom: 16px;">
-                        <div>
-                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
-                                    <span>📐 Falsifiable Non-Stationary Mesh Defense Effectiveness (<span style="font-family: monospace; color: #38bdf8;">E(N, t)</span>)</span>
-                                </h3>
-                                <span class="badge blue" style="font-size: 11px;">Adversarial ML Taxonomy</span>
-                                <span class="badge green" style="font-size: 11px;">Vassilev Equilibrium Verified</span>
-                            </div>
-                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                                3-Gate Sequential Independent Defense with Polymorphic Drift Ceiling (δ<sub>poly</sub> = 0.02) &amp; Correlated Zero-Day Floor (p<sub>corr</sub> = 0.05%).
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <span class="badge purple" style="font-family: monospace; font-size: 11px; padding: 4px 8px;" title="Polynomial Failure Probability Decay toward Correlated Floor">
-                                Residual Decay: O((ln N / N<sup>3/2</sup>) · (1 / √t)) → p<sub>corr</sub>
-                            </span>
-                            <span class="badge green" style="font-size: 11px; padding: 4px 8px;">lim<sub>N→∞</sub> E(N, t) = 99.9500%</span>
-                        </div>
-                    </div>
-
-                    <!-- Closed-Form Sequential Gate Formulas -->
-                    <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--glass-border-bright); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px;">
-                        <div style="font-size: 13.5px; font-weight: 700; color: #38bdf8; font-family: monospace; letter-spacing: 0.2px; line-height: 1.6;">
-                            E(N, t) = (1 − p<sub>corr</sub>) · [ 1 − (1 − P<sub>kernel</sub>) · (1 − S<sub>fleet</sub>(N)) · (1 − I<sub>RL</sub>(N, t)) ]
-                        </div>
-                        <div style="font-size: 12px; font-family: monospace; color: #cbd5e1; margin-top: 6px; line-height: 1.5;">
-                            P<sub>compromise</sub>(N, t) = p<sub>corr</sub> + (1 − p<sub>corr</sub>) · [ (1 − P<sub>kernel</sub>) · (1 − S<sub>fleet</sub>(N)) · (1 − I<sub>RL</sub>(N, t)) ]
-                        </div>
-                        <div style="font-size: 11.5px; font-family: monospace; color: #94a3b8; margin-top: 6px; border-top: 1px dashed rgba(255, 255, 255, 0.1); padding-top: 6px;">
-                            <span style="color: #a78bfa; font-weight: 600;">Corrected RL Convergence:</span> I<sub>RL</sub>(N, t) = (1 − δ<sub>poly</sub>) · [ 1 − d / √(d<sup>2</sup> + η<sub>BFT</sub> · N · λ<sub>probe</sub> · t) ] &nbsp;|&nbsp; Solo Boundary: E(1, 0) = 91.9540%
-                        </div>
-                    </div>
-
-                    <!-- 6 KPI Pills -->
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px;">
-                        <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">1. Propagation Latency</div>
-                            <div class="mesh-kpi-tau-val" style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">265.43 ms</div>
-                            <div class="mesh-kpi-tau-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(2) • +0.00ms vs 1</div>
-                        </div>
-                        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">2. Zero-Day Survival</div>
-                            <div class="mesh-kpi-survival-val" style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">23.46%</div>
-                            <div class="mesh-kpi-survival-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(2) @ λ=2 hosts/s</div>
-                        </div>
-                        <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">3. RL Policy Immunity</div>
-                            <div class="mesh-kpi-irl-val" style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">16.36%</div>
-                            <div class="mesh-kpi-irl-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(2, 1d) • Bound: 98.00%</div>
-                        </div>
-                        <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">4. Unified Effectiveness</div>
-                            <div class="mesh-kpi-eff-val" style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">94.8289%</div>
-                            <div class="mesh-kpi-eff-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(2, 1d) • Asymptote 1−p<sub>corr</sub></div>
-                        </div>
-                        <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">5. Ledger Quorum Latency</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #0ea5e9; margin-top: 2px;">&lt; 1.0 ms</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>quorum</sub> • REA Veto + ML-DSA-65</div>
-                        </div>
-                        <div style="background: rgba(236, 72, 153, 0.08); border: 1px solid rgba(236, 72, 153, 0.25); border-radius: 8px; padding: 10px 12px;">
-                            <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">6. Immunity Architecture</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #ec4899; margin-top: 2px;">3-Tier Rollup</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">Micro-Ledger → Zone → Global Root</div>
-                        </div>
-                    </div>
-
-                    <!-- Interactive Scale Selector & Dynamic Readout -->
-                    <div style="background: rgba(2, 6, 23, 0.5); border: 1px solid var(--glass-border); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
-                            <span style="font-size: 12px; font-weight: 700; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.5px;">Interactive Fleet Scale Selector (Horizon t = 1.0 Day)</span>
-                            <span style="font-size: 11px; color: var(--text-muted);">Exact 4-significant-figure closed-form evaluation</span>
-                        </div>
-
-                        <!-- Live Mesh Effectiveness Banner -->
-                        <div class="mesh-live-effectiveness-banner" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
-                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                <span class="badge green" style="font-size: 11px; font-weight: 700; padding: 3px 8px;">🟢 CURRENT LIVE MESH</span>
-                                <span style="font-size: 12.5px; color: #f8fafc; font-weight: 700;">Active Hosts in Mesh: <span class="mesh-live-host-count-val" style="color: #10b981; font-family: monospace;">2 Hosts (1 Local + 1 Peer)</span></span>
-                            </div>
-                            <div style="display: flex; gap: 14px; flex-wrap: wrap; font-family: monospace; font-size: 11.5px;">
-                                <span>τ<sub>prop</sub>: <strong class="mesh-live-tau-val" style="color: #38bdf8;">265.43 ms</strong></span>
-                                <span>S<sub>fleet</sub>: <strong class="mesh-live-survival-val" style="color: #10b981;">23.46%</strong></span>
-                                <span>I<sub>RL</sub>(1d): <strong class="mesh-live-irl-val" style="color: #a855f7;">16.36%</strong></span>
-                                <span>P<sub>comp</sub>: <strong class="mesh-live-pcomp-val" style="color: #f59e0b;">5.1711%</strong></span>
-                                <span>Current Effectiveness E(N<sub>live</sub>, 1d): <strong class="mesh-live-eff-val" style="color: #10b981; font-size: 13px;">94.8289%</strong></span>
-                            </div>
-                        </div>
-
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;">
-                            <button type="button" class="btn-mesh-scale active" data-n="live" onclick="window.selectMeshEffectivenessScale('live')" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981;">🟢 Live Mesh (N = <span class="mesh-live-btn-n">2</span>)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1" onclick="window.selectMeshEffectivenessScale(1)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1 (Standalone)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="10" onclick="window.selectMeshEffectivenessScale(10)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 10 (Small Cluster)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1000" onclick="window.selectMeshEffectivenessScale(1000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000 (1 Regional Zone)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="100000" onclick="window.selectMeshEffectivenessScale(100000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 100,000 (100 Zones)</button>
-                            <button type="button" class="btn-mesh-scale" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000,000 (1,000 Zones)</button>
-                            <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: auto;">
-                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Custom Hosts N:</label>
-                                <input type="number" class="mesh-custom-n-input" min="1" max="100000000" step="1" placeholder="Enter N..." oninput="window.selectMeshEffectivenessScale(this.value)" style="width: 110px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--glass-border-bright); background: rgba(0,0,0,0.45); color: #38bdf8; font-family: monospace; font-size: 12px; font-weight: 700;">
-                            </div>
-                        </div>
-                        <!-- Live Readout Row -->
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px;">
-                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#10b981;">2 nodes (Live Swarm)</strong></div>
-                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">265.43 ms</strong></div>
-                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.5309 hosts</strong></div>
-                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">23.46%</strong></div>
-                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">16.36%</strong></div>
-                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#f59e0b;">5.1711%</strong></div>
-                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#10b981;">94.8289%</strong></div>
-                        </div>
-                    </div>
-
-                    <!-- 5-Tier Mathematical Verification Table -->
-                    <div style="overflow-x: auto; margin-bottom: 16px;">
-                        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
-                            <thead>
-                                <tr style="border-bottom: 1px solid var(--glass-border-bright); background: rgba(255, 255, 255, 0.03);">
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Fleet Scale (N)</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Gossip Latency τ<sub>prop</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Exposed Cohort</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Zero-Day Survival S<sub>fleet</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Effective Episodes T<sub>eff</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">RL Policy I<sub>RL</sub> (1d)</th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Compromise P<sub>comp</sub></th>
-                                    <th style="padding: 8px 10px; color: var(--text-muted); font-weight: 700;">Effectiveness E(N, 1d)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr class="mesh-live-table-row" style="border-bottom: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08);">
-                                    <td style="padding: 8px 10px; font-weight: 700; color: #10b981;">🟢 Live Mesh: N = <span class="mesh-live-row-n">2</span> <span style="color:#a7f3d0; font-size:10px;">(t=1d current swarm)</span></td>
-                                    <td class="mesh-live-row-tau" style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">265.43 ms</td>
-                                    <td class="mesh-live-row-exposed" style="padding: 8px 10px; font-family: monospace;">1.5309</td>
-                                    <td class="mesh-live-row-survival" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">23.46%</td>
-                                    <td class="mesh-live-row-teff" style="padding: 8px 10px; font-family: monospace;">114.4</td>
-                                    <td class="mesh-live-row-irl" style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">16.36%</td>
-                                    <td class="mesh-live-row-pcomp" style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">5.1711%</td>
-                                    <td class="mesh-live-row-eff" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 800;">94.8289%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=0 standalone)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.0000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #94a3b8;">0.0000%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.0</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #ef4444;">8.0460%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">91.9540%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=1d solo)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.0000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #94a3b8;">0.0000%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57.2</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">9.40%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #ef4444;">7.2944%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">92.7056%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 10 <span style="color:var(--text-muted); font-size:10px;">(Small Cluster)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">288.76 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.5775</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">84.22%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">572.0</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">43.51%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">0.7625%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.2375%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1,000 <span style="color:var(--text-muted); font-size:10px;">(1 Regional Zone)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">366.27 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.7325</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">99.83%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57,200</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">91.46%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0512%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.9488%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid var(--glass-border);">
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 100,000 <span style="color:var(--text-muted); font-size:10px;">(100 Zones)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">443.78 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.8876</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">99.998%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">5,720,000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">97.34%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0500%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">99.9500%</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8;">N = 1,000,000 <span style="color:var(--text-muted); font-size:10px;">(1,000 Zones)</span></td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">482.53 ms</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">1.9651</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">99.9998%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace;">57,200,000</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">97.79%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #10b981;">0.0500%</td>
-                                    <td style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 800;">99.9500%</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Adversarial Robustness / Vassilev Alignment Proof Table -->
-                    <div style="border-top: 1px solid var(--glass-border); padding-top: 14px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: Adversarial Robustness &amp; Vassilev Equilibrium</span>
-                            <span class="badge blue" style="font-size: 10px;">Deterministic OS Floor + Polynomial Failure Decay</span>
-                        </div>
-                        <div style="overflow-x: auto;">
-                            <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
-                                <thead>
-                                    <tr style="border-bottom: 1px solid var(--glass-border-bright); background: rgba(255, 255, 255, 0.02);">
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 25%;">Theoretical Requirement</th>
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 35%;">Traditional Security Failure</th>
-                                        <th style="padding: 6px 8px; color: var(--text-muted); font-weight: 600; width: 40%;">OshoosiClaw Mathematical Proof</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Pillars I &amp; III: Deterministic Boundaries</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Probabilistic AI guardrails alone fail under adaptive prompt injection or multi-layer encoding (1 − P<sub>LLM</sub> &gt; 0).</td>
-                                        <td style="padding: 6px 8px; color: #38bdf8;"><strong>Lower-Bound Theorem (N=1, t=0):</strong> E(1, 0) = (1 − p<sub>corr</sub>)·P<sub>kernel</sub> = 91.9540%. Ring-0 ETW/eBPF, CanaryCage, and DLP enforce deterministic floor.</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Pillar II: Defeating Machine-Speed Propagation</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Centralized cloud polling scales as O(N), allowing fast worms (λ<sub>attack</sub>) to compromise fleet before signatures arrive.</td>
-                                        <td style="padding: 6px 8px; color: #10b981;"><strong>Logarithmic Survival Limit:</strong> τ<sub>prop</sub> = τ<sub>base</sub> + τ<sub>hop</sub>log<sub>k</sub>N. By L'Hôpital (ln N / N → 0), lim S<sub>fleet</sub> = 100% (99.9998% at 10⁶).</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Adversarial Taxonomy: Non-Stationary Evasion</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Isolated endpoints learn at O(1/√t), taking months or years to bound attacker action space d.</td>
-                                        <td style="padding: 6px 8px; color: #f59e0b;"><strong>√N Collective Acceleration with Drift Ceiling (δ<sub>poly</sub> = 0.02):</strong> BFT sharing compresses learning from 9.40% (N=1) to 97.79% (N=10⁶) in 1 day.</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Vassilev's Economic Equilibrium Law</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Attackers generate cheap polymorphic payloads while defenders pay high compute/analyst costs per alert.</td>
-                                        <td style="padding: 6px 8px; color: #a855f7;"><strong>Cost Asymmetry Inversion:</strong> Bounded compromise probability (0.0500% at 10⁶) forces attacker cost per breach up &gt;2,450x via CanaryCage tarpits.</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Byzantine Resilience &amp; Zero-Day Bound</td>
-                                        <td style="padding: 6px 8px; color: var(--text-muted);">Naive P2P sharing allows rogue killswitches, or assumes 100% security ignoring synchronized zero-days.</td>
-                                        <td style="padding: 6px 8px; color: #ec4899;"><strong>Explicit Correlated Floor p<sub>corr</sub> = 0.05%:</strong> ProtectedLocalBinaryHashInventory (&lt;1ms veto) blocks rogue killswitches while p<sub>corr</sub> models synchronized zero-days.</td>
-                                    </tr>
-                                </tbody>
-                            </table>
                         </div>
                     </div>
                 </div>
@@ -3315,7 +2806,7 @@
                                 <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">MITRE ATT&CK® Enterprise + ATLAS Matrix</h3>
                                 <span class="badge blue" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>v14.1 Enterprise + ATLAS Validated</span>
                                 <span class="badge purple" style="font-size: 11px;">Agentic Autonomous EDR</span>
-                                <button id="toggle-mitre-overview-btn" class="btn-secondary" onclick="toggleMitreOverviewPanel()" style="padding: 5px 12px; font-size: 11px; font-weight: 600;">Collapse Overview</button>
+                                <button id="toggle-mitre-overview-btn" class="btn-secondary" onclick="toggleMitreOverviewPanel()" style="padding: 5px 12px; font-size: 11px; font-weight: 600;">Expand Overview</button>
                             </div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -3380,7 +2871,7 @@
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span id="mitre-filter-count" style="font-size: 12px; color: var(--text-muted); font-family: monospace;">Loading...</span>
                             <button id="mitre-reset-filter-btn" class="icon-btn glass" style="padding: 5px 12px; font-size: 11px; border-radius: 8px; cursor: pointer; color: var(--text-muted); border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.04);">Reset</button>
-                            <button id="toggle-mitre-filters-btn" class="btn-secondary" onclick="toggleMitreFiltersPanel()" style="padding: 5px 12px; font-size: 11px; font-weight: 600;">Collapse Filters</button>
+                            <button id="toggle-mitre-filters-btn" class="btn-secondary" onclick="toggleMitreFiltersPanel()" style="padding: 5px 12px; font-size: 11px; font-weight: 600;">Expand Filters</button>
                         </div>
                     </div>
                     <div id="mitre-filters-body">
