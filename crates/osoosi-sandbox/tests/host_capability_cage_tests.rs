@@ -111,7 +111,10 @@ fn test_replay_attempt_with_already_consumed_seal_rejected() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRejection for replay, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for replay, got: {:?}",
+            other
+        ),
     }
 
     assert_eq!(gate.consumed_seals_count(), 1);
@@ -146,7 +149,10 @@ fn test_expired_seal_rejected() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRejection for expired seal, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for expired seal, got: {:?}",
+            other
+        ),
     }
 
     // Unconsumed expired seal must not be recorded in consumed set
@@ -170,12 +176,8 @@ fn test_tampered_action_parameters_rejected() {
 
     // Attacker attempts to swap parameters to transfer 50000 instead of 100
     let tampered_params = json!({"amount": 50000, "currency": "USD"});
-    let res = gate.validate_and_consume_seal(
-        &seal,
-        "TransferFunds",
-        &tampered_params,
-        Some(1_500_005),
-    );
+    let res =
+        gate.validate_and_consume_seal(&seal, "TransferFunds", &tampered_params, Some(1_500_005));
 
     match res {
         Err(GateError::SealRejection(err_msg)) => {
@@ -185,21 +187,23 @@ fn test_tampered_action_parameters_rejected() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRejection for tampered params, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for tampered params, got: {:?}",
+            other
+        ),
     }
 
     // Also test swapped action name
-    let wrong_action_res = gate.validate_and_consume_seal(
-        &seal,
-        "WithdrawFunds",
-        &original_params,
-        Some(1_500_005),
-    );
+    let wrong_action_res =
+        gate.validate_and_consume_seal(&seal, "WithdrawFunds", &original_params, Some(1_500_005));
     match wrong_action_res {
         Err(GateError::SealRejection(err_msg)) => {
             assert!(err_msg.contains("Action digest mismatch"));
         }
-        other => panic!("Expected GateError::SealRejection for swapped action name, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for swapped action name, got: {:?}",
+            other
+        ),
     }
 
     assert!(!gate.is_seal_consumed("seal_004_tampered"));
@@ -231,7 +235,10 @@ fn test_forged_hmac_signature_rejected() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRejection for forged signature, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for forged signature, got: {:?}",
+            other
+        ),
     }
 
     assert!(!gate.is_seal_consumed("seal_005_forged"));
@@ -302,7 +309,10 @@ async fn test_unsealed_actuation_attempt_fails_closed_no_direct_bind() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRequired for unsealed actuation, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRequired for unsealed actuation, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -417,6 +427,9 @@ fn test_missing_seal_id_rejected() {
         Err(GateError::SealRejection(msg)) => {
             assert!(msg.contains("Missing seal_id"));
         }
-        other => panic!("Expected GateError::SealRejection for empty seal_id, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for empty seal_id, got: {:?}",
+            other
+        ),
     }
 }

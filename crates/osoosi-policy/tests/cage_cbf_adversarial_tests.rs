@@ -20,9 +20,8 @@
 //!    - Verification of exact balance restoration and anti-replay guards.
 
 use osoosi_policy::cage::{
-    CageGovernancePipeline, CbfViolation, CompiledCagePolicy, ControlBarrierFunction,
-    FiscalLedger, GovernanceRequest, GovernanceVerdict, PolicyFormat, UnsafeControlAction,
-    CBF_EPSILON,
+    CageGovernancePipeline, CbfViolation, CompiledCagePolicy, ControlBarrierFunction, FiscalLedger,
+    GovernanceRequest, GovernanceVerdict, PolicyFormat, UnsafeControlAction, CBF_EPSILON,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,17 +37,16 @@ fn make_adversarial_policy(gamma: f64, b_min: f64) -> CompiledCagePolicy {
         raw_content: "cbf_adversarial_test_policy".to_string(),
         cedar_rules: vec![
             r#"forbid (principal, action == Action::"ForbiddenTerminal", resource);"#.to_string(),
-            r#"forbid (principal, action, resource) when { context.path == "/etc/shadow" };"#.to_string(),
+            r#"forbid (principal, action, resource) when { context.path == "/etc/shadow" };"#
+                .to_string(),
         ],
-        unsafe_control_actions: vec![
-            UnsafeControlAction {
-                uca_id: "UCA-ADV-1".to_string(),
-                hazard_ref: "H-STPA-01".to_string(),
-                control_action: "ExecuteHighRiskTrade".to_string(),
-                context_condition: "amount > 5000".to_string(),
-                mitigation: "Limit amount to 5000".to_string(),
-            },
-        ],
+        unsafe_control_actions: vec![UnsafeControlAction {
+            uca_id: "UCA-ADV-1".to_string(),
+            hazard_ref: "H-STPA-01".to_string(),
+            control_action: "ExecuteHighRiskTrade".to_string(),
+            context_condition: "amount > 5000".to_string(),
+            mitigation: "Limit amount to 5000".to_string(),
+        }],
         cbf_gamma: gamma,
         cbf_b_min: b_min,
     }
@@ -78,10 +76,7 @@ fn test_cbf_epsilon_boundary_breach_1e6() {
     // h_{t+1} = 45.0 - 1e-6 = 44.999999 < 45.0 (MUST BE DENIED)
     let cost_breach_1e6 = c_max + 1e-6;
     let res_breach_1e6 = cbf.evaluate_step(b_t, cost_breach_1e6, h_t);
-    assert!(
-        res_breach_1e6.is_err(),
-        "CBF breach by 1e-6 must be denied"
-    );
+    assert!(res_breach_1e6.is_err(), "CBF breach by 1e-6 must be denied");
     assert!(matches!(
         res_breach_1e6.unwrap_err(),
         CbfViolation::DecayRateExceeded { .. }
@@ -297,7 +292,10 @@ fn test_zero_budget_leakage_under_1000_denial_storm() {
         );
 
         match result.verdict {
-            GovernanceVerdict::Deny { ref reason, ref proof_hash } => {
+            GovernanceVerdict::Deny {
+                ref reason,
+                ref proof_hash,
+            } => {
                 deny_count += 1;
                 assert_eq!(proof_hash.len(), 64, "Proof hash must be 64-hex SHA-256");
                 assert!(!reason.is_empty());
@@ -306,11 +304,16 @@ fn test_zero_budget_leakage_under_1000_denial_storm() {
                 defer_count += 1;
                 assert!(backoff_ms >= 1000);
             }
-            GovernanceVerdict::RequireApproval { ref approval_token, .. } => {
+            GovernanceVerdict::RequireApproval {
+                ref approval_token, ..
+            } => {
                 approval_count += 1;
                 assert!(approval_token.starts_with("token_"));
             }
-            _ => panic!("Expected non-cleared verdict at iteration {}, got {:?}", i, result.verdict),
+            _ => panic!(
+                "Expected non-cleared verdict at iteration {}, got {:?}",
+                i, result.verdict
+            ),
         }
 
         // Check budget invariant after EACH iteration
@@ -389,11 +392,17 @@ fn test_concurrent_fuel_contention_and_race_safety() {
                         // Simulate actuation: commit half, rollback half
                         if req_idx % 2 == 0 {
                             let commit_res = ledger_clone.commit(&receipt.debit_id);
-                            assert!(commit_res.is_ok(), "Commit must succeed for valid reservation");
+                            assert!(
+                                commit_res.is_ok(),
+                                "Commit must succeed for valid reservation"
+                            );
                             comm_clone.fetch_add(1, Ordering::Relaxed);
                         } else {
                             let rb_res = ledger_clone.rollback_reservation(&receipt.debit_id);
-                            assert!(rb_res.is_ok(), "Rollback must succeed for valid reservation");
+                            assert!(
+                                rb_res.is_ok(),
+                                "Rollback must succeed for valid reservation"
+                            );
                             rb_clone.fetch_add(1, Ordering::Relaxed);
                         }
                     }
@@ -401,7 +410,8 @@ fn test_concurrent_fuel_contention_and_race_safety() {
                         den_clone.fetch_add(1, Ordering::Relaxed);
                         assert!(matches!(
                             violation,
-                            CbfViolation::FloorBreach { .. } | CbfViolation::DecayRateExceeded { .. }
+                            CbfViolation::FloorBreach { .. }
+                                | CbfViolation::DecayRateExceeded { .. }
                         ));
                     }
                 }
@@ -482,7 +492,11 @@ fn test_lifo_rollback_stack_strict_reversal() {
 
     for (idx, expected_name) in expected_order.iter().enumerate() {
         let (popped_id, new_budget) = ledger.rollback_lifo().expect("rollback lifo");
-        assert_eq!(&popped_id, expected_name, "LIFO order mismatch at pop {}", idx);
+        assert_eq!(
+            &popped_id, expected_name,
+            "LIFO order mismatch at pop {}",
+            idx
+        );
         let restored_amt = amounts[4 - idx];
         expected_budget += restored_amt;
         assert_eq!(new_budget, expected_budget);

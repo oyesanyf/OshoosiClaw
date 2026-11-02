@@ -57,9 +57,8 @@ async fn send_raw(
     let val: Value = if bytes.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            json!({"raw": String::from_utf8_lossy(&bytes)})
-        })
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"raw": String::from_utf8_lossy(&bytes)}))
     };
 
     (status, val)
@@ -230,26 +229,14 @@ async fn test_malformed_json_and_truncated_payloads_across_all_endpoints() {
             b"[12345]".to_vec(),
         ),
         // Empty body with application/json
-        (
-            "ingest_empty_body",
-            "/governance/ingest-policy",
-            Vec::new(),
-        ),
+        ("ingest_empty_body", "/governance/ingest-policy", Vec::new()),
         (
             "validate_empty_body",
             "/governance/validate-action",
             Vec::new(),
         ),
-        (
-            "consume_empty_body",
-            "/governance/consume-seal",
-            Vec::new(),
-        ),
-        (
-            "rollback_empty_body",
-            "/governance/rollback",
-            Vec::new(),
-        ),
+        ("consume_empty_body", "/governance/consume-seal", Vec::new()),
+        ("rollback_empty_body", "/governance/rollback", Vec::new()),
         // Garbage non-utf8 / binary bytes
         (
             "validate_garbage_binary",
@@ -535,9 +522,19 @@ async fn test_cbf_budget_decay_boundary_stress_and_zero_leakage() {
         .await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(res["verdict"], "DENY", "Cost {} should have been denied", cost);
-        assert!(res["routing_seal"].is_null(), "No seal should be issued on denial");
-        assert!(res["debit_id"].is_null(), "No debit_id should be issued on denial");
+        assert_eq!(
+            res["verdict"], "DENY",
+            "Cost {} should have been denied",
+            cost
+        );
+        assert!(
+            res["routing_seal"].is_null(),
+            "No seal should be issued on denial"
+        );
+        assert!(
+            res["debit_id"].is_null(),
+            "No debit_id should be issued on denial"
+        );
         assert_eq!(res["barrier_state"]["barrier_satisfied"], false);
 
         // Verify refusal proof receipt is 64-character hex
@@ -549,7 +546,10 @@ async fn test_cbf_budget_decay_boundary_stress_and_zero_leakage() {
     // Assert zero fiscal leakage after sequential flood
     let (s_post_seq, r_post_seq) = send_json(&app, "GET", "/governance/stats", None).await;
     assert_eq!(s_post_seq, StatusCode::OK);
-    assert_eq!(r_post_seq["budget"], 100.0, "Fiscal leakage detected after sequential flood!");
+    assert_eq!(
+        r_post_seq["budget"], 100.0,
+        "Fiscal leakage detected after sequential flood!"
+    );
     assert_eq!(r_post_seq["cbf_barrier_val"], 90.0);
 
     // 2. Concurrent flood: 30 simultaneous overdraft requests
@@ -592,7 +592,10 @@ async fn test_cbf_budget_decay_boundary_stress_and_zero_leakage() {
     // Invariant: Available budget remains exactly 100.0 with 0 fiscal leakage
     let (s_final, r_final) = send_json(&app, "GET", "/governance/stats", None).await;
     assert_eq!(s_final, StatusCode::OK);
-    assert_eq!(r_final["budget"], 100.0, "Fiscal leakage detected after concurrent flood!");
+    assert_eq!(
+        r_final["budget"], 100.0,
+        "Fiscal leakage detected after concurrent flood!"
+    );
     assert_eq!(r_final["cbf_barrier_val"], 90.0);
 }
 
@@ -825,7 +828,8 @@ async fn test_legacy_api_governance_aliases_concurrent_stress() {
             match idx % 5 {
                 0 => {
                     // /api/governance/policy-version
-                    let (s, r) = send_json(&app_clone, "GET", "/api/governance/policy-version", None).await;
+                    let (s, r) =
+                        send_json(&app_clone, "GET", "/api/governance/policy-version", None).await;
                     assert_eq!(s, StatusCode::OK);
                     assert_eq!(r["active_version_id"], pid);
                 }
@@ -837,7 +841,8 @@ async fn test_legacy_api_governance_aliases_concurrent_stress() {
                 }
                 2 => {
                     // /api/governance/trace/verify
-                    let (s, r) = send_json(&app_clone, "GET", "/api/governance/trace/verify", None).await;
+                    let (s, r) =
+                        send_json(&app_clone, "GET", "/api/governance/trace/verify", None).await;
                     assert_eq!(s, StatusCode::OK);
                     assert_eq!(r["valid"], true);
                 }
@@ -861,7 +866,8 @@ async fn test_legacy_api_governance_aliases_concurrent_stress() {
                 }
                 _ => {
                     // Canonical endpoint equivalent for concurrent parity check
-                    let (s, r) = send_json(&app_clone, "GET", "/governance/policy-version", None).await;
+                    let (s, r) =
+                        send_json(&app_clone, "GET", "/governance/policy-version", None).await;
                     assert_eq!(s, StatusCode::OK);
                     assert_eq!(r["active_version_id"], pid);
                 }

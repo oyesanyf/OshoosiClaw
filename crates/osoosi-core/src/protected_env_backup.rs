@@ -1255,9 +1255,9 @@ impl ProtectedEnvBackupVault {
         #[cfg(not(windows))]
         let user_sid_env = HashMap::new();
 
-        let master_key = Self::derive_vault_master_key();
+        let _master_key = Self::derive_vault_master_key();
         #[cfg(windows)]
-        let dpapi_wrapped_key = dpapi_protect_bytes(&master_key).ok();
+        let dpapi_wrapped_key = dpapi_protect_bytes(&_master_key).ok();
         #[cfg(not(windows))]
         let dpapi_wrapped_key = None;
 
@@ -1765,7 +1765,8 @@ impl ProtectedEnvBackupVault {
         // Jointly enumerate lines from HKCU\Environment (if production vault), all discovered files, AND std::env::vars()
         let mut pairs: Vec<(String, String)> = Vec::new();
         let mut seen_keys = std::collections::HashSet::new();
-        let mut hkcu_keys_seen = std::collections::HashSet::new();
+        let mut hkcu_keys_seen: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         #[cfg(windows)]
         if is_production_vault_path(vault_path) {

@@ -33,7 +33,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::DashboardState;
 
 /// Default substrate secret key for CAGE routing seals HMAC signing.
-pub const DEFAULT_CAGE_SUBSTRATE_SECRET: &[u8] = b"oshoosiclaw_cage_governance_secret_2026_test_key";
+pub const DEFAULT_CAGE_SUBSTRATE_SECRET: &[u8] =
+    b"oshoosiclaw_cage_governance_secret_2026_test_key";
 
 /// Tracked registration info for issued routing seals.
 #[derive(Debug, Clone)]
@@ -228,7 +229,11 @@ pub async fn post_ingest_policy(
     State(state): State<DashboardState>,
     Json(req): Json<IngestPolicyRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let content = match req.policy_content.as_deref().filter(|s| !s.trim().is_empty()) {
+    let content = match req
+        .policy_content
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         Some(c) => c,
         None => {
             return (
@@ -313,9 +318,7 @@ pub async fn post_ingest_policy(
 }
 
 /// `GET /governance/policy-version` & `/api/governance/policy-version`
-pub async fn get_policy_version(
-    State(state): State<DashboardState>,
-) -> (StatusCode, Json<Value>) {
+pub async fn get_policy_version(State(state): State<DashboardState>) -> (StatusCode, Json<Value>) {
     let pinned_opt = state.cage.pinned_policy.read().unwrap().clone();
     match pinned_opt {
         None => (
@@ -491,9 +494,11 @@ pub async fn post_validate_action(
                     reason,
                     approval_token,
                 } => ("REQUIRE_APPROVAL", reason.clone(), approval_token.clone()),
-                GovernanceVerdict::Defer { backoff_ms } => {
-                    ("DEFER", format!("Deferred for {} ms", backoff_ms), "".to_string())
-                }
+                GovernanceVerdict::Defer { backoff_ms } => (
+                    "DEFER",
+                    format!("Deferred for {} ms", backoff_ms),
+                    "".to_string(),
+                ),
                 _ => ("DENY", "Action rejected".to_string(), "".to_string()),
             };
 
@@ -570,7 +575,13 @@ pub async fn post_consume_seal(
         }
     };
 
-    let registered_info_opt = state.cage.registered_seals.read().unwrap().get(&seal_id).cloned();
+    let registered_info_opt = state
+        .cage
+        .registered_seals
+        .read()
+        .unwrap()
+        .get(&seal_id)
+        .cloned();
     let (seal, registered_params) = match (registered_info_opt, req.seal) {
         (Some(info), maybe_seal) => {
             let s = maybe_seal.unwrap_or(info.seal);
@@ -626,9 +637,10 @@ pub async fn post_consume_seal(
     let params = req.params.or(req.parameters).unwrap_or(registered_params);
     let expected_digest = compute_action_digest(&action_name, &params);
 
-    if let Err(rejection) = pipeline
-        .seal_signer()
-        .validate_and_consume(&seal, &expected_digest, now)
+    if let Err(rejection) =
+        pipeline
+            .seal_signer()
+            .validate_and_consume(&seal, &expected_digest, now)
     {
         return (
             StatusCode::FORBIDDEN,
@@ -640,7 +652,13 @@ pub async fn post_consume_seal(
         );
     }
 
-    if let Some(info) = state.cage.registered_seals.write().unwrap().get_mut(&seal_id) {
+    if let Some(info) = state
+        .cage
+        .registered_seals
+        .write()
+        .unwrap()
+        .get_mut(&seal_id)
+    {
         info.consumed_at = Some(now);
         info.status = "CONSUMED".to_string();
     }
@@ -758,9 +776,7 @@ pub async fn post_rollback(
 }
 
 /// `GET /governance/trace/verify` & `/api/governance/trace/verify`
-pub async fn get_verify_trace(
-    State(state): State<DashboardState>,
-) -> (StatusCode, Json<Value>) {
+pub async fn get_verify_trace(State(state): State<DashboardState>) -> (StatusCode, Json<Value>) {
     let traces = state.cage.traces.read().unwrap().clone();
     let merkle_root = state.cage.merkle_tree.root();
     let trace_count = traces.len();
@@ -791,17 +807,16 @@ pub async fn get_verify_trace(
 }
 
 /// `GET /governance/stats` & `/api/governance/stats`
-pub async fn get_cage_stats(
-    State(state): State<DashboardState>,
-) -> (StatusCode, Json<Value>) {
-    let (active_version, rules_count) = if let Some(pinned) = state.cage.pinned_policy.read().unwrap().as_ref() {
-        (
-            pinned.policy_version_id.clone(),
-            pinned.cedar_rules.len() + pinned.unsafe_control_actions.len(),
-        )
-    } else {
-        ("None (Unpinned)".to_string(), 0)
-    };
+pub async fn get_cage_stats(State(state): State<DashboardState>) -> (StatusCode, Json<Value>) {
+    let (active_version, rules_count) =
+        if let Some(pinned) = state.cage.pinned_policy.read().unwrap().as_ref() {
+            (
+                pinned.policy_version_id.clone(),
+                pinned.cedar_rules.len() + pinned.unsafe_control_actions.len(),
+            )
+        } else {
+            ("None (Unpinned)".to_string(), 0)
+        };
 
     let (cbf_h, budget) = if let Some(pipeline) = state.cage.pipeline.read().unwrap().as_ref() {
         let b = pipeline.ledger().available_budget();
@@ -858,14 +873,23 @@ pub fn routes() -> Router<DashboardState> {
         .route("/governance/rollback", post(post_rollback))
         .route("/governance/trace/verify", get(get_verify_trace))
         .route("/governance/stats", get(get_cage_stats))
-        .route("/governance/*path", get(cage_not_found).post(cage_not_found))
+        .route(
+            "/governance/*path",
+            get(cage_not_found).post(cage_not_found),
+        )
         // Legacy /api/governance/* aliases
         .route("/api/governance/ingest-policy", post(post_ingest_policy))
         .route("/api/governance/policy-version", get(get_policy_version))
-        .route("/api/governance/validate-action", post(post_validate_action))
+        .route(
+            "/api/governance/validate-action",
+            post(post_validate_action),
+        )
         .route("/api/governance/consume-seal", post(post_consume_seal))
         .route("/api/governance/rollback", post(post_rollback))
         .route("/api/governance/trace/verify", get(get_verify_trace))
         .route("/api/governance/stats", get(get_cage_stats))
-        .route("/api/governance/*path", get(cage_not_found).post(cage_not_found))
+        .route(
+            "/api/governance/*path",
+            get(cage_not_found).post(cage_not_found),
+        )
 }

@@ -13,9 +13,8 @@ pub mod stream_verifier;
 
 pub use cbf::*;
 pub use formal_model::*;
+pub use osoosi_types::cage::*;
 pub use pipeline::*;
 pub use policy_ingest::*;
 pub use routing_seal::*;
 pub use stream_verifier::*;
-pub use osoosi_types::cage::*;
-

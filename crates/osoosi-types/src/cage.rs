@@ -16,9 +16,7 @@ pub enum GovernanceVerdict {
 
     /// Hard constraints passed, but parameters exceeded soft policy boundaries.
     /// Execution is permitted only under the provided clamped parameters.
-    Narrow {
-        clamped_params: serde_json::Value,
-    },
+    Narrow { clamped_params: serde_json::Value },
 
     /// Action requires human-in-the-loop (HITL) approval or escalation.
     /// No routing seal is issued; request is parked with an approval token.
@@ -29,16 +27,11 @@ pub enum GovernanceVerdict {
 
     /// Action is temporarily deferred (e.g. awaiting telemetry or confidence refresh).
     /// Client should retry after the specified backoff period.
-    Defer {
-        backoff_ms: u64,
-    },
+    Defer { backoff_ms: u64 },
 
     /// Hard policy violation or Control Barrier Function (CBF) boundary breach.
     /// Action is blocked immediately; any reserved fiscal resources are rolled back.
-    Deny {
-        reason: String,
-        proof_hash: String,
-    },
+    Deny { reason: String, proof_hash: String },
 }
 
 impl GovernanceVerdict {
@@ -110,7 +103,10 @@ impl RoutingSeal {
     /// Validates the format of the seal identifiers (16-hex policy version and 64-hex action digest).
     pub fn validate_format(&self) -> bool {
         self.policy_version_id.len() == 16
-            && self.policy_version_id.chars().all(|c| c.is_ascii_hexdigit())
+            && self
+                .policy_version_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
             && self.action_digest.len() == 64
             && self.action_digest.chars().all(|c| c.is_ascii_hexdigit())
             && !self.seal_id.is_empty()

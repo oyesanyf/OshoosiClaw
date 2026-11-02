@@ -8,8 +8,8 @@
 //! 5. MerkleAuditTree spine folding under high volume (1,000+ entries) verifying incremental root matches full rebuild root.
 
 use osoosi_audit::{
-    canonicalize_jcs, compute_canonical_hash, verify_trace_chain, CageTraceRecord,
-    MerkleAuditTree, GENESIS_PREV_HASH,
+    canonicalize_jcs, compute_canonical_hash, verify_trace_chain, CageTraceRecord, MerkleAuditTree,
+    GENESIS_PREV_HASH,
 };
 use serde_json::{json, Value};
 
@@ -63,7 +63,10 @@ fn test_rfc8785_utf16_code_unit_vs_utf8_byte_ordering_adversarial() {
     let k_supp_10000 = "\u{10000}";
 
     // Verify raw UTF-8 byte ordering places U+FFFD FIRST
-    assert!(k_bmp_fffd.as_bytes() < k_supp_10000.as_bytes(), "UTF-8 byte order assertion");
+    assert!(
+        k_bmp_fffd.as_bytes() < k_supp_10000.as_bytes(),
+        "UTF-8 byte order assertion"
+    );
     // Verify UTF-16 code unit ordering places U+10000 FIRST
     let u16_bmp: Vec<u16> = k_bmp_fffd.encode_utf16().collect();
     let u16_supp: Vec<u16> = k_supp_10000.encode_utf16().collect();
@@ -78,7 +81,10 @@ fn test_rfc8785_utf16_code_unit_vs_utf8_byte_ordering_adversarial() {
     let canonical = canonicalize_jcs(&val).expect("Canonicalization must succeed");
     // RFC 8785 MUST place U+10000 BEFORE U+FFFD
     let expected = format!("{{\"{}\":2,\"{}\":1}}", k_supp_10000, k_bmp_fffd);
-    assert_eq!(canonical, expected, "RFC 8785 UTF-16 code unit ordering violated!");
+    assert_eq!(
+        canonical, expected,
+        "RFC 8785 UTF-16 code unit ordering violated!"
+    );
 
     // Case 2: Classic RFC 8785 Triad: Euro (€), Musical G Clef (𝄞), Small Ligature fi (ﬁ)
     // Euro (€, U+20AC):     UTF-16 = [0x20AC],           UTF-8 = [0xE2, 0x82, 0xAC]
@@ -97,7 +103,11 @@ fn test_rfc8785_utf16_code_unit_vs_utf8_byte_ordering_adversarial() {
     // Verify UTF-8 byte ordering
     let mut utf8_triad = vec![k_euro, k_gclef, k_fi];
     utf8_triad.sort();
-    assert_eq!(utf8_triad, vec![k_euro, k_fi, k_gclef], "UTF-8 byte order must place G clef LAST");
+    assert_eq!(
+        utf8_triad,
+        vec![k_euro, k_fi, k_gclef],
+        "UTF-8 byte order must place G clef LAST"
+    );
 
     let mut triad_map = serde_json::Map::new();
     triad_map.insert(k_fi.to_string(), json!("ligature"));
@@ -137,7 +147,10 @@ fn test_rfc8785_utf16_code_unit_vs_utf8_byte_ordering_adversarial() {
     p_map.insert(k_p_supp.to_string(), json!("supp"));
     let canonical_p = canonicalize_jcs(&Value::Object(p_map)).unwrap();
     let expected_p = format!(r#"{{"{}":"supp","{}":"bmp"}}"#, k_p_supp, k_p_bmp);
-    assert_eq!(canonical_p, expected_p, "Prefixed strings must sort by UTF-16 code units");
+    assert_eq!(
+        canonical_p, expected_p,
+        "Prefixed strings must sort by UTF-16 code units"
+    );
 }
 
 // =============================================================================
@@ -215,8 +228,14 @@ fn test_ieee754_float_edge_cases_and_normalization() {
         "e_fraction": 1.2345e-8
     });
     let c_exp = canonicalize_jcs(&exponents).unwrap();
-    assert!(!c_exp.contains("e+"), "Canonical JSON exponent must never contain 'e+'");
-    assert!(!c_exp.contains("E"), "Canonical JSON exponent must use lowercase 'e'");
+    assert!(
+        !c_exp.contains("e+"),
+        "Canonical JSON exponent must never contain 'e+'"
+    );
+    assert!(
+        !c_exp.contains("E"),
+        "Canonical JSON exponent must use lowercase 'e'"
+    );
 
     // 4. Fractional Floats with Non-Zero Fractions
     let fractions = json!({
@@ -249,15 +268,24 @@ fn test_complex_nested_100_plus_keys_permutation_determinism() {
         key_pool.push(format!("sym_#_{:02}", i));
     }
     // 20 Latin-1 and Greek unicode keys
-    for c in ['α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'λ', 'μ', 'π', 'σ', 'τ', 'φ', 'ψ', 'ω', 'é', 'è', 'à', 'ç'] {
+    for c in [
+        'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'λ', 'μ', 'π', 'σ', 'τ', 'φ', 'ψ', 'ω', 'é', 'è',
+        'à', 'ç',
+    ] {
         key_pool.push(format!("uni_{}", c));
     }
     // 20 CJK and mathematical keys
-    for c in ['漢', '字', '日', '本', '語', '中', '文', '★', '⚡', '♾', '∑', '∏', '√', '∫', '≈', '≠', '≤', '≥', '∂', '∇'] {
+    for c in [
+        '漢', '字', '日', '本', '語', '中', '文', '★', '⚡', '♾', '∑', '∏', '√', '∫', '≈', '≠',
+        '≤', '≥', '∂', '∇',
+    ] {
         key_pool.push(format!("sym_{}", c));
     }
     // 20 Supplementary characters (emojis and historic scripts, surrogate pairs)
-    for c in ['😀', '🛡', '🔒', '🔑', '🚀', '🦀', '🔥', '✨', '⚡', '🏆', '🎯', '⚙', '🧪', '🧬', '🔬', '📡', '🛰', '🛸', '🪐', '🌌'] {
+    for c in [
+        '😀', '🛡', '🔒', '🔑', '🚀', '🦀', '🔥', '✨', '⚡', '🏆', '🎯', '⚙', '🧪', '🧬', '🔬',
+        '📡', '🛰', '🛸', '🪐', '🌌',
+    ] {
         key_pool.push(format!("emoji_{}", c));
     }
 
@@ -268,7 +296,7 @@ fn test_complex_nested_100_plus_keys_permutation_determinism() {
     for (idx, key) in key_pool.iter().enumerate() {
         let val = match idx % 8 {
             0 => json!(idx as i64 * 42),
-            1 => json!((idx as f64) * 3.14159),
+            1 => json!((idx as f64) * std::f64::consts::PI),
             2 => json!(idx % 2 == 0),
             3 => json!(null),
             4 => json!(format!("string_value_{}_{}", key, idx)),
@@ -340,7 +368,8 @@ fn test_complex_nested_100_plus_keys_permutation_determinism() {
     let mut p7 = serde_json::Map::new();
     for (k, mut v) in shuffled7 {
         if let Value::Object(ref mut inner_map) = v {
-            let mut inner_pairs: Vec<(String, Value)> = std::mem::take(inner_map).into_iter().collect();
+            let mut inner_pairs: Vec<(String, Value)> =
+                std::mem::take(inner_map).into_iter().collect();
             rng7.shuffle(&mut inner_pairs);
             for (ik, iv) in inner_pairs {
                 inner_map.insert(ik, iv);
@@ -357,11 +386,14 @@ fn test_complex_nested_100_plus_keys_permutation_determinism() {
     let baseline_hash = compute_canonical_hash(&permutations[0]);
 
     assert_eq!(baseline_hash.len(), 64);
-    assert!(baseline_hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    assert!(baseline_hash
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
 
     // Verify all 7 other permutations produce the EXACT SAME canonical string and SHA-256 hash
     for (idx, perm) in permutations.iter().enumerate().skip(1) {
-        let canonical = canonicalize_jcs(perm).unwrap_or_else(|e| panic!("Permutation {} failed: {:?}", idx, e));
+        let canonical = canonicalize_jcs(perm)
+            .unwrap_or_else(|e| panic!("Permutation {} failed: {:?}", idx, e));
         assert_eq!(
             canonical, baseline_canonical,
             "Permutation {} canonical string diverged from baseline!",
@@ -462,7 +494,8 @@ fn test_deeply_nested_whitespace_stripping_and_formatting_invariance() {
         .expect("Chaotic whitespace JSON must parse into valid serde_json Value");
 
     // Representation C: Pretty-printed JSON (standard 2-space indentation)
-    let pretty_json_str = serde_json::to_string_pretty(&current_val).expect("Pretty JSON serialization");
+    let pretty_json_str =
+        serde_json::to_string_pretty(&current_val).expect("Pretty JSON serialization");
     let val_c: Value = serde_json::from_str(&pretty_json_str)
         .expect("Pretty JSON must parse into valid serde_json Value");
 
@@ -555,7 +588,10 @@ fn test_merkle_audit_tree_high_volume_spine_folding_1000_plus() {
     assert_eq!(leaf_hashes.len(), count);
 
     // 1. Invariant: Tree self-verification must be valid across all 1,500 entries
-    assert!(tree.verify(), "Incremental MerkleAuditTree must pass self-verification");
+    assert!(
+        tree.verify(),
+        "Incremental MerkleAuditTree must pass self-verification"
+    );
 
     // 2. Power-of-Two Rebuild Verification (N = 1024)
     // For exact powers of 2, the incremental spine root MUST match static Merkle tree compute_root
@@ -609,7 +645,7 @@ fn test_merkle_audit_tree_high_volume_spine_folding_1000_plus() {
     let mut chain = Vec::with_capacity(chain_size);
     let mut prev_hash = GENESIS_PREV_HASH.to_string();
 
-    for i in 0..chain_size {
+    for (i, root) in incremental_roots.iter().take(chain_size).enumerate() {
         let payload = json!({
             "step": i,
             "cost": 1.0,
@@ -625,7 +661,7 @@ fn test_merkle_audit_tree_high_volume_spine_folding_1000_plus() {
             Some(1.0),
             "pol-v1-abcdef01",
             "",
-            &incremental_roots[i],
+            root,
             payload,
             "2026-11-02T01:00:00Z",
         );
@@ -645,6 +681,9 @@ fn test_merkle_audit_tree_high_volume_spine_folding_1000_plus() {
     let mut tampered_chain = chain.clone();
     tampered_chain[427].verdict = "DENY".to_string();
     let tamper_res = verify_trace_chain(&tampered_chain);
-    assert!(tamper_res.is_err(), "Chain with tampered record 427 must be rejected!");
+    assert!(
+        tamper_res.is_err(),
+        "Chain with tampered record 427 must be rejected!"
+    );
     assert!(tamper_res.unwrap_err().contains("Tampered leaf hash"));
 }

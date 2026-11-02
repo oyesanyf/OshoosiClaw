@@ -50,7 +50,9 @@ fn test_cbf_parameter_validation_boundaries() {
 
     // Invalid b_min < 0
     let err_bmin_neg = ControlBarrierFunction::new(0.5, -0.01).unwrap_err();
-    assert!(matches!(err_bmin_neg, CbfViolation::InvalidParameters(ref msg) if msg.contains("b_min")));
+    assert!(
+        matches!(err_bmin_neg, CbfViolation::InvalidParameters(ref msg) if msg.contains("b_min"))
+    );
 
     // Infinity parameter handling
     assert!(ControlBarrierFunction::new(f64::INFINITY, 10.0).is_err());
@@ -68,7 +70,9 @@ fn test_cbf_cost_negativity_and_zero_cost() {
 
     // Negative cost: must be rejected with InvalidParameters (cannot artificially increase budget)
     let err_neg_cost = cbf.evaluate(100.0, -1.0).unwrap_err();
-    assert!(matches!(err_neg_cost, CbfViolation::InvalidParameters(ref msg) if msg.contains("Cost cannot be negative")));
+    assert!(
+        matches!(err_neg_cost, CbfViolation::InvalidParameters(ref msg) if msg.contains("Cost cannot be negative"))
+    );
 }
 
 #[test]
@@ -79,7 +83,9 @@ fn test_cbf_exponential_barrier_inequality_exact_epsilon_boundaries() {
     let cbf = ControlBarrierFunction::new(0.25, 20.0).unwrap();
 
     // 1. Exact boundary cost = 20.0 => h_{t+1} = 60.0 == 60.0 (clears)
-    let (b1, h1) = cbf.evaluate(100.0, 20.0).expect("Exact boundary must succeed");
+    let (b1, h1) = cbf
+        .evaluate(100.0, 20.0)
+        .expect("Exact boundary must succeed");
     assert!((b1 - 80.0).abs() < CBF_EPSILON);
     assert!((h1 - 60.0).abs() < CBF_EPSILON);
 
@@ -102,11 +108,15 @@ fn test_cbf_floor_breach_and_current_state_unsafe() {
 
     // Current budget is already below floor
     let err_unsafe = cbf.evaluate(49.0, 0.0).unwrap_err();
-    assert!(matches!(err_unsafe, CbfViolation::CurrentStateUnsafe { current_budget, b_min } if current_budget == 49.0 && b_min == 50.0));
+    assert!(
+        matches!(err_unsafe, CbfViolation::CurrentStateUnsafe { current_budget, b_min } if current_budget == 49.0 && b_min == 50.0)
+    );
 
     // Current budget is at floor: cost > 0 causes floor breach
     let err_floor = cbf.evaluate(50.0, 1.0).unwrap_err();
-    assert!(matches!(err_floor, CbfViolation::FloorBreach { projected_budget, b_min } if projected_budget == 49.0 && b_min == 50.0));
+    assert!(
+        matches!(err_floor, CbfViolation::FloorBreach { projected_budget, b_min } if projected_budget == 49.0 && b_min == 50.0)
+    );
 }
 
 #[test]
@@ -130,14 +140,18 @@ fn test_fiscal_ledger_pre_reservation_zero_leakage_and_lifo_rollback() {
     assert_eq!(ledger.active_reservation_count(), 0);
 
     // 1. Successful pre-reservation: cost 5.0 (max allowed is 9.0)
-    let receipt1 = ledger.pre_reserve(5.0, "debit_001").expect("Debit 1 must succeed");
+    let receipt1 = ledger
+        .pre_reserve(5.0, "debit_001")
+        .expect("Debit 1 must succeed");
     assert_eq!(receipt1.reserved_fuel, 5.0);
     assert_eq!(receipt1.remaining_budget, 95.0);
     assert_eq!(ledger.available_budget(), 95.0);
     assert_eq!(ledger.active_reservation_count(), 1);
 
     // 2. Successful second pre-reservation: cost 3.0 (from 95.0, floor 10.0, h=85.0, decay max 8.5)
-    let receipt2 = ledger.pre_reserve(3.0, "debit_002").expect("Debit 2 must succeed");
+    let receipt2 = ledger
+        .pre_reserve(3.0, "debit_002")
+        .expect("Debit 2 must succeed");
     assert_eq!(receipt2.reserved_fuel, 3.0);
     assert_eq!(receipt2.remaining_budget, 92.0);
     assert_eq!(ledger.available_budget(), 92.0);
@@ -147,7 +161,11 @@ fn test_fiscal_ledger_pre_reservation_zero_leakage_and_lifo_rollback() {
     // Invariant: ZERO FISCAL LEAKAGE ($B_{t+1} = B_t$)
     let err_excess = ledger.pre_reserve(50.0, "debit_excess").unwrap_err();
     assert!(matches!(err_excess, CbfViolation::DecayRateExceeded { .. }));
-    assert_eq!(ledger.available_budget(), 92.0, "Budget must NOT leak on failure");
+    assert_eq!(
+        ledger.available_budget(),
+        92.0,
+        "Budget must NOT leak on failure"
+    );
     assert_eq!(ledger.active_reservation_count(), 2);
 
     // 4. LIFO Rollback: rollback most recent active reservation ("debit_002", amount 3.0)
@@ -168,7 +186,10 @@ fn test_fiscal_ledger_pre_reservation_zero_leakage_and_lifo_rollback() {
 
     // 7. Attempting to rollback an already rolled back reservation must fail
     let err_double_rb = ledger.rollback_reservation("debit_002").unwrap_err();
-    assert!(matches!(err_double_rb, CbfViolation::ReservationNotFound(..)));
+    assert!(matches!(
+        err_double_rb,
+        CbfViolation::ReservationNotFound(..)
+    ));
 
     // 8. Attempting LIFO rollback when no uncommitted reservations exist must fail
     let err_no_lifo = ledger.rollback_lifo().unwrap_err();
@@ -235,7 +256,9 @@ fn test_routing_seal_30s_ttl_expiration_boundaries() {
     let err_exp = signer
         .validate_seal_properties(&seal, &action_digest, issued_at + 31)
         .unwrap_err();
-    assert!(matches!(err_exp, SealRejection::Expired { current_time, expires_at } if current_time == issued_at + 31 && expires_at == issued_at + 30));
+    assert!(
+        matches!(err_exp, SealRejection::Expired { current_time, expires_at } if current_time == issued_at + 31 && expires_at == issued_at + 30)
+    );
 
     // Future timestamp check (now < issued_at - 5s)
     let err_future = signer

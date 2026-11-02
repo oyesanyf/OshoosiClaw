@@ -27,7 +27,9 @@ pub const CBF_EPSILON: f64 = 1e-9;
 /// Specific violation reason when a Control Barrier Function inequality fails.
 #[derive(Debug, Clone, PartialEq, thiserror::Error, Serialize, Deserialize)]
 pub enum CbfViolation {
-    #[error("Budget below minimum safety floor: projected {projected_budget:.4} < floor {b_min:.4}")]
+    #[error(
+        "Budget below minimum safety floor: projected {projected_budget:.4} < floor {b_min:.4}"
+    )]
     FloorBreach { projected_budget: f64, b_min: f64 },
 
     #[error("Barrier decay rate exceeded: projected h {h_next:.4} < required {h_min_allowed:.4} (gamma={gamma:.4})")]
@@ -37,7 +39,9 @@ pub enum CbfViolation {
         gamma: f64,
     },
 
-    #[error("Current state already in violation: current budget {current_budget:.4} < floor {b_min:.4}")]
+    #[error(
+        "Current state already in violation: current budget {current_budget:.4} < floor {b_min:.4}"
+    )]
     CurrentStateUnsafe { current_budget: f64, b_min: f64 },
 
     #[error("Invalid parameters: {0}")]

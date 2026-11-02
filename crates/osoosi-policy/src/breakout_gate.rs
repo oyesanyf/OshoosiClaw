@@ -4,6 +4,13 @@
 //! and `PolicyEngine::scan_event`) and `osoosi-agent-anomaly` (`BreakoutDefenseCoordinator`,
 //! `RuntimeAlignmentScanner`, and `Ring7CapabilityEffectAuthorizer`).
 //!
+//! ## Subsystem Architecture & Invariants:
+//! - **Ring 7 Direct Binary Byte Hashing**: Authorizer hashes raw binary bytes directly (`sha256`, `blake3`, cryptographic hash)
+//!   rather than inspecting mutable metadata, preventing TOCTOU file tampering.
+//! - **5-Level Immutable Authority Lattice (L1-L5)**: Agent genesis pins immutable capability envelope at creation.
+//! - **Prohibition of Dynamic Dilation**: Runtime attempts to dilate or escalate capabilities fail closed (`deny`), ensuring
+//!   child envelopes are strictly confined within parent limits.
+//!
 //! Decomposed into cohesive submodules under `crate::breakout::*`.
 //! Re-exports all symbols with 100% backwards compatibility.
 

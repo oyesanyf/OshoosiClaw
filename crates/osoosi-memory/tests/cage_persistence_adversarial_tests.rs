@@ -22,8 +22,11 @@ use std::thread;
 #[test]
 fn test_adversarial_high_concurrency_sqlite_persistence() {
     let num_threads = 25;
-    let temp_db_path = std::env::temp_dir().join(format!("cage_concurrency_{}.db", uuid::Uuid::new_v4()));
-    let mem = Arc::new(MemoryStore::new(temp_db_path.to_str().unwrap()).expect("Create file-backed SQLite store"));
+    let temp_db_path =
+        std::env::temp_dir().join(format!("cage_concurrency_{}.db", uuid::Uuid::new_v4()));
+    let mem = Arc::new(
+        MemoryStore::new(temp_db_path.to_str().unwrap()).expect("Create file-backed SQLite store"),
+    );
 
     let tree = MerkleAuditTree::new();
     let genesis_prev = "0".repeat(64);
@@ -38,7 +41,13 @@ fn test_adversarial_high_concurrency_sqlite_persistence() {
             "payload_data": format!("data_chunk_{}", i),
         });
         let (leaf, root) = tree.log_cage_governance_trace(&payload);
-        chained_records.push((i as u64, prev.clone(), leaf.clone(), root, payload.to_string()));
+        chained_records.push((
+            i as u64,
+            prev.clone(),
+            leaf.clone(),
+            root,
+            payload.to_string(),
+        ));
         prev = leaf;
     }
 
@@ -90,7 +99,9 @@ fn test_adversarial_high_concurrency_sqlite_persistence() {
 
     // Verify contiguous sequence numbers: 0, 1, 2, ..., 24
     for (expected_seq, trace) in traces.iter().enumerate() {
-        let actual_seq = trace["sequence_number"].as_u64().expect("Valid sequence_number");
+        let actual_seq = trace["sequence_number"]
+            .as_u64()
+            .expect("Valid sequence_number");
         assert_eq!(
             actual_seq, expected_seq as u64,
             "Trace sequence discontinuity detected at position {}: expected {}, got {}",
@@ -115,8 +126,10 @@ fn test_adversarial_high_concurrency_sqlite_persistence() {
 /// causes `verify_cage_trace_chain` to fail immediately.
 #[test]
 fn test_adversarial_trace_chain_corruption() {
-    let temp_db_path = std::env::temp_dir().join(format!("cage_corruption_{}.db", uuid::Uuid::new_v4()));
-    let mem = MemoryStore::new(temp_db_path.to_str().unwrap()).expect("Create file-backed SQLite store");
+    let temp_db_path =
+        std::env::temp_dir().join(format!("cage_corruption_{}.db", uuid::Uuid::new_v4()));
+    let mem =
+        MemoryStore::new(temp_db_path.to_str().unwrap()).expect("Create file-backed SQLite store");
     let tree = MerkleAuditTree::new();
 
     let genesis_prev = "0".repeat(64);
@@ -148,7 +161,8 @@ fn test_adversarial_trace_chain_corruption() {
 
     // Initial clean verification must succeed
     assert!(
-        mem.verify_cage_trace_chain().expect("Clean verify must succeed"),
+        mem.verify_cage_trace_chain()
+            .expect("Clean verify must succeed"),
         "Untampered initial chain must verify"
     );
 
@@ -171,7 +185,9 @@ fn test_adversarial_trace_chain_corruption() {
 
     // Restore trace-2 merkle_leaf_hash and verify recovery
     let rows: Vec<(String, String)> = conn
-        .prepare("SELECT trace_id, prev_hash FROM cage_governance_traces WHERE trace_id = 'trace-3'")
+        .prepare(
+            "SELECT trace_id, prev_hash FROM cage_governance_traces WHERE trace_id = 'trace-3'",
+        )
         .unwrap()
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .unwrap()
@@ -300,7 +316,9 @@ fn test_adversarial_routing_seal_double_spend() {
     let mut failure_count = 0;
 
     for h in handles {
-        let success = h.join().expect("Thread panicked during seal consumption race");
+        let success = h
+            .join()
+            .expect("Thread panicked during seal consumption race");
         if success {
             success_count += 1;
         } else {
@@ -367,19 +385,19 @@ fn test_adversarial_policy_version_queries() {
 
     // Adversarial & Boundary queries
     let adversarial_versions = [
-        "",                                                  // Empty string
-        "nonexistent123",                                    // Normal missing ID
-        "0000000000000000",                                  // 16-hex zero
-        "ffffffffffffffff",                                  // 16-hex all f
-        "' OR '1'='1",                                       // SQL injection classic
-        "'; DROP TABLE cage_policies; --",                   // SQL injection DDL injection
-        "'; UPDATE cage_policies SET cbf_gamma = 0.0; --",   // SQL injection mutation
-        "\" OR \"\"=\"",                                     // Double quote injection
-        "\\x00\\x00\\x00\\x00",                              // Null bytes
-        "<script>alert('xss')</script>",                     // XSS pattern
-        &"a".repeat(10_000),                                 // Buffer pressure / 10KB string
-        "legit1234567890a\0extra",                           // Embedded null byte
-        "legit1234567890b",                                  // Off-by-one character
+        "",                                                // Empty string
+        "nonexistent123",                                  // Normal missing ID
+        "0000000000000000",                                // 16-hex zero
+        "ffffffffffffffff",                                // 16-hex all f
+        "' OR '1'='1",                                     // SQL injection classic
+        "'; DROP TABLE cage_policies; --",                 // SQL injection DDL injection
+        "'; UPDATE cage_policies SET cbf_gamma = 0.0; --", // SQL injection mutation
+        "\" OR \"\"=\"",                                   // Double quote injection
+        "\\x00\\x00\\x00\\x00",                            // Null bytes
+        "<script>alert('xss')</script>",                   // XSS pattern
+        &"a".repeat(10_000),                               // Buffer pressure / 10KB string
+        "legit1234567890a\0extra",                         // Embedded null byte
+        "legit1234567890b",                                // Off-by-one character
     ];
 
     for adv_version in &adversarial_versions {

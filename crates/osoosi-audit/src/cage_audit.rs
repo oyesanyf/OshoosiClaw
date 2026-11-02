@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 pub const AUDIT_SCHEMA_VERSION: &str = "cage-audit/3.0";
 
 /// Genesis block prev_hash constant (64 zeroes).
-pub const GENESIS_PREV_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+pub const GENESIS_PREV_HASH: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Event types conforming to `cage-audit/3.0`.
 pub const EVENT_GOVERNANCE_DECISION: &str = "GOVERNANCE_DECISION";
@@ -96,8 +97,7 @@ impl CageTraceRecord {
 
     /// Convert this record to its canonical RFC 8785 JSON representation.
     pub fn to_canonical_json(&self) -> Result<String, JcsError> {
-        let val = serde_json::to_value(self)
-            .map_err(|e| JcsError::Serialization(e.to_string()))?;
+        let val = serde_json::to_value(self).map_err(|e| JcsError::Serialization(e.to_string()))?;
         canonicalize_jcs(&val)
     }
 

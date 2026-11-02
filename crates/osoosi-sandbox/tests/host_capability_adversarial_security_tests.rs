@@ -117,7 +117,8 @@ fn test_ttl_boundary_plus_31s_rejected_as_expired() {
     );
 
     // t = issued_at + 31s (strictly past 30s TTL window)
-    let outcome = gate.validate_and_consume_seal(&seal, "DeleteEntry", &params, Some(issued_at + 31));
+    let outcome =
+        gate.validate_and_consume_seal(&seal, "DeleteEntry", &params, Some(issued_at + 31));
 
     match outcome {
         Err(GateError::SealRejection(msg)) => {
@@ -129,7 +130,10 @@ fn test_ttl_boundary_plus_31s_rejected_as_expired() {
             assert!(msg.contains("1700000031"));
             assert!(msg.contains("1700000030"));
         }
-        other => panic!("Expected GateError::SealRejection for 31s expiration, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection for 31s expiration, got: {:?}",
+            other
+        ),
     }
 
     // Expired seal must NOT be marked consumed
@@ -158,12 +162,8 @@ fn test_ttl_subsecond_30_001s_discrete_ceiling_and_fractional_expiration() {
     let ceiling_second = (issued_at as f64 + elapsed_float).ceil() as u64; // 1_700_000_031
     assert_eq!(ceiling_second, issued_at + 31);
 
-    let ceiling_res = gate.validate_and_consume_seal(
-        &seal,
-        "ScalePool",
-        &params,
-        Some(ceiling_second),
-    );
+    let ceiling_res =
+        gate.validate_and_consume_seal(&seal, "ScalePool", &params, Some(ceiling_second));
     assert!(
         matches!(ceiling_res, Err(GateError::SealRejection(ref msg)) if msg.contains("expired")),
         "Ceiling evaluation of 30.001s elapsed must reject as expired"
@@ -197,7 +197,12 @@ async fn test_ttl_subsecond_realtime_wallclock_sleep_expiration() {
     );
 
     // Sleep until the wall clock strictly advances past seal.expires_at (now + 1)
-    while SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() <= seal.expires_at {
+    while SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        <= seal.expires_at
+    {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -212,7 +217,10 @@ async fn test_ttl_subsecond_realtime_wallclock_sleep_expiration() {
                 msg
             );
         }
-        other => panic!("Expected GateError::SealRejection after wall-clock sleep, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRejection after wall-clock sleep, got: {:?}",
+            other
+        ),
     }
 
     assert!(!gate.is_seal_consumed("seal_wallclock_subsecond_sleep"));
@@ -310,8 +318,11 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["prod", "finance"],
         "metadata": {"priority": 1}
     });
-    let res1 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_num, Some(1_700_000_005));
-    assert!(matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res1 =
+        gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_num, Some(1_700_000_005));
+    assert!(
+        matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 2: Mutate 1 character in string ("alice" -> "bob")
     let tampered_str = json!({
@@ -321,8 +332,11 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["prod", "finance"],
         "metadata": {"priority": 1}
     });
-    let res2 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_str, Some(1_700_000_005));
-    assert!(matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res2 =
+        gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_str, Some(1_700_000_005));
+    assert!(
+        matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 3: Mutate boolean (true -> false)
     let tampered_bool = json!({
@@ -332,8 +346,11 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["prod", "finance"],
         "metadata": {"priority": 1}
     });
-    let res3 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_bool, Some(1_700_000_005));
-    assert!(matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res3 =
+        gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_bool, Some(1_700_000_005));
+    assert!(
+        matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 4: Mutate 1 array element ("prod" -> "dev")
     let tampered_arr = json!({
@@ -343,8 +360,11 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["dev", "finance"],
         "metadata": {"priority": 1}
     });
-    let res4 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_arr, Some(1_700_000_005));
-    assert!(matches!(res4, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res4 =
+        gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_arr, Some(1_700_000_005));
+    assert!(
+        matches!(res4, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 5: Inject unexpected extra key
     let tampered_extra = json!({
@@ -355,8 +375,15 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "metadata": {"priority": 1},
         "admin_override": true
     });
-    let res5 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_extra, Some(1_700_000_005));
-    assert!(matches!(res5, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res5 = gate.validate_and_consume_seal(
+        &seal,
+        "TransferAsset",
+        &tampered_extra,
+        Some(1_700_000_005),
+    );
+    assert!(
+        matches!(res5, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 6: Omit an existing key
     let tampered_missing = json!({
@@ -365,8 +392,15 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["prod", "finance"],
         "metadata": {"priority": 1}
     });
-    let res6 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_missing, Some(1_700_000_005));
-    assert!(matches!(res6, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res6 = gate.validate_and_consume_seal(
+        &seal,
+        "TransferAsset",
+        &tampered_missing,
+        Some(1_700_000_005),
+    );
+    assert!(
+        matches!(res6, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Attack 7: Type confusion (number 100 -> string "100")
     let tampered_type = json!({
@@ -376,8 +410,11 @@ fn test_action_digest_1byte_payload_tampering_across_types() {
         "tags": ["prod", "finance"],
         "metadata": {"priority": 1}
     });
-    let res7 = gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_type, Some(1_700_000_005));
-    assert!(matches!(res7, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res7 =
+        gate.validate_and_consume_seal(&seal, "TransferAsset", &tampered_type, Some(1_700_000_005));
+    assert!(
+        matches!(res7, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Assert the seal was never marked consumed after all 7 failed tamper attempts
     assert!(!gate.is_seal_consumed("seal_digest_tamper_suite"));
@@ -399,15 +436,15 @@ fn test_action_name_mutations_and_homoglyphs() {
     );
 
     let mutated_action_names = [
-        "authorizepayment",         // lowercase
-        "AUTHORIZEPAYMENT",         // uppercase
-        " AuthorizePayment",        // leading space
-        "AuthorizePayment ",        // trailing space
-        "AuthorizePayment\0",       // null byte injection
-        "AuthorizePayment\n",       // newline injection
-        "AuthorizePayment_v2",      // suffix mutation
-        "AuthorizePayments",        // plural typo
-        "AutһorizePayment",         // Cyrillic small letter shha 'һ' homoglyph
+        "authorizepayment",    // lowercase
+        "AUTHORIZEPAYMENT",    // uppercase
+        " AuthorizePayment",   // leading space
+        "AuthorizePayment ",   // trailing space
+        "AuthorizePayment\0",  // null byte injection
+        "AuthorizePayment\n",  // newline injection
+        "AuthorizePayment_v2", // suffix mutation
+        "AuthorizePayments",   // plural typo
+        "AutһorizePayment",    // Cyrillic small letter shha 'һ' homoglyph
     ];
 
     for mutant in &mutated_action_names {
@@ -421,7 +458,10 @@ fn test_action_name_mutations_and_homoglyphs() {
                     msg
                 );
             }
-            other => panic!("Expected GateError::SealRejection for mutant '{}', got: {:?}", mutant, other),
+            other => panic!(
+                "Expected GateError::SealRejection for mutant '{}', got: {:?}",
+                mutant, other
+            ),
         }
     }
 
@@ -469,11 +509,17 @@ fn test_canonical_jcs_deeply_nested_key_reordering() {
 
     let jcs_a = canonicalize_jcs(&order_a).expect("Order A canonicalization must succeed");
     let jcs_b = canonicalize_jcs(&order_b).expect("Order B canonicalization must succeed");
-    assert_eq!(jcs_a, jcs_b, "JCS canonicalization must be identical across key reorderings");
+    assert_eq!(
+        jcs_a, jcs_b,
+        "JCS canonicalization must be identical across key reorderings"
+    );
 
     let digest_a = compute_action_digest("ComplexAction", &order_a);
     let digest_b = compute_action_digest("ComplexAction", &order_b);
-    assert_eq!(digest_a, digest_b, "Action digest must be identical across key reorderings");
+    assert_eq!(
+        digest_a, digest_b,
+        "Action digest must be identical across key reorderings"
+    );
 
     // Verify seal issued under order_a validates and is consumed when presented with order_b
     let gate = HostCapabilityGate::default();
@@ -574,8 +620,11 @@ fn test_canonical_jcs_array_order_is_preserved_permutations_alter_digest() {
     );
 
     // Presenting permuted array must fail
-    let res = gate.validate_and_consume_seal(&seal, "ArrayAction", &params_arr2, Some(1_700_000_005));
-    assert!(matches!(res, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res =
+        gate.validate_and_consume_seal(&seal, "ArrayAction", &params_arr2, Some(1_700_000_005));
+    assert!(
+        matches!(res, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
     assert!(!gate.is_seal_consumed("seal_array_order"));
 }
 
@@ -625,7 +674,10 @@ fn test_signature_forgery_1byte_bit_flips_across_multiple_positions() {
                     msg
                 );
             }
-            other => panic!("Expected GateError::SealRejection for bit flip at index {}, got: {:?}", idx, other),
+            other => panic!(
+                "Expected GateError::SealRejection for bit flip at index {}, got: {:?}",
+                idx, other
+            ),
         }
     }
 
@@ -652,7 +704,10 @@ fn test_signature_truncation_and_extension_attacks() {
         ("truncated_1_char", base_seal.signature[..1].to_string()),
         ("empty_sig", "".to_string()),
         ("extended_65_chars", format!("{}0", base_seal.signature)),
-        ("extended_128_chars", format!("{}{}", base_seal.signature, base_seal.signature)),
+        (
+            "extended_128_chars",
+            format!("{}{}", base_seal.signature, base_seal.signature),
+        ),
     ];
 
     for (label, forged_sig) in truncated_or_extended_sigs {
@@ -698,24 +753,44 @@ fn test_cross_seal_and_cross_context_signature_reuse() {
     );
     seal_b.signature = seal_a.signature.clone();
 
-    let res1 = gate.validate_and_consume_seal(&seal_b, "WriteLedger", &params_b, Some(1_700_000_005));
-    assert!(matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    let res1 =
+        gate.validate_and_consume_seal(&seal_b, "WriteLedger", &params_b, Some(1_700_000_005));
+    assert!(
+        matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     // Reuse Attack 2: Seal ID spoofing (keep Seal A's ID and signature, but switch action to WriteLedger)
-    let res2 = gate.validate_and_consume_seal(&seal_a, "WriteLedger", &params_b, Some(1_700_000_005));
-    assert!(matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    let res2 =
+        gate.validate_and_consume_seal(&seal_a, "WriteLedger", &params_b, Some(1_700_000_005));
+    assert!(
+        matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Reuse Attack 3: Cross-policy version spoofing (same seal_id, same action, but altered policy_version_id)
     let mut seal_cross_policy = seal_a.clone();
     seal_cross_policy.policy_version_id = "9999888877776666".to_string();
-    let res3 = gate.validate_and_consume_seal(&seal_cross_policy, "ReadLedger", &params_a, Some(1_700_000_005));
-    assert!(matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    let res3 = gate.validate_and_consume_seal(
+        &seal_cross_policy,
+        "ReadLedger",
+        &params_a,
+        Some(1_700_000_005),
+    );
+    assert!(
+        matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     // Reuse Attack 4: Cross-timestamp spoofing (same seal_id, same action, but altered issued_at)
     let mut seal_cross_time = seal_a.clone();
     seal_cross_time.issued_at = 1_700_000_010;
-    let res4 = gate.validate_and_consume_seal(&seal_cross_time, "ReadLedger", &params_a, Some(1_700_000_015));
-    assert!(matches!(res4, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    let res4 = gate.validate_and_consume_seal(
+        &seal_cross_time,
+        "ReadLedger",
+        &params_a,
+        Some(1_700_000_015),
+    );
+    assert!(
+        matches!(res4, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     assert_eq!(gate.consumed_seals_count(), 0);
 }
@@ -742,7 +817,9 @@ fn test_rogue_substrate_key_forgery_fails_closed() {
         &params,
         Some(1_700_000_005),
     );
-    assert!(matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    assert!(
+        matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     // Gate 2: Custom enterprise secret
     let custom_gate = HostCapabilityGate::default()
@@ -753,7 +830,9 @@ fn test_rogue_substrate_key_forgery_fails_closed() {
         &params,
         Some(1_700_000_005),
     );
-    assert!(matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    assert!(
+        matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     assert_eq!(default_gate.consumed_seals_count(), 0);
     assert_eq!(custom_gate.consumed_seals_count(), 0);
@@ -790,7 +869,10 @@ async fn test_unsealed_actuation_with_none_seal_fails_closed_immediately() {
                 err_msg
             );
         }
-        other => panic!("Expected GateError::SealRequired for None seal, got: {:?}", other),
+        other => panic!(
+            "Expected GateError::SealRequired for None seal, got: {:?}",
+            other
+        ),
     }
 
     assert_eq!(gate.consumed_seals_count(), 0);
@@ -828,7 +910,9 @@ async fn test_unsealed_actuation_with_empty_or_tampered_seal_fails_closed() {
             &legit_params,
         )
         .await;
-    assert!(matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Missing seal_id")));
+    assert!(
+        matches!(res1, Err(GateError::SealRejection(ref msg)) if msg.contains("Missing seal_id"))
+    );
 
     // Restore seal_id
     seal.seal_id = "seal_dispatch_tamper".to_string();
@@ -845,7 +929,9 @@ async fn test_unsealed_actuation_with_empty_or_tampered_seal_fails_closed() {
             &legit_params,
         )
         .await;
-    assert!(matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch")));
+    assert!(
+        matches!(res2, Err(GateError::SealRejection(ref msg)) if msg.contains("Action digest mismatch"))
+    );
 
     // Case 3: Forged signature
     seal.signature = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string();
@@ -860,7 +946,9 @@ async fn test_unsealed_actuation_with_empty_or_tampered_seal_fails_closed() {
             &legit_params,
         )
         .await;
-    assert!(matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid")));
+    assert!(
+        matches!(res3, Err(GateError::SealRejection(ref msg)) if msg.contains("Cryptographic HMAC signature invalid"))
+    );
 
     // Case 4: Expired seal
     let mut expired_seal = seal.clone();
@@ -904,7 +992,8 @@ async fn test_dispatch_request_with_seal_rejects_already_consumed_seal_before_ne
     );
 
     // First: consume the seal directly via validate_and_consume_seal
-    let first_res = gate.validate_and_consume_seal(&seal, "InspectItem", &params, Some(1_700_000_005));
+    let first_res =
+        gate.validate_and_consume_seal(&seal, "InspectItem", &params, Some(1_700_000_005));
     assert!(first_res.is_ok());
     assert!(gate.is_seal_consumed("seal_consumed_before_dispatch"));
 
@@ -952,7 +1041,8 @@ fn test_unconsumed_invariance_on_failed_verifications() {
         1_700_000_000,
         30,
     );
-    bad_sig.signature = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    bad_sig.signature =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
     // 2. Expired seal
     let expired_seal = create_test_seal(
@@ -976,9 +1066,15 @@ fn test_unconsumed_invariance_on_failed_verifications() {
         30,
     );
 
-    assert!(gate.validate_and_consume_seal(&bad_sig, "InitState", &params, Some(1_700_000_005)).is_err());
-    assert!(gate.validate_and_consume_seal(&expired_seal, "InitState", &params, Some(1_700_000_050)).is_err());
-    assert!(gate.validate_and_consume_seal(&mismatch_seal, "InitState", &params, Some(1_700_000_005)).is_err());
+    assert!(gate
+        .validate_and_consume_seal(&bad_sig, "InitState", &params, Some(1_700_000_005))
+        .is_err());
+    assert!(gate
+        .validate_and_consume_seal(&expired_seal, "InitState", &params, Some(1_700_000_050))
+        .is_err());
+    assert!(gate
+        .validate_and_consume_seal(&mismatch_seal, "InitState", &params, Some(1_700_000_005))
+        .is_err());
 
     // Invariant: None of the failed seals are recorded as consumed
     assert!(!gate.is_seal_consumed("seal_fail_sig"));

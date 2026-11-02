@@ -17,9 +17,7 @@
 //!    - Linear time complexity, zero panics, zero memory leaks, and deterministic verification receipts.
 //! 3. Concurrent verification stress & JSONL stream parsing robustness.
 
-use osoosi_policy::cage::{
-    StreamConformanceStatus, StreamInvariantVerifier,
-};
+use osoosi_policy::cage::{StreamConformanceStatus, StreamInvariantVerifier};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -258,9 +256,10 @@ fn test_adversarial_stream_seal_consumed_unknown_decision_hash() {
         .expect("Must detect unknown decision hash");
 
     assert!(
-        finding
-            .detail
-            .contains(&format!("references unknown decision hash {}", ghost_decision_hash)),
+        finding.detail.contains(&format!(
+            "references unknown decision hash {}",
+            ghost_decision_hash
+        )),
         "Expected unknown decision hash detail, got: {}",
         finding.detail
     );
@@ -300,7 +299,11 @@ fn test_adversarial_stream_unsealed_allow_and_narrow_decisions() {
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("seal"));
 
-    let seal_violations: Vec<_> = report.findings.iter().filter(|f| f.rule == "seal").collect();
+    let seal_violations: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule == "seal")
+        .collect();
     assert_eq!(
         seal_violations.len(),
         2,
@@ -835,7 +838,11 @@ fn test_adversarial_stream_high_volume_10k_mixed_events() {
         }));
     }
 
-    assert_eq!(stream.len(), 10_000, "Total stream count must be exactly 10,000");
+    assert_eq!(
+        stream.len(),
+        10_000,
+        "Total stream count must be exactly 10,000"
+    );
 
     // Execution & Linear Complexity Verification
     // ------------------------------------------
@@ -843,7 +850,10 @@ fn test_adversarial_stream_high_volume_10k_mixed_events() {
     let report_a = StreamInvariantVerifier::verify_stream(&stream);
     let duration_a = start_time.elapsed();
 
-    println!(" [+] Verified 10,000 mixed stream records in {:?}", duration_a);
+    println!(
+        " [+] Verified 10,000 mixed stream records in {:?}",
+        duration_a
+    );
 
     // Invariant 1: Zero panics & expected record count
     assert_eq!(report_a.records_checked, 10_000);
@@ -916,9 +926,8 @@ fn test_adversarial_stream_concurrent_multi_verifier_threads() {
             }
 
             b.wait();
-            let res = std::panic::catch_unwind(|| {
-                StreamInvariantVerifier::verify_stream(&local_stream)
-            });
+            let res =
+                std::panic::catch_unwind(|| StreamInvariantVerifier::verify_stream(&local_stream));
 
             if let Ok(report) = res {
                 assert!(report.is_conformant());

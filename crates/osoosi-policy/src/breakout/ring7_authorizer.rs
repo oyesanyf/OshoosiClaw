@@ -1267,4 +1267,3 @@ pub fn global_ring7_authorizer() -> Arc<Ring7CapabilityEffectAuthorizer> {
         .get_or_init(|| Arc::new(Ring7CapabilityEffectAuthorizer::new()))
         .clone()
 }
-

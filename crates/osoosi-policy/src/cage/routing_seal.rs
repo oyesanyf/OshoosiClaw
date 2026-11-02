@@ -40,7 +40,9 @@ pub enum SealRejection {
     #[error("Routing seal already consumed (single-use replay detected): {0}")]
     AlreadyConsumed(String),
 
-    #[error("Policy version mismatch: expected active version '{expected}', seal specifies '{actual}'")]
+    #[error(
+        "Policy version mismatch: expected active version '{expected}', seal specifies '{actual}'"
+    )]
     PolicyVersionMismatch { expected: String, actual: String },
 
     #[error("Action digest mismatch: expected '{expected}', seal contains '{actual}'")]
@@ -52,8 +54,8 @@ pub enum SealRejection {
 
 /// Computes the 64-character lowercase hex SHA-256 action digest over an action and its canonical JSON parameters.
 pub fn compute_action_digest(action_name: &str, params: &serde_json::Value) -> String {
-    let canonical_params = crate::cage::policy_ingest::canonicalize_jcs(params)
-        .unwrap_or_else(|_| params.to_string());
+    let canonical_params =
+        crate::cage::policy_ingest::canonicalize_jcs(params).unwrap_or_else(|_| params.to_string());
     let mut hasher = Sha256::new();
     hasher.update(action_name.as_bytes());
     hasher.update(b":");
@@ -99,7 +101,10 @@ impl RoutingSealSigner {
         policy_version_id: &str,
         issued_at: u64,
     ) -> String {
-        let payload = format!("{}|{}|{}|{}", seal_id, action_digest, policy_version_id, issued_at);
+        let payload = format!(
+            "{}|{}|{}|{}",
+            seal_id, action_digest, policy_version_id, issued_at
+        );
         let mut mac = HmacSha256::new_from_slice(secret_key)
             .expect("HMAC initialization must succeed with any key length");
         mac.update(payload.as_bytes());
@@ -114,13 +119,8 @@ impl RoutingSealSigner {
         let version_id = self.active_policy_version();
         let expires_at = now + ROUTING_SEAL_TTL_SECS;
 
-        let signature = Self::compute_signature(
-            &self.secret_key,
-            &seal_id,
-            action_digest,
-            &version_id,
-            now,
-        );
+        let signature =
+            Self::compute_signature(&self.secret_key, &seal_id, action_digest, &version_id, now);
 
         RoutingSeal {
             seal_id,
@@ -155,7 +155,10 @@ impl RoutingSealSigner {
             return false;
         }
 
-        seal.signature.as_bytes().ct_eq(expected_sig.as_bytes()).into()
+        seal.signature
+            .as_bytes()
+            .ct_eq(expected_sig.as_bytes())
+            .into()
     }
 
     /// Validates seal format, policy version, action digest, TTL window, and HMAC signature.

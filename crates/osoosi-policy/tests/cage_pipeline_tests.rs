@@ -11,9 +11,8 @@
 //! 8. Version pinning conflict detection (HTTP 409 Conflict)
 
 use osoosi_policy::cage::{
-    compute_action_digest, CageGovernancePipeline, CbfViolation,
-    CompiledCagePolicy, ControlBarrierFunction, FiscalLedger,
-    GovernanceRequest, GovernanceVerdict, PolicyFormat,
+    compute_action_digest, CageGovernancePipeline, CbfViolation, CompiledCagePolicy,
+    ControlBarrierFunction, FiscalLedger, GovernanceRequest, GovernanceVerdict, PolicyFormat,
     RoutingSealSigner, SealRejection, UnsafeControlAction,
 };
 use serde_json::json;
@@ -203,7 +202,11 @@ fn test_phase1_sr_26_2_confidence_lattice_thresholds() {
         expected_policy_version: None,
     };
     let res_mid = pipeline.evaluate_action(&req_mid);
-    if let GovernanceVerdict::RequireApproval { reason, approval_token } = res_mid.verdict {
+    if let GovernanceVerdict::RequireApproval {
+        reason,
+        approval_token,
+    } = res_mid.verdict
+    {
         assert!(reason.contains("SR 26-2"));
         assert!(approval_token.starts_with("token_"));
         assert!(res_mid.seal.is_none());
@@ -236,8 +239,8 @@ fn test_phase1_sr_26_2_confidence_lattice_thresholds() {
 fn test_phase1_bayesian_consensus_quorum_check() {
     let policy = create_test_policy("c4b8e219fa8201de", 0.5, 10.0);
     let ledger = FiscalLedger::new(100.0, 0.5, 10.0).expect("ledger init");
-    let pipeline = CageGovernancePipeline::new(policy, ledger, TEST_SECRET)
-        .with_consensus_threshold(0.75);
+    let pipeline =
+        CageGovernancePipeline::new(policy, ledger, TEST_SECRET).with_consensus_threshold(0.75);
 
     // Consensus score 0.60 below threshold 0.75
     let req = GovernanceRequest {
@@ -287,13 +290,19 @@ fn test_phase2_cbf_barrier_satisfaction_and_denial_mathematics() {
     // h_{t+1} = (100 - 60) - 10 = 30.0 < 45.0 -> ERR
     let res_decay = cbf.evaluate_step(b_t, 60.0, h_t);
     assert!(res_decay.is_err());
-    assert!(matches!(res_decay.unwrap_err(), CbfViolation::DecayRateExceeded { .. }));
+    assert!(matches!(
+        res_decay.unwrap_err(),
+        CbfViolation::DecayRateExceeded { .. }
+    ));
 
     // 3. Floor breach: cost = 95.0
     // h_{t+1} = (100 - 95) - 10 = -5.0 < 0 -> ERR
     let res_floor = cbf.evaluate_step(b_t, 95.0, h_t);
     assert!(res_floor.is_err());
-    assert!(matches!(res_floor.unwrap_err(), CbfViolation::FloorBreach { .. }));
+    assert!(matches!(
+        res_floor.unwrap_err(),
+        CbfViolation::FloorBreach { .. }
+    ));
 }
 
 #[test]
@@ -345,7 +354,9 @@ fn test_phase2_lifo_fiscal_fuel_rollback() {
     assert_eq!(ledger.available_budget(), 75.0);
 
     // Downstream actuation B fails -> rollback reservation B
-    let restored_b = ledger.rollback_reservation(&receipt_b.debit_id).expect("rollback B");
+    let restored_b = ledger
+        .rollback_reservation(&receipt_b.debit_id)
+        .expect("rollback B");
     assert_eq!(restored_b, 90.0);
     assert_eq!(ledger.available_budget(), 90.0);
 
@@ -405,7 +416,8 @@ fn test_routing_seal_signature_and_30s_ttl_enforcement() {
 
     // 3. Tampering detection
     let mut tampered_seal = seal.clone();
-    tampered_seal.action_digest = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    tampered_seal.action_digest =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
     assert!(!signer.verify_signature(&tampered_seal));
 
     // 4. Expiration at t = now + 31s
@@ -414,7 +426,10 @@ fn test_routing_seal_signature_and_30s_ttl_enforcement() {
     assert!(seal.is_expired(now + 31));
 
     let validation_expired = signer.validate_seal_properties(&seal, &action_digest, now + 31);
-    assert!(matches!(validation_expired, Err(SealRejection::Expired { .. })));
+    assert!(matches!(
+        validation_expired,
+        Err(SealRejection::Expired { .. })
+    ));
 }
 
 #[test]
@@ -437,7 +452,10 @@ fn test_routing_seal_single_use_atomic_consumption() {
     // Second consumption (REPLAY ATTACK): MUST FAIL CLOSED
     let res2 = signer.validate_and_consume(&seal, &action_digest, now + 6);
     assert!(res2.is_err());
-    assert!(matches!(res2.unwrap_err(), SealRejection::AlreadyConsumed(_)));
+    assert!(matches!(
+        res2.unwrap_err(),
+        SealRejection::AlreadyConsumed(_)
+    ));
 }
 
 // =========================================================================
@@ -485,7 +503,8 @@ fn test_narrow_verdict_parameter_clamping_with_routing_seal() {
     // Seal must be issued binding the CLAMPED parameters
     assert!(result.seal.is_some());
     let seal = result.seal.unwrap();
-    let clamped_digest = compute_action_digest("ExecuteStockOrder", &json!({"order_value_usd": 9999.0}));
+    let clamped_digest =
+        compute_action_digest("ExecuteStockOrder", &json!({"order_value_usd": 9999.0}));
     assert_eq!(seal.action_digest, clamped_digest);
     assert!(result.commit_receipt.is_some());
 }

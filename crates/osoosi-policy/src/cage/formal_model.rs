@@ -196,7 +196,13 @@ pub struct FormalBfsModel;
 impl FormalBfsModel {
     /// Canonical ordered names of the 7 deterministic governance tiers.
     pub const TIER_NAMES: [&'static str; 7] = [
-        "ftra", "stpa", "opa", "confidence", "consensus", "cbf", "fiscal",
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "consensus",
+        "cbf",
+        "fiscal",
     ];
 
     /// Explores the full gated CAGE governance state machine using Breadth-First Search (BFS).
@@ -216,7 +222,14 @@ impl FormalBfsModel {
         let mut transitions: HashMap<BfsState, Vec<BfsState>> = HashMap::new();
 
         // 1. Initial state transitions to first checking tier (ftra, tier 0)
-        let first_check = BfsState::new(BfsPhase::Checking, Self::TIER_NAMES[0], 0, false, false, false);
+        let first_check = BfsState::new(
+            BfsPhase::Checking,
+            Self::TIER_NAMES[0],
+            0,
+            false,
+            false,
+            false,
+        );
         transitions.insert(initial_state, vec![first_check]);
 
         // 2. 7 Checking tiers progression
@@ -258,7 +271,10 @@ impl FormalBfsModel {
                 true,
             );
 
-            transitions.insert(current_check, vec![next_check, direct_deny, narrow_eval.clone()]);
+            transitions.insert(
+                current_check,
+                vec![next_check, direct_deny, narrow_eval.clone()],
+            );
 
             // Narrow evaluations can either fail rerun (DENIED) or advance to next narrow / passed
             let narrow_rerun_deny = BfsState::new(
@@ -280,21 +296,16 @@ impl FormalBfsModel {
                 );
                 transitions.insert(narrow_eval, vec![next_narrow, narrow_rerun_deny]);
             } else {
-                let narrow_pass = BfsState::new(
-                    BfsPhase::NarrowPassed,
-                    "all_clamped",
-                    7,
-                    true,
-                    true,
-                    true,
-                );
+                let narrow_pass =
+                    BfsState::new(BfsPhase::NarrowPassed, "all_clamped", 7, true, true, true);
                 transitions.insert(narrow_eval, vec![narrow_pass, narrow_rerun_deny]);
             }
         }
 
         // 8th checking state: completed -> SEAL_ISSUED
         let seal_issued = BfsState::new(BfsPhase::SealIssued, "valid", 7, true, true, false);
-        let completed_check = BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
+        let completed_check =
+            BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
         transitions.insert(completed_check, vec![seal_issued.clone()]);
 
         // Narrow passed also transitions to SEAL_ISSUED
@@ -309,11 +320,25 @@ impl FormalBfsModel {
         // Terminal states have empty outbound transitions
         for idx in 0..7 {
             transitions.insert(
-                BfsState::new(BfsPhase::Denied, format!("direct_tier_{idx}"), idx, false, false, false),
+                BfsState::new(
+                    BfsPhase::Denied,
+                    format!("direct_tier_{idx}"),
+                    idx,
+                    false,
+                    false,
+                    false,
+                ),
                 Vec::new(),
             );
             transitions.insert(
-                BfsState::new(BfsPhase::Denied, format!("narrow_rerun_tier_{idx}"), idx, false, false, false),
+                BfsState::new(
+                    BfsPhase::Denied,
+                    format!("narrow_rerun_tier_{idx}"),
+                    idx,
+                    false,
+                    false,
+                    false,
+                ),
                 Vec::new(),
             );
         }
@@ -373,7 +398,14 @@ impl FormalBfsModel {
 
         let mut transitions: HashMap<BfsState, Vec<BfsState>> = HashMap::new();
 
-        let first_check = BfsState::new(BfsPhase::Checking, Self::TIER_NAMES[0], 0, false, false, false);
+        let first_check = BfsState::new(
+            BfsPhase::Checking,
+            Self::TIER_NAMES[0],
+            0,
+            false,
+            false,
+            false,
+        );
         transitions.insert(initial_state, vec![first_check]);
 
         for idx in 0..7 {
@@ -425,14 +457,7 @@ impl FormalBfsModel {
             false,
             true,
         );
-        let term_fail = BfsState::new(
-            BfsPhase::Denied,
-            "terminal_failure",
-            7,
-            false,
-            false,
-            false,
-        );
+        let term_fail = BfsState::new(BfsPhase::Denied, "terminal_failure", 7, false, false, false);
         transitions.insert(ungated_exec, vec![term_fail.clone()]);
         transitions.insert(term_fail, Vec::new());
 
@@ -448,8 +473,9 @@ impl FormalBfsModel {
                 if !state.seal_present {
                     violations.push(BfsViolation {
                         state: state.clone(),
-                        error: "Direct-bind violation counterexample observed (executed without seal)"
-                            .to_string(),
+                        error:
+                            "Direct-bind violation counterexample observed (executed without seal)"
+                                .to_string(),
                     });
                 }
             }
@@ -585,20 +611,15 @@ impl FormalBfsModel {
                 );
                 transitions.insert(narrow_eval, vec![next_narrow, narrow_rerun_deny]);
             } else {
-                let narrow_pass = BfsState::new(
-                    BfsPhase::NarrowPassed,
-                    "all_clamped",
-                    7,
-                    true,
-                    true,
-                    true,
-                );
+                let narrow_pass =
+                    BfsState::new(BfsPhase::NarrowPassed, "all_clamped", 7, true, true, true);
                 transitions.insert(narrow_eval, vec![narrow_pass, narrow_rerun_deny]);
             }
         }
 
         let seal_issued = BfsState::new(BfsPhase::SealIssued, "valid", 7, true, true, false);
-        let completed_check = BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
+        let completed_check =
+            BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
         transitions.insert(completed_check, vec![seal_issued.clone()]);
 
         let narrow_pass = BfsState::new(BfsPhase::NarrowPassed, "all_clamped", 7, true, true, true);
@@ -735,4 +756,3 @@ mod tests {
         assert_eq!(proof.proof_receipt.len(), 64);
     }
 }
-

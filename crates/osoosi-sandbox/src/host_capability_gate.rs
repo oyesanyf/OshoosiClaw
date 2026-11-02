@@ -20,7 +20,8 @@ use tracing::info;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Default substrate HMAC-SHA256 secret key for CAGE routing seals.
-pub const DEFAULT_CAGE_SUBSTRATE_SECRET: &[u8] = b"oshoosiclaw_cage_governance_secret_2026_test_key";
+pub const DEFAULT_CAGE_SUBSTRATE_SECRET: &[u8] =
+    b"oshoosiclaw_cage_governance_secret_2026_test_key";
 
 /// In-memory secret buffer that zeroes its backing heap allocation via volatile writes
 /// whenever a grant is revoked or dropped (`Drop`).
@@ -128,7 +129,9 @@ impl std::fmt::Display for GateError {
             GateError::CredentialDenied(msg) => write!(f, "Credential Denied: {}", msg),
             GateError::NetworkError(msg) => write!(f, "Network Error: {}", msg),
             GateError::Timeout => write!(f, "Request Timed Out"),
-            GateError::SealRequired(msg) => write!(f, "Routing Seal Required (NoDirectBind): {}", msg),
+            GateError::SealRequired(msg) => {
+                write!(f, "Routing Seal Required (NoDirectBind): {}", msg)
+            }
             GateError::SealRejection(msg) => write!(f, "Routing Seal Rejected: {}", msg),
         }
     }
@@ -244,7 +247,10 @@ impl HostCapabilityGate {
         );
 
         let is_valid = if seal.signature.len() == expected_sig.len() {
-            seal.signature.as_bytes().ct_eq(expected_sig.as_bytes()).into()
+            seal.signature
+                .as_bytes()
+                .ct_eq(expected_sig.as_bytes())
+                .into()
         } else {
             false
         };
@@ -502,7 +508,9 @@ impl HostCapabilityGate {
         expected_params: &serde_json::Value,
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), GateError> {
         let seal = seal.ok_or_else(|| {
-            GateError::SealRequired("NoDirectBind violation: unsealed execution rejected".to_string())
+            GateError::SealRequired(
+                "NoDirectBind violation: unsealed execution rejected".to_string(),
+            )
         })?;
 
         self.validate_and_consume_seal(seal, expected_action, expected_params, None)?;
@@ -633,7 +641,10 @@ pub fn sign_routing_seal(
     policy_version_id: &str,
     issued_at: u64,
 ) -> String {
-    let payload = format!("{}|{}|{}|{}", seal_id, action_digest, policy_version_id, issued_at);
+    let payload = format!(
+        "{}|{}|{}|{}",
+        seal_id, action_digest, policy_version_id, issued_at
+    );
     let mut mac = HmacSha256::new_from_slice(secret_key)
         .expect("HMAC initialization must succeed with any key length");
     mac.update(payload.as_bytes());

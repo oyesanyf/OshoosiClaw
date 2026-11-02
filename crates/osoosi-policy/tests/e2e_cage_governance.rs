@@ -9,9 +9,9 @@
 //! Follows Zero-Mock Invariant: All tests exercise actual production contracts,
 //! real SHA-256 digests, genuine HMAC signatures, and pure-Rust 34-state BFS formal verification.
 
-use std::collections::{HashSet, VecDeque};
-use sha2::{Digest, Sha256};
 use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
+use std::collections::{HashSet, VecDeque};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -41,7 +41,9 @@ fn test_tier1_f03_version_id_16_hex_computation() {
     let version_16 = &full_hash[..16];
 
     assert_eq!(version_16.len(), 16);
-    assert!(version_16.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(version_16
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
 }
 
 #[test]
@@ -78,7 +80,9 @@ fn test_tier1_f06_routing_seal_structure_and_30s_ttl() {
     let sig = hex::encode(mac.finalize().into_bytes());
 
     assert_eq!(sig.len(), 64);
-    assert!(sig.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(sig
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
 }
 
 #[test]
@@ -92,7 +96,15 @@ fn test_tier1_f07_pure_rust_34_state_bfs_model_verification() {
     let mut queue = VecDeque::new();
     queue.push_back(initial);
 
-    let tier_names = ["ftra", "stpa", "opa", "confidence", "consensus", "cbf", "fiscal"];
+    let tier_names = [
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "consensus",
+        "cbf",
+        "fiscal",
+    ];
 
     while let Some(state) = queue.pop_front() {
         if visited.contains(&state) {
@@ -100,7 +112,8 @@ fn test_tier1_f07_pure_rust_34_state_bfs_model_verification() {
         }
         visited.insert(state.clone());
 
-        let (phase, _label, tier, seal_present, resolved_allow, executed) = (state.0, state.1, state.2, state.3, state.4, state.5);
+        let (phase, _label, tier, seal_present, resolved_allow, executed) =
+            (state.0, state.1, state.2, state.3, state.4, state.5);
 
         // Prove NoDirectBind theorem:
         if phase == "EXECUTED" {
@@ -116,9 +129,23 @@ fn test_tier1_f07_pure_rust_34_state_bfs_model_verification() {
             "CHECKING" => {
                 let idx = tier as usize;
                 if idx < 6 {
-                    queue.push_back(State("CHECKING", tier_names[idx + 1], (idx + 1) as u8, false, false, false));
+                    queue.push_back(State(
+                        "CHECKING",
+                        tier_names[idx + 1],
+                        (idx + 1) as u8,
+                        false,
+                        false,
+                        false,
+                    ));
                     queue.push_back(State("DENIED", tier_names[idx], tier, false, false, false));
-                    queue.push_back(State("NARROW_EVAL", tier_names[idx], tier, false, false, true));
+                    queue.push_back(State(
+                        "NARROW_EVAL",
+                        tier_names[idx],
+                        tier,
+                        false,
+                        false,
+                        true,
+                    ));
                 } else if idx == 6 {
                     queue.push_back(State("CHECKING", "completed", 7, false, false, false));
                     queue.push_back(State("DENIED", tier_names[6], 6, false, false, false));
@@ -129,9 +156,23 @@ fn test_tier1_f07_pure_rust_34_state_bfs_model_verification() {
             }
             "NARROW_EVAL" => {
                 let idx = tier as usize;
-                queue.push_back(State("DENIED", "narrow_rerun_fail", tier, false, false, false));
+                queue.push_back(State(
+                    "DENIED",
+                    "narrow_rerun_fail",
+                    tier,
+                    false,
+                    false,
+                    false,
+                ));
                 if idx < 6 {
-                    queue.push_back(State("NARROW_EVAL", tier_names[idx + 1], (idx + 1) as u8, false, false, true));
+                    queue.push_back(State(
+                        "NARROW_EVAL",
+                        tier_names[idx + 1],
+                        (idx + 1) as u8,
+                        false,
+                        false,
+                        true,
+                    ));
                 } else {
                     queue.push_back(State("NARROW_PASSED", "all_clamped", 7, true, true, true));
                 }
@@ -148,7 +189,11 @@ fn test_tier1_f07_pure_rust_34_state_bfs_model_verification() {
         }
     }
 
-    assert_eq!(visited.len(), 34, "Gated model must explore exactly 34 reachable states");
+    assert_eq!(
+        visited.len(),
+        34,
+        "Gated model must explore exactly 34 reachable states"
+    );
 }
 
 #[test]
@@ -162,7 +207,15 @@ fn test_tier1_f07_ungated_counterexample_model_17_states() {
     let mut queue = VecDeque::new();
     queue.push_back(initial);
 
-    let tier_names = ["ftra", "stpa", "opa", "confidence", "consensus", "cbf", "fiscal"];
+    let tier_names = [
+        "ftra",
+        "stpa",
+        "opa",
+        "confidence",
+        "consensus",
+        "cbf",
+        "fiscal",
+    ];
     let mut direct_bind_violation_found = false;
 
     while let Some(state) = queue.pop_front() {
@@ -171,7 +224,8 @@ fn test_tier1_f07_ungated_counterexample_model_17_states() {
         }
         visited.insert(state.clone());
 
-        let (phase, _label, tier, seal_present, _executed) = (state.0, state.1, state.2, state.3, state.4);
+        let (phase, _label, tier, seal_present, _executed) =
+            (state.0, state.1, state.2, state.3, state.4);
 
         if phase == "EXECUTED" && !seal_present {
             direct_bind_violation_found = true;
@@ -184,7 +238,13 @@ fn test_tier1_f07_ungated_counterexample_model_17_states() {
             "CHECKING" => {
                 let idx = tier as usize;
                 if idx < 6 {
-                    queue.push_back(State("CHECKING", tier_names[idx + 1], (idx + 1) as u8, false, false));
+                    queue.push_back(State(
+                        "CHECKING",
+                        tier_names[idx + 1],
+                        (idx + 1) as u8,
+                        false,
+                        false,
+                    ));
                     queue.push_back(State("DENIED", tier_names[idx], tier, false, false));
                 } else if idx == 6 {
                     queue.push_back(State("EXECUTED", "ungated_direct_bind", 7, false, true));
@@ -199,8 +259,15 @@ fn test_tier1_f07_ungated_counterexample_model_17_states() {
         }
     }
 
-    assert_eq!(visited.len(), 17, "Ungated counterexample model must visit exactly 17 states");
-    assert!(direct_bind_violation_found, "Ungated model must trigger direct-bind violation");
+    assert_eq!(
+        visited.len(),
+        17,
+        "Ungated counterexample model must visit exactly 17 states"
+    );
+    assert!(
+        direct_bind_violation_found,
+        "Ungated model must trigger direct-bind violation"
+    );
 }
 
 #[test]
@@ -214,7 +281,9 @@ fn test_tier1_f11_merkle_root_computation() {
     let root = hex::encode(combined_hasher.finalize());
 
     assert_eq!(root.len(), 64);
-    assert!(root.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(root
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
 }
 
 #[test]
@@ -269,7 +338,10 @@ fn test_tier2_single_use_consumed_set_replay_rejection() {
     let seal_id = "seal_replay_target";
 
     assert!(consumed.insert(seal_id));
-    assert!(!consumed.insert(seal_id), "Second insertion must fail (replay blocked)");
+    assert!(
+        !consumed.insert(seal_id),
+        "Second insertion must fail (replay blocked)"
+    );
 }
 
 // =========================================================================
