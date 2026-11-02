@@ -519,6 +519,11 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                 assert.ok(gridEl.innerHTML.includes('data-engine-cat="network-intel"'), 'Must render Threat Intelligence, C2 & CVE Voters category');
                 assert.ok(gridEl.innerHTML.includes('data-engine-cat="physics-containment"'), 'Must render Behavioral Physics, Sigma & Containment Voters category');
                 assert.ok(gridEl.innerHTML.includes('data-engine-cat="trust-reputation"'), 'Must render Zero-Trust Veto, Vendor & Noise Filter Voters category');
+                assert.ok(gridEl.innerHTML.includes('engine-category-section collapsed'), 'All 5 voter categories must default to collapsed');
+                assert.ok(gridEl.innerHTML.includes('voter-card voter-collapsed'), 'All voter cards must default to compact/collapsed mode');
+                assert.strictEqual(env.mockWindow.isTacticCollapsed('initial-access', false), true, 'MITRE tactic columns must default to collapsed');
+                assert.strictEqual(env.mockWindow.isTechCardCollapsed('T1082'), true, 'MITRE technique cards must default to collapsed');
+                assert.strictEqual(typeof env.mockWindow.initUniversalCollapsibleLongMenus, 'function', 'initUniversalCollapsibleLongMenus must be exported');
 
                 // Collapse Policy Detection Engines
                 env.mockWindow.togglePolicyEnginesCard();
