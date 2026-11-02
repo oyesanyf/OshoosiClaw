@@ -5,6 +5,84 @@
 /**
  * Render mesh network view
  */
+/**
+ * Resolve exact TPM version and attestation mode badge for a node or joining peer.
+ * Canonical badges:
+ * - "TPM 2.0 (Hardware Attested)"
+ * - "TPM 1.2 (Legacy)" (Strictly Banned — Only TPM 2.0 Allowed)
+ * - "vTPM 2.0 (Virtual)"
+ * - "No TPM (Software / DPAPI Fallback)"
+ */
+function resolveNodeTpmInfo(nodeOrPeer) {
+    const item = nodeOrPeer || {};
+    const rawBadge = String(item.tpm_badge || item.attestation_mode || '').trim();
+    const rawVer = String(item.tpm_version || '').trim().toLowerCase();
+    const rawAtt = String(item.attestation || item.attestation_state || '').trim().toLowerCase();
+    const rawId = String(item.peer_id || item.id || item.name || item.label || '').trim().toLowerCase();
+    const rawOs = String(item.os || '').trim().toLowerCase();
+    const combined = `${rawBadge.toLowerCase()} ${rawVer} ${rawAtt} ${rawId} ${rawOs}`;
+
+    if (
+        item.is_tpm_banned === true ||
+        rawBadge === 'TPM 1.2 (Legacy)' ||
+        rawVer === '1.2' ||
+        rawVer.startsWith('1.2') ||
+        combined.includes('tpm 1.2') ||
+        combined.includes('tpm1.2') ||
+        combined.includes('tpm-1.2') ||
+        combined.includes('tpm_1_2')
+    ) {
+        return {
+            version: '1.2',
+            badgeLabel: 'TPM 1.2 (Legacy)',
+            badgeClass: 'red',
+            isBanned: true,
+            policyNote: 'Banned — Only TPM 2.0 Allowed'
+        };
+    }
+
+    if (
+        rawBadge === 'vTPM 2.0 (Virtual)' ||
+        combined.includes('vtpm') ||
+        combined.includes('virtual tpm')
+    ) {
+        return {
+            version: '2.0',
+            badgeLabel: 'vTPM 2.0 (Virtual)',
+            badgeClass: 'blue',
+            isBanned: false,
+            policyNote: 'Allowed (TPM 2.0 Virtual)'
+        };
+    }
+
+    if (
+        rawBadge === 'No TPM (Software / DPAPI Fallback)' ||
+        rawVer === 'none' ||
+        combined.includes('no tpm') ||
+        combined.includes('notpm') ||
+        combined.includes('no-tpm') ||
+        combined.includes('dpapi') ||
+        combined.includes('software enclave')
+    ) {
+        return {
+            version: 'None',
+            badgeLabel: 'No TPM (Software / DPAPI Fallback)',
+            badgeClass: 'yellow',
+            isBanned: false,
+            policyNote: 'Software / DPAPI Fallback'
+        };
+    }
+
+    return {
+        version: '2.0',
+        badgeLabel: 'TPM 2.0 (Hardware Attested)',
+        badgeClass: 'green',
+        isBanned: false,
+        policyNote: 'Allowed (TPM 2.0 Hardware Root-of-Trust)'
+    };
+}
+window.resolveNodeTpmInfo = resolveNodeTpmInfo;
+
 async function renderMeshView(mesh) {
     try {
         const list = document.getElementById('mesh-data-list');
@@ -149,6 +227,7 @@ async function renderMeshView(mesh) {
         const localLatency = localNode ? (localNode.latency || '0.0 ms') : '0.0 ms';
         const localTx = localNode ? (localNode.packets_tx || 0) : 0;
         const localRx = localNode ? (localNode.packets_rx || 0) : 0;
+        const localTpm = resolveNodeTpmInfo(localNode || { tpm_version: '2.0', tpm_badge: 'TPM 2.0 (Hardware Attested)' });
 
         let html = `
             <div class="timeline-item" style="border-left: 2px solid var(--accent-blue); margin-bottom: 12px;">
@@ -165,6 +244,7 @@ async function renderMeshView(mesh) {
 
             <h4 style="margin-top:16px; margin-bottom:10px; color:var(--text-header); font-size:14px; display:flex; align-items:center; gap:6px;">
                 <i data-lucide="server" style="width:14px; height:14px; color:var(--accent-green);"></i> Active Mesh Nodes &amp; Telemetry
+                <span class="badge green" style="margin-left:auto; font-size:11px;">🔒 Exclusive Policy: Only TPM 2.0 Allowed (TPM 1.2 Banned)</span>
             </h4>
             <div class="timeline-item" style="border-left: 2px solid var(--accent-green); margin-bottom: 8px;">
                 <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: var(--accent-green);">
@@ -173,10 +253,11 @@ async function renderMeshView(mesh) {
                 <div class="item-info" style="flex:1;">
                     <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
                         <span>${escapeHtml(localName)} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(localIp)}</code></span>
-                        <span class="badge green">Optimal</span>
+                        <span style="display:inline-flex; gap:6px; align-items:center;"><span class="badge ${localTpm.badgeClass}" title="${escapeHtml(localTpm.policyNote)}">${escapeHtml(localTpm.badgeLabel)}</span><span class="badge green">Optimal</span></span>
                     </div>
                     <div class="item-meta" style="margin-top:4px;">
                         <span><i data-lucide="shield"></i> ${escapeHtml(localAttestation)}</span>
+                        <span><i data-lucide="lock"></i> <strong>TPM:</strong> ${escapeHtml(localTpm.badgeLabel)}</span>
                         <span><i data-lucide="cpu"></i> Master Core</span>
                         <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(localLatency))}</span>
                         <span><i data-lucide="arrow-up-down"></i> ${localTx} tx / ${localRx} rx</span>
@@ -206,6 +287,7 @@ async function renderMeshView(mesh) {
                 const iconName = isQuarantined ? 'alert-triangle' : 'check-circle';
                 const badgeClass = isQuarantined ? 'red' : 'green';
                 const badgeText = isQuarantined ? 'Quarantined' : 'Connected 🟢';
+                const peerTpm = resolveNodeTpmInfo(node);
                 html += `
                     <div class="timeline-item" style="border-left: 2px solid ${borderColor}; margin-bottom: 8px;">
                         <div class="item-icon" style="background-color: ${isQuarantined ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 255, 136, 0.1)'}; color: ${borderColor};">
@@ -214,11 +296,12 @@ async function renderMeshView(mesh) {
                         <div class="item-info" style="flex:1;">
                             <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
                                 <span>${escapeHtml(node.label || node.name || 'Active Remote Peer')} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(node.ip || node.address || 'P2P Swarm')}</code></span>
-                                <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+                                <span style="display:inline-flex; gap:6px; align-items:center;"><span class="badge ${peerTpm.badgeClass}" title="${escapeHtml(peerTpm.policyNote)}">${escapeHtml(peerTpm.badgeLabel)}${peerTpm.isBanned ? ' • BANNED' : ''}</span><span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span></span>
                             </div>
                             <div class="item-meta" style="margin-top:4px;">
                                 <span><i data-lucide="radio"></i> GossipSub v1.2 Link</span>
                                 <span><i data-lucide="shield-check"></i> ${escapeHtml(node.attestation || 'Trust Verified')}</span>
+                                <span><i data-lucide="lock"></i> <strong>TPM:</strong> ${escapeHtml(peerTpm.badgeLabel)}</span>
                                 <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(node.latency || '< 1.0 ms'))}</span>
                                 <span><i data-lucide="refresh-cw"></i> Real-time Telemetry Sync Active</span>
                             </div>
@@ -283,6 +366,10 @@ async function renderMeshView(mesh) {
                 const attestationState = pj.attestation_state || 'TPM 2.0 Challenge Pending';
                 const statusLabel = pj.status || 'Awaiting Operator Approval';
                 const discoveredDateTime = formatTimestamp(pj.discovered_at) || pj.discovered_date_time || String(pj.discovered_at || 'N/A');
+                const pjTpm = resolveNodeTpmInfo(pj);
+                const approveBtnHtml = pjTpm.isBanned
+                    ? `<button type="button" class="action-btn" disabled style="opacity:0.6; cursor:not-allowed; border-color:rgba(239,68,68,0.5); color:#f87171;" title="Legacy TPM 1.2 is strictly banned. Only TPM 2.0 is allowed.">🚫 Blocked (TPM 1.2 Banned)</button>`
+                    : `<button type="button" class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">✓ Approve / Allow</button>`;
 
                 return `
                 <div class="timeline-item" style="border-left: 2px solid orange; margin-bottom: 10px;">
@@ -292,7 +379,7 @@ async function renderMeshView(mesh) {
                     <div class="item-info" style="flex:1;">
                         <div class="item-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                             <span>${escapeHtml(pj.peer_id)} <code style="font-size:11px; opacity:0.85; margin-left:6px; color:#38bdf8;">${escapeHtml(parsedHostIp)}:${escapeHtml(String(parsedPort))}</code></span>
-                            <span class="badge orange" style="background:rgba(245,158,11,0.16); color:#fbbf24; border:1px solid rgba(245,158,11,0.35); font-size:11px;">${escapeHtml(statusLabel)} • Rep ${escapeHtml(repScoreNum.toFixed(2))}</span>
+                            <span style="display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap;"><span class="badge ${pjTpm.badgeClass}" style="font-size:11px;">${escapeHtml(pjTpm.badgeLabel)}${pjTpm.isBanned ? ' • BANNED' : ''}</span><span class="badge orange" style="background:rgba(245,158,11,0.16); color:#fbbf24; border:1px solid rgba(245,158,11,0.35); font-size:11px;">${escapeHtml(statusLabel)} • Rep ${escapeHtml(repScoreNum.toFixed(2))}</span></span>
                         </div>
                         <div class="item-meta" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:12px;">
                             <span><i data-lucide="map-pin" aria-hidden="true"></i> <strong>Multiaddr:</strong> <code>${escapeHtml(cleanAddr)}</code></span>
@@ -303,11 +390,12 @@ async function renderMeshView(mesh) {
                             <span><i data-lucide="check-circle" aria-hidden="true"></i> <strong>Verified Alerts:</strong> ${escapeHtml(String(alertsVerified))}</span>
                             <span><i data-lucide="alert-circle" aria-hidden="true"></i> <strong>False Positives:</strong> ${escapeHtml(String(falsePositives))}</span>
                             <span><i data-lucide="cpu" aria-hidden="true"></i> <strong>Host OS:</strong> ${escapeHtml(osLabel)} (${escapeHtml(patchStatus)})</span>
-                            <span><i data-lucide="lock" aria-hidden="true"></i> <strong>Attestation:</strong> ${escapeHtml(attestationState)}</span>
+                            <span><i data-lucide="lock" aria-hidden="true"></i> <strong>TPM Version:</strong> <span class="badge ${pjTpm.badgeClass}" style="font-size:10.5px; padding:1px 6px;">${escapeHtml(pjTpm.badgeLabel)}</span>${pjTpm.isBanned ? ' <strong style="color:#ef4444;">(Banned — Only TPM 2.0 Allowed)</strong>' : ''}</span>
+                            <span><i data-lucide="shield-check" aria-hidden="true"></i> <strong>Attestation:</strong> ${escapeHtml(attestationState)}</span>
                             <span><i data-lucide="radio" aria-hidden="true"></i> <strong>Transport:</strong> ${escapeHtml(transportLabel)}</span>
                         </div>
                         <div class="item-actions" style="margin-top:8px;">
-                            <button type="button" class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">✓ Approve / Allow</button>
+                            ${approveBtnHtml}
                             <button type="button" class="action-btn" onclick="meshDenyPeer('${escapeHtml(pj.peer_id)}')">✕ Deny</button>
                         </div>
                     </div>
@@ -387,7 +475,7 @@ window.meshAllowAllPending = async function() {
         const pj = await fetchAPI('/pending-joins');
         if (!Array.isArray(pj) || pj.length === 0) return;
         for (const item of pj) {
-            if (item && item.peer_id) {
+            if (item && item.peer_id && !resolveNodeTpmInfo(item).isBanned) {
                 await fetchWithRetry(`${API_BASE}/pending-joins/${encodeURIComponent(item.peer_id)}/allow`, { method: 'POST' });
             }
         }

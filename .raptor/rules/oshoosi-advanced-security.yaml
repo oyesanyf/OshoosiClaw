@@ -225,3 +225,19 @@ rules:
       owasp_top_10: ["A07:2021-Identification and Authentication Failures"]
       category: security
       tags: ["secrets", "private-key"]
+
+  # ===========================================================================
+  # 7. EXCLUSIVE TPM 2.0 HARDWARE ATTESTATION INVARIANT (TPM 1.2 BANNED)
+  # ===========================================================================
+  - id: oshoosi.rust.banned-legacy-tpm-1-2-allow
+    message: >-
+      Legacy TPM 1.2 is strictly banned in OshoosiClaw (SHA-1 collision risk,
+      CWE-328). Only TPM 2.0 (Hardware Attested or vTPM 2.0) is allowed for
+      hardware root-of-trust attestation. Never set tpm_1_2_banned = false.
+    languages: [rust]
+    severity: ERROR
+    pattern: $STATUS.tpm_1_2_banned = false
+    metadata:
+      cwe: ["CWE-328", "CWE-327"]
+      category: security
+      tags: ["rust", "tpm", "hardware-rot", "oshoosi-invariant"]

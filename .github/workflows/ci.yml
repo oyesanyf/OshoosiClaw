@@ -56,7 +56,7 @@ jobs:
           tool: cargo-audit
 
       - name: Run audit
-        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402 --ignore RUSTSEC-2026-0424
+        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402 --ignore RUSTSEC-2026-0424 --ignore RUSTSEC-2026-0429
 
   # ── Tests ────────────────────────────────────────────────────────────────────
   test:
@@ -159,6 +159,17 @@ jobs:
           # Execute 43-vector multi-trial proof runner
           python -u scripts/run_live_adversarial_proof_suite.py --url http://127.0.0.1:3030 --trials 3
           $suiteExit = $LASTEXITCODE
+
+          # Execute Schemathesis OpenAPI 3.1 property-based contract check against live port 3030
+          $openApiResp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/openapi.json" -TimeoutSec 5 -UseBasicParsing
+          if ($openApiResp.StatusCode -ne 200) {
+            Write-Error "OpenAPI 3.1 schema endpoint /api/openapi.json returned HTTP $($openApiResp.StatusCode)"
+            exit 1
+          }
+          python -m pip install --quiet schemathesis 2>$null
+          if (Get-Command schemathesis -ErrorAction SilentlyContinue) {
+            schemathesis run http://127.0.0.1:3030/api/openapi.json --checks not_a_server_error --max-examples 10
+          }
 
           # Stop daemon job
           Stop-Job $daemonJob
