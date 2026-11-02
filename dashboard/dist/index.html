@@ -692,6 +692,36 @@
                     </div>
                 </div>
 
+                <!-- CAGE Governance Substrate Card -->
+                <div class="card glass shadow-glow mb-4" id="cage-governance-card" style="margin-bottom: 24px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <h3>🛡️ CAGE Governance Substrate</h3>
+                            <span class="badge blue" style="font-size:11px;">Substrate Contract v1.0 &bull; 7-Tier CBF Barrier</span>
+                        </div>
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                            <span class="badge purple">NoDirectBind Invariant</span>
+                            <button type="button" class="btn-text" id="refresh-cage-stats-btn" onclick="refreshCageGovernanceUI()" style="font-size:12px; cursor:pointer; font-weight:700;">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="cage-governance-body" style="padding: 16px 20px;">
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+                            <div class="cage-stat-box glass" style="padding: 12px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 4px;">Pinned Policy Version</div>
+                                <div id="cage-policy-version" style="font-family: monospace; font-size: 15px; font-weight: 700; color: #38bdf8;">None (Unpinned)</div>
+                            </div>
+                            <div class="cage-stat-box glass" style="padding: 12px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 4px;">CBF Safety Barrier ($h_t$)</div>
+                                <div id="cage-cbf-indicator" style="font-family: monospace; font-size: 15px; font-weight: 700; color: #10b981;">h &ge; 0.00 (Safe)</div>
+                            </div>
+                            <div class="cage-stat-box glass" style="padding: 12px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 4px;">Routing Seals Issued / Consumed</div>
+                                <div id="cage-seals-count" style="font-family: monospace; font-size: 15px; font-weight: 700; color: #a855f7;">0 / 0</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Main Grid -->
                 <div class="main-grid">
                     <div class="card glass shadow-glow threat-timeline">

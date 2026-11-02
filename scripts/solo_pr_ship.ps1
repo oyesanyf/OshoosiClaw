@@ -9,6 +9,27 @@ $ErrorActionPreference = "Stop"
 # Guard against recursive hook invocation
 $env:OSOOSI_SKIP_POST_COMMIT_HOOK = "1"
 
+# Ensure functional Git is available in PATH
+$gitWorks = $false
+try {
+    $testGit = & git --version 2>$null
+    if ($LASTEXITCODE -eq 0 -and $testGit) { $gitWorks = $true }
+} catch {}
+if (-not $gitWorks) {
+    $candidateGitDirs = @(
+        "C:\Program Files\Git\cmd",
+        "C:\Program Files\Git\bin",
+        (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd")
+    )
+    foreach ($gdir in $candidateGitDirs) {
+        if ($gdir -and (Test-Path (Join-Path $gdir "git.exe"))) {
+            Write-Host "[TOOL] Discovered functional Git at '$gdir'. Prepending to PATH." -ForegroundColor Cyan
+            $env:PATH = "$gdir;$env:PATH"
+            break
+        }
+    }
+}
+
 # [0/5] Solo-Developer RAPTOR Security Gate Check
 if ($RunRaptorLocal -or ($env:OSOOSI_SOLO_RAPTOR_SCAN -eq "1")) {
     if (Test-Path "D:\docker\raptor\Invoke-RaptorScan.ps1") {

@@ -1,0 +1,58 @@
+/* =========================================================================
+   CAGE Governance Substrate Card & Telemetry Styles (Milestone 6)
+   ========================================================================= */
+
+#cage-governance-card {
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    background: rgba(18, 20, 28, 0.75);
+    backdrop-filter: blur(12px);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    margin-bottom: 24px;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+#cage-governance-card:hover {
+    border-color: rgba(56, 189, 248, 0.45);
+    box-shadow: 0 12px 40px rgba(56, 189, 248, 0.12);
+}
+
+#cage-policy-version {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: #38bdf8;
+    word-break: break-all;
+}
+
+#cage-cbf-indicator {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: #10b981;
+}
+
+#cage-cbf-indicator.cbf-warning {
+    color: #f59e0b;
+}
+
+#cage-cbf-indicator.cbf-danger {
+    color: #ef4444;
+}
+
+#cage-seals-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: #a855f7;
+}
+
+.cage-stat-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}

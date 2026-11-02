@@ -76,6 +76,7 @@
                             <File Id="DashIndex" Source="dashboard\dist\index.html" KeyPath="yes" />
                             <File Id="DashApp" Source="dashboard\dist\app.js" />
                             <File Id="DashStyle" Source="dashboard\dist\style.css" />
+                            <File Id="DashStyles" Source="dashboard\dist\styles.css" />
                             <File Id="DashFavicon" Source="dashboard\dist\favicon.svg" />
                             <File Id="DashMitreCatalog" Source="dashboard\dist\mitre_attack_catalog.json" />
                             <File Id="DashStixAtlasAttack" Source="dashboard\dist\stix-atlas-attack-enterprise.json" />

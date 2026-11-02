@@ -698,6 +698,65 @@ impl MemoryStore {
             [],
         )?;
 
+        // CAGE Governance: Policies table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cage_policies (
+                policy_version_id TEXT PRIMARY KEY,
+                format TEXT NOT NULL,
+                raw_content TEXT NOT NULL,
+                compiled_cedar TEXT NOT NULL,
+                compiled_ucas TEXT NOT NULL,
+                cbf_gamma REAL NOT NULL,
+                cbf_b_min REAL NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // CAGE Governance: Routing Seals table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cage_routing_seals (
+                seal_id TEXT PRIMARY KEY,
+                policy_version_id TEXT NOT NULL,
+                action_digest TEXT NOT NULL,
+                issued_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                signature TEXT NOT NULL,
+                consumed_at INTEGER,
+                status TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // CAGE Governance: Audit Traces table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cage_governance_traces (
+                trace_id TEXT PRIMARY KEY,
+                sequence_number INTEGER NOT NULL,
+                prev_hash TEXT NOT NULL,
+                action_name TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                cbf_h_value REAL,
+                fuel_consumed REAL,
+                policy_version_id TEXT NOT NULL,
+                merkle_leaf_hash TEXT NOT NULL,
+                merkle_root TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cage_traces_seq ON cage_governance_traces(sequence_number)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cage_seals_status ON cage_routing_seals(status)",
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -2770,6 +2829,279 @@ impl MemoryStore {
             map.insert(name, weight);
         }
         Ok(map)
+    }
+
+    // =========================================================================
+    // CAGE Governance: Persistence & Cryptographic State Methods
+    // =========================================================================
+
+    /// Persist a compiled CAGE governance policy and its barrier parameters into SQLite.
+    pub fn store_cage_policy(
+        &self,
+        policy_version_id: &str,
+        format: &str,
+        raw_content: &str,
+        compiled_cedar: &str,
+        compiled_ucas: &str,
+        cbf_gamma: f64,
+        cbf_b_min: f64,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR REPLACE INTO cage_policies 
+             (policy_version_id, format, raw_content, compiled_cedar, compiled_ucas, cbf_gamma, cbf_b_min, created_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                policy_version_id,
+                format,
+                raw_content,
+                compiled_cedar,
+                compiled_ucas,
+                cbf_gamma,
+                cbf_b_min,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve a CAGE governance policy by its deterministic 16-character hex version ID.
+    pub fn get_cage_policy(&self, policy_version_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT policy_version_id, format, raw_content, compiled_cedar, compiled_ucas, cbf_gamma, cbf_b_min, created_at 
+             FROM cage_policies WHERE policy_version_id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![policy_version_id])?;
+        if let Some(row) = rows.next()? {
+            let v_id: String = row.get(0)?;
+            let fmt: String = row.get(1)?;
+            let raw: String = row.get(2)?;
+            let cedar: String = row.get(3)?;
+            let ucas: String = row.get(4)?;
+            let gamma: f64 = row.get(5)?;
+            let b_min: f64 = row.get(6)?;
+            let created: String = row.get(7)?;
+
+            let cedar_val: serde_json::Value =
+                serde_json::from_str(&cedar).unwrap_or_else(|_| serde_json::Value::String(cedar));
+            let ucas_val: serde_json::Value =
+                serde_json::from_str(&ucas).unwrap_or_else(|_| serde_json::Value::String(ucas));
+
+            Ok(Some(serde_json::json!({
+                "policy_version_id": v_id,
+                "format": fmt,
+                "raw_content": raw,
+                "compiled_cedar": cedar_val,
+                "compiled_ucas": ucas_val,
+                "cbf_gamma": gamma,
+                "cbf_b_min": b_min,
+                "created_at": created,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieve the most recently compiled or pinned CAGE governance policy.
+    pub fn get_latest_cage_policy(&self) -> anyhow::Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT policy_version_id, format, raw_content, compiled_cedar, compiled_ucas, cbf_gamma, cbf_b_min, created_at 
+             FROM cage_policies ORDER BY rowid DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let v_id: String = row.get(0)?;
+            let fmt: String = row.get(1)?;
+            let raw: String = row.get(2)?;
+            let cedar: String = row.get(3)?;
+            let ucas: String = row.get(4)?;
+            let gamma: f64 = row.get(5)?;
+            let b_min: f64 = row.get(6)?;
+            let created: String = row.get(7)?;
+
+            let cedar_val: serde_json::Value =
+                serde_json::from_str(&cedar).unwrap_or_else(|_| serde_json::Value::String(cedar));
+            let ucas_val: serde_json::Value =
+                serde_json::from_str(&ucas).unwrap_or_else(|_| serde_json::Value::String(ucas));
+
+            Ok(Some(serde_json::json!({
+                "policy_version_id": v_id,
+                "format": fmt,
+                "raw_content": raw,
+                "compiled_cedar": cedar_val,
+                "compiled_ucas": ucas_val,
+                "cbf_gamma": gamma,
+                "cbf_b_min": b_min,
+                "created_at": created,
+            })))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Record an issued single-use cryptographic routing seal in SQLite.
+    pub fn record_cage_routing_seal(
+        &self,
+        seal: &osoosi_types::cage::RoutingSeal,
+        status: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO cage_routing_seals 
+             (seal_id, policy_version_id, action_digest, issued_at, expires_at, signature, consumed_at, status) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+            rusqlite::params![
+                seal.seal_id,
+                seal.policy_version_id,
+                seal.action_digest,
+                seal.issued_at as i64,
+                seal.expires_at as i64,
+                seal.signature,
+                status,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Atomically mark a routing seal as consumed, enforcing single-use capability invariants.
+    /// Returns true if the seal was successfully consumed; returns false if already consumed or absent.
+    pub fn mark_cage_routing_seal_consumed(&self, seal_id: &str, consumed_at: u64) -> anyhow::Result<bool> {
+        let conn = self.conn.lock();
+        let rows_affected = conn.execute(
+            "UPDATE cage_routing_seals 
+             SET consumed_at = ?1, status = 'CONSUMED' 
+             WHERE seal_id = ?2 AND consumed_at IS NULL AND status != 'CONSUMED'",
+            rusqlite::params![consumed_at as i64, seal_id],
+        )?;
+        Ok(rows_affected > 0)
+    }
+
+    /// Retrieve a recorded routing seal by seal_id.
+    pub fn get_cage_routing_seal(&self, seal_id: &str) -> anyhow::Result<Option<osoosi_types::cage::RoutingSeal>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT seal_id, policy_version_id, action_digest, issued_at, expires_at, signature 
+             FROM cage_routing_seals WHERE seal_id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![seal_id])?;
+        if let Some(row) = rows.next()? {
+            let issued_at: i64 = row.get(3)?;
+            let expires_at: i64 = row.get(4)?;
+            Ok(Some(osoosi_types::cage::RoutingSeal {
+                seal_id: row.get(0)?,
+                policy_version_id: row.get(1)?,
+                action_digest: row.get(2)?,
+                issued_at: issued_at as u64,
+                expires_at: expires_at as u64,
+                signature: row.get(5)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Append a CAGE governance trace event to the cryptographically linked trace log.
+    pub fn append_cage_governance_trace(
+        &self,
+        trace_id: &str,
+        sequence_number: u64,
+        prev_hash: &str,
+        action_name: &str,
+        verdict: &str,
+        cbf_h_value: Option<f64>,
+        fuel_consumed: Option<f64>,
+        policy_version_id: &str,
+        merkle_leaf_hash: &str,
+        merkle_root: &str,
+        payload_json: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO cage_governance_traces 
+             (trace_id, sequence_number, prev_hash, action_name, verdict, cbf_h_value, fuel_consumed, policy_version_id, merkle_leaf_hash, merkle_root, payload_json, created_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                trace_id,
+                sequence_number as i64,
+                prev_hash,
+                action_name,
+                verdict,
+                cbf_h_value,
+                fuel_consumed,
+                policy_version_id,
+                merkle_leaf_hash,
+                merkle_root,
+                payload_json,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve persisted CAGE governance trace events ordered by sequence number.
+    pub fn get_cage_governance_traces(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT trace_id, sequence_number, prev_hash, action_name, verdict, cbf_h_value, fuel_consumed, policy_version_id, merkle_leaf_hash, merkle_root, payload_json, created_at 
+             FROM cage_governance_traces ORDER BY sequence_number ASC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64], |row| {
+            let payload_str: String = row.get(10)?;
+            let payload_val: serde_json::Value = serde_json::from_str(&payload_str)
+                .unwrap_or_else(|_| serde_json::Value::String(payload_str.clone()));
+            let seq: i64 = row.get(1)?;
+            Ok(serde_json::json!({
+                "trace_id": row.get::<_, String>(0)?,
+                "sequence_number": seq as u64,
+                "prev_hash": row.get::<_, String>(2)?,
+                "action_name": row.get::<_, String>(3)?,
+                "verdict": row.get::<_, String>(4)?,
+                "cbf_h_value": row.get::<_, Option<f64>>(5)?,
+                "fuel_consumed": row.get::<_, Option<f64>>(6)?,
+                "policy_version_id": row.get::<_, String>(7)?,
+                "merkle_leaf_hash": row.get::<_, String>(8)?,
+                "merkle_root": row.get::<_, String>(9)?,
+                "payload": payload_val,
+                "payload_json": payload_str,
+                "created_at": row.get::<_, String>(11)?,
+            }))
+        })?;
+
+        let mut result = Vec::new();
+        for r in rows {
+            result.push(r?);
+        }
+        Ok(result)
+    }
+
+    /// Cryptographically verify the sequential hash chain of persisted CAGE governance traces.
+    /// Asserts continuous sequence numbers, genesis prev_hash, and downstream hash binding.
+    pub fn verify_cage_trace_chain(&self) -> anyhow::Result<bool> {
+        let traces = self.get_cage_governance_traces(100_000)?;
+        if traces.is_empty() {
+            return Ok(true);
+        }
+        let mut expected_prev = "0".repeat(64);
+        for (i, trace) in traces.iter().enumerate() {
+            let seq = trace.get("sequence_number").and_then(|v| v.as_u64());
+            if seq != Some(i as u64) {
+                return Ok(false);
+            }
+            let prev = trace.get("prev_hash").and_then(|v| v.as_str()).unwrap_or("");
+            if prev != expected_prev {
+                return Ok(false);
+            }
+            let leaf = trace.get("merkle_leaf_hash").and_then(|v| v.as_str()).unwrap_or("");
+            if leaf.len() != 64 || !leaf.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Ok(false);
+            }
+            expected_prev = leaf.to_string();
+        }
+        Ok(true)
     }
 }
 

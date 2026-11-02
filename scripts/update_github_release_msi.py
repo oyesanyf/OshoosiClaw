@@ -27,6 +27,13 @@ import tempfile
 import urllib.error
 import urllib.request
 
+# Ensure functional Git is available in PATH (process-scoped)
+for gdir in [r"C:\Program Files\Git\cmd", r"C:\Program Files\Git\bin"]:
+    if os.path.exists(os.path.join(gdir, "git.exe")):
+        if gdir not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = gdir + os.pathsep + os.environ.get("PATH", "")
+        break
+
 SIGNER_NAME = "OpenOsoosi Release Signer"
 SIGNER_EMAIL = "security@oshoosiclaw.dev"
 REPO_OWNER = "oyesanyf"

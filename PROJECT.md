@@ -1,41 +1,52 @@
-# Project: OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) — EDR Voter Consensus Routing, RAPTOR Pentest, Security Remediation & Multi-Platform Packaging
+# Project: Google Cybernetic Agent Governance Engine (CAGE) Native Substrate Integration
 
 ## Architecture
-OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) combines a 7-Ring Continuous Cedar Reference Monitor, Universal REA (Reverse Engineer Anything) voting across all 8 detectors, multi-voter Bayesian consensus pipeline, RAPTOR autonomous penetration testing, GitHub Actions CI health, and automated multi-platform release packaging.
+OshoosiClaw integrates Google's Cybernetic Agent Governance Engine (CAGE) as a native production cybernetic governance substrate. It provides deterministic two-phase policy enforcement, discrete-time exponential Control Barrier Functions (CBF), single-use 30-second TTL cryptographic routing seals, formal 34-state BFS verification of `NoDirectBind`, stream invariant auditing, REST API/WebUI observability, and automated CI/CD governance gates.
 
 ```
-Candidate Telemetry Across All 8 Detectors
-[Process/ETW, Malware/YARA, HAR/Net, DLP, Agent/Align, CVE/SCA, Memory/Shield, P2P/Mesh]
-                                    │
-                                    ▼
-       [ Universal REA Voter: global_rea_engine().cast_consensus_vote(...) ]
-       (BLAKE3 seal, binary/evidence deconstruction, universal_coverage_snapshot)
-                                    │
-                                    ▼
-   ┌──────────────────────────────────────────────────────────────┐
-   │         Multi-Voter Decision Consensus Pipeline             │
-   │  ┌─────────────────────────┐  ┌───────────────────────────┐  │
-   │  │   ReaVoter / OpenJev    │  │ Clef Decision Model Voter │  │
-   │  │    (Structural/PE/DLP)  │  │  (SystemOne, Strands SLM) │  │
-   │  └─────────────────────────┘  └───────────────────────────┘  │
-   │  ┌─────────────────────────┐  ┌───────────────────────────┐  │
-   │  │ Behavioral Process      │  │ Threat Voters (Static,    │  │
-   │  │ Lineage Voter           │  │  Entropy, Heuristic,      │  │
-   │  │ (ProcessTreeEmbedder,   │  │  AMSI, ETW, Memory)       │  │
-   │  │ CoLog, CausalGraph)     │  │                           │  │
-   │  └─────────────────────────┘  └───────────────────────────┘  │
-   └──────────────────────────────┬───────────────────────────────┘
-                                  │ Consensus Adjudication
-                                  ▼
-               ┌──────────────────────────────────────┐
-               │ Ring 7 Cedar Capability/Effect Gate  │
-               └──────────────────┬───────────────────┘
-                                  │
-                   ┌──────────────┴──────────────┐
-                   ▼                             ▼
-         [ Automated Containment ]        [ Audit & Mesh ]
-         (Process Kill, WFP Block,        (OpenLineage, SQLite,
-          AppContainer Severing)           Nostr/GossipSub Broadcast)
+External Policy Formats
+[Microsoft ACS, Linux Foundation AAIF, NIST OSCAL 1.1.x, Lula, Native CAGE STPA]
+                                 │
+                                 ▼
+         [ Multi-Format Policy Auto-Detection & Compiler ]
+         (Deterministic 16-hex SHA-256 Version Pinning, 409 Conflict)
+                                 │
+                                 ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │       2-Phase, 7-Tier Deterministic Governance Pipeline          │
+   │                                                                  │
+   │  [ Phase 1: Read-Only Verification (No State Mutation) ]         │
+   │  - Tier 1: Fast Tier Risk Assessment (FTRA)                      │
+   │  - Tier 2: STPA 7-Hazard Safety Invariant Matrix                 │
+   │  - Tier 3: Cedar / OPA Formal Authorization                      │
+   │  - Tier 4: SR 26-2 Model Confidence Scoring (>=0.95/0.70)        │
+   │  - Tier 5: Bayesian Multi-Detector Consensus Check               │
+   │                                                                  │
+   │  [ Phase 2: Atomic State Mutation & Actuation Ledger ]           │
+   │  - Tier 6: Discrete-Time Exponential Control Barrier Function:   │
+   │            h_{t+1} = (B_t - c) - B_min >= (1 - gamma)*h_t >= 0   │
+   │            (Zero fiscal leakage on denial, fuel pre-reservation) │
+   │  - Tier 7: Cryptographic Routing Seal Issuance (30s TTL, single) │
+   └──────────────────────────────────┬───────────────────────────────┘
+                                      │ Verdict: ALLOW / NARROW / REQUIRE_APPROVAL / DEFER / DENY
+                                      ▼
+                        ┌───────────────────────────┐
+                        │ Cryptographic Routing Seal │
+                        └─────────────┬─────────────┘
+                                      │
+            ┌─────────────────────────┴─────────────────────────┐
+            ▼                                                   ▼
+┌───────────────────────────────┐               ┌───────────────────────────────┐
+│ Host Capability Gate (Sandbox)│               │ Cryptographic Audit Trail     │
+│ - validate_and_consume_seal() │               │ - RFC 8785 JCS Canonical JSON │
+│ - Enforces NoDirectBind       │               │ - cage-audit/3.0 Hash Chaining│
+│ - Single-use 30-second TTL    │               │ - MerkleAuditTree Anchoring   │
+│ - High-risk actuation gate    │               │ - SQLite State Persistence    │
+└───────────────────────────────┘               └───────────────────────────────┘
+            │                                                   │
+            ▼                                                   ▼
+[ Wasm/Host Actuation Execution ]               [ REST API / WebUI Observability ]
+                                                (Port 3030 endpoints & WebUI Card)
 ```
 
 ---
@@ -43,87 +54,125 @@ Candidate Telemetry Across All 8 Detectors
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Event 9995 5-Sigma Voter Routing | Route frozen forensic snapshot events through REA and voter consensus before containment | M1 | Survey 1, R2 |
-| 2 | Sysmon Event 10 Shield Routing | Route process access violations through REA and voter consensus instead of immediate block | M1 | Survey 1, R2 |
-| 3 | Behavioral Anomaly Autotomy Routing | Route `AgentAnomalyDetector` findings through voter consensus before branch severing | M1 | Survey 1, R2 |
-| 4 | `already_multi_voter` String Check Fix | Eliminate `aad-` and `dlp_` bypasses in `query.rs:1438` to enforce full voter quorum | M1 | Survey 1, R2 |
-| 5 | `BehavioralProcessLineageVoter` Implementation | Unified `ThreatVoter` combining `ProcessTreeEmbedder` (Candle 128d), `CoLogFilter`, `DynamicAgentClassifier`, and `CausalSecurityGraph` | M1 | Survey 1, R2 |
-| 6 | `ClefDecisionVoter` Implementation | Active `ThreatVoter` wrapping `ClefDecisionEngine` (SystemOne OpenJEV, Strands Decider, Cloudflare, local fallback) | M1 | Survey 1, R2 |
-| 7 | Universal REA Voting Across 8 Detectors | `[REA-Voter]` actively votes across Process/ETW, Malware/YARA, HAR/Net, DLP, Agent/Align, CVE/SCA, Memory/Shield, P2P/Mesh; verify `universal_coverage_snapshot()` | M1 | User Mandate, R2 |
-| 8 | Voter Registration & Classification | Register new voters in `post_init_voters` and map in `classify_vote` with `EvidenceClass::Behavior` | M1 | Survey 1, R2 |
-| 9 | Voter Routing & Consensus Tests | Verify voter consensus routing, active behavioral voting, and 8-detector REA coverage via unit/integration tests and `edr_tester.py` | M1 | Survey 1, R2 |
-| 10 | RAPTOR Scan Execution | Run RAPTOR penetration test (`raptor_scan_project` / `Invoke-RaptorScan.ps1`) with Ollama `foundation-sec-8b` | M2 | Survey 2, R3 |
-| 11 | Security Audit Validation Engine | Apply 5-phase validation protocol (TP vs FP) across Critical, High, Medium, Low, Informational tiers | M2 | Survey 2, R3 |
-| 12 | Findings Ledger & Schema Validation | Record findings in `findings.json` and validate with `validate-findings.cjs` and `validate-coverage-ledger.cjs` | M2 | Survey 2, R3 |
-| 13 | Critical & High Severity Remediation | Surgical fixes at trusted decision points for confirmed RCE, containment defeat, or auth bypass | M3 | Survey 2, R4 |
-| 14 | Medium & Low Severity Remediation | Refactor unhandled panics (`?`/defensive match), constant-time comparisons, and parameterized commands | M3 | Survey 2, R4 |
-| 15 | Informational Remediation & Hygiene | Structured prompt envelopes, sanitized error logging, and defense-in-depth annotations | M3 | Survey 2, R4 |
-| 16 | GitHub Actions Workflow Remediation | Inspect `gh run view 40791535914` and `40791492405`, fix failing workflows in `.github/workflows/` ensuring 100% green CI | M3 | User Directive, R4 |
-| 17 | Full-Stack Regression Verification | Run cargo check, clippy, cargo test, WebUI parity, and `verify_port_3030_e2e.py` | M3 | Survey 2, R4 |
-| 18 | Cross-Repository Synchronization | Synchronize security controls, containment logic, and rules to `D:\harfile\AgentOctopus` | M3 | Survey 2, R4 |
-| 19 | Windows MSI Build, Signing & WDSI Submission | WiX v5 MSI with permanent append-only PATH, native SDK `signtool.exe` signing, and WDSI submission | M4 | Survey 3, R5 |
-| 20 | Linux Packaging & Provenance | Verify `.deb`, `.rpm`, `.tar.gz`, stripped ELF, OpenPGP signatures, and DSSE provenance in `deploy/linux/` | M4 | Survey 3, R5 |
-| 21 | macOS Universal Release Archive | Package `oshoosiclaw-1.2.0-darwin-universal.tar.gz` with `launchd` plist, `install.sh`, and GPG/DSSE attestations in `deploy/macos/` | M4 | Survey 3, R5 |
+| 1 | Multi-Format Policy Auto-Detection | Auto-detect ACS (`behaviorDeclarations`), AAIF (`governedRunLoop`), OSCAL 1.1.x (`oscal-version`), Lula (`kind: LulaValidation`), and native CAGE STPA YAML/JSON | M1 | Survey Spec & R1 |
+| 2 | Cedar & STPA UCA Policy Compilation | Compile external format ASTs into native Cedar authorization rules and STPA Unsafe Control Actions (UCAs) | M1 | Survey Spec & R1 |
+| 3 | Deterministic 16-Char Hex Version Pinning | Derive 16-hex lowercase SHA-256 version ID via RFC 8785 JCS canonicalization; enforce HTTP 409 Conflict on version mismatch | M1 | Survey Spec & R1 |
+| 4 | Phase 1 Read-Only Governance Pipeline | Non-mutating verification: FTRA, STPA 7-hazards, Cedar/OPA, SR 26-2 confidence scoring, and Bayesian consensus | M2 | Survey Spec & R2 |
+| 5 | Phase 2 Discrete-Time Exponential CBF | Exponential barrier: $h_{t+1} = (B_t - c) - B_{\min} \ge (1-\gamma)h_t \ge 0$, fiscal pre-reservation, zero budget leakage on denial, LIFO rollback | M2 | Survey Spec & R2 |
+| 6 | Canonical Verdicts & Routing Seal Issuance | Output `ALLOW`, `NARROW`, `REQUIRE_APPROVAL`, `DEFER`, `DENY`; issue 30-second TTL single-use cryptographic routing seal on approved actions | M2 | Survey Spec & R2 |
+| 7 | Pure-Rust 34-State BFS Formal Model | Exhaustive BFS model proving `NoDirectBind` theorem (34 gated reachable states, 1 EXECUTED state, 0 direct-bind violations vs 17 ungated counterexample states) | M3 | Survey Spec & R3 |
+| 8 | Stream Invariant Verifier | Enforce 5 CAGE stream invariants (`no_direct_bind`, `cbf_barrier`, `seal`, `cbf_rollback`, `refusal_evidence`) with 64-hex SHA-256 digests | M3 | Survey Spec & R3 |
+| 9 | Host Capability Gate Routing Seal Enforcement | Validate and atomically consume 30-second single-use routing seal in `host_capability_gate.rs` before high-risk actuation (`NoDirectBind`) | M4 | Survey Core & R4 |
+| 10 | RFC 8785 JCS Canonical JSON Formatter | Zero-dependency RFC 8785 JSON Canonicalization Scheme implementation for deterministic hashing | M5 | Survey Core & R5 |
+| 11 | Audit Trail & Merkle Tree Anchoring | Emit hash-chained `cage-audit/3.0` & `GOVERNANCE_TRACE` records anchored into `MerkleAuditTree` | M5 | Survey Core & R5 |
+| 12 | SQLite CAGE State Persistence | Create and manage `cage_policies`, `cage_routing_seals`, and `cage_governance_traces` in `MemoryStore` | M5 | Survey UI & R5 |
+| 13 | Substrate Contract v1.0 REST API | Dedicated `routes/cage.rs` submodule on port 3030: `/governance/ingest-policy`, `/governance/policy-version`, `/governance/validate-action`, `/governance/consume-seal`, `/governance/rollback`, `/governance/trace/verify` + `/api/governance/*` | M6 | Survey UI & R6 |
+| 14 | WebUI Governance Substrate Card & Parity | Interactive `#cage-governance-card` in `dashboard/src/` and `dashboard/dist/` with 0-diff parity | M6 | Survey UI & R6 |
+| 15 | Consolidated CI/CD Governance Workflow | `.github/workflows/cage-governance-gate.yml` consolidating TLC model check, policy drift check, compliance audit stream, and license guard | M7 | Sentinel R7 Directive |
+| 16 | E2E Test Suite Execution & Adversarial Hardening | Execute 4-tier requirement-driven E2E test suite + Tier 5 adversarial coverage hardening | M8 | Dual Track & R8 |
+| 17 | Production Release Build, Signing & Solo PR Ship | Authenticode sign all binaries via Windows SDK `signtool.exe`, package `OshoosiClaw.msi`, WDSI submission, and ship via `solo_pr_ship.ps1` | M9 | User Rules & R8 |
 
 ---
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | REA & Decision Voter Consensus Routing with Behavioral Engine Voter | Features 1–9: Bypass elimination, `BehavioralProcessLineageVoter`, `ClefDecisionVoter`, universal 8-detector REA voting, `universal_coverage_snapshot()`, `query.rs` refactor, consensus integration tests | none | DONE (PR #295 merged, Gate PASS) |
-| M2 | RAPTOR Penetration Testing & Security Audit Validation | Features 10–12: Pre-flight checks, RAPTOR scan across 39 crates, 5-phase audit validation, `findings.json` ledger | M1 | DONE (Audit Report Run-4, Gate PASS) |
-| M3 | Comprehensive Vulnerability Remediation, CI Workflow Fix & Code Commit | Features 13–18: 100% remediation of confirmed findings across all severity levels, fix failing GitHub Actions workflows in `.github/workflows/`, zero regressions, AgentOctopus sync, PR ship | M2 | DONE (PR #298 merged, Gate PASS) |
-| M4 | Multi-Platform Release Artifact Packaging | Features 19–21: Windows MSI signing/WDSI submission, Linux package verification, macOS universal archive & launchd daemon, release sync | M3 | DONE (PR #305 & #306 merged, Gate PASS) |
+| M1 | Multi-Format Policy Ingestion & Version Pinning | Features 1–3: ACS, AAIF, OSCAL, Lula, CAGE STPA auto-detection, Cedar/UCA compiler, 16-hex version pinning, 409 conflict | none | DONE (Gate PASS) |
+| M2 | Deterministic 2-Phase Governance & CBF Pipeline | Features 4–6: Phase 1 read-only checks, Phase 2 exponential CBF & fiscal fuel pre-reservation, canonical verdicts, 30s TTL routing seal | M1 | DONE (Gate PASS) |
+| M3 | Formal BFS State Model & Stream Invariant Verifier | Features 7–8: Pure-Rust 34-state BFS model proving NoDirectBind (34 vs 17 states), 5 stream invariants with 64-hex lowercase receipts | M1, M2 | DONE (Gate PASS) |
+| M4 | Host Capability Gate Routing Seal Enforcement | Feature 9: `host_capability_gate.rs` integration, single-use 30s TTL seal validation & consumption, NoDirectBind enforcement | M2 | DONE (Gate PASS) |
+| M5 | Audit Trail & SQLite State Persistence | Features 10–12: Pure-Rust RFC 8785 JCS, `cage-audit/3.0` & `GOVERNANCE_TRACE` hash chaining, Merkle tree anchoring, SQLite tables | M2 | DONE (Gate PASS) |
+| M6 | Substrate REST API & WebUI Observability | Features 13–14: Dedicated `routes/cage.rs` on port 3030, all contract endpoints + aliases, `#cage-governance-card` with 0-diff WebUI parity | M1, M2, M4, M5 | DONE (Gate PASS) |
+| M7 | CI/CD Governance & Verification Workflows | Feature 15: `.github/workflows/cage-governance-gate.yml` (tlc-model-check, policy-compile-drift, compliance-audit-stream, license-guard) | M1, M3, M5 | DONE (Gate PASS) |
+| M8 | Final Milestone: E2E Test Suite Pass (Tiers 1-4) & Adversarial Coverage Hardening (Tier 5) | Feature 16: Pass 100% of E2E requirement test suite across Tiers 1-4, followed by Tier 5 Challenger adversarial hardening | M1–M7, TEST_READY.md | DONE (Gate PASS) |
+| M9 | Production Packaging, Authenticode Signing & Solo PR Shipping | Feature 17: Build release binaries, Windows SDK `signtool.exe` signing, `OshoosiClaw.msi`, WDSI submission, and `solo_pr_ship.ps1` | M8 | DONE (Gate PASS) |
 
 ---
 
 ## Interface Contracts
 
-### `ThreatVoter` Trait (`crates/osoosi-policy/src/engine.rs`)
+### 1. Shared Types (`crates/osoosi-types/src/cage.rs`)
 ```rust
-#[async_trait::async_trait]
-pub trait ThreatVoter: Send + Sync {
-    fn name(&self) -> String;
-    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GovernanceVerdict {
+    Allow,
+    Narrow { clamped_params: serde_json::Value },
+    RequireApproval { reason: String, approval_token: String },
+    Defer { backoff_ms: u64 },
+    Deny { reason: String, proof_hash: String },
 }
 
-pub struct VoteResult {
-    pub confidence: f32,
-    pub reason: String,
-    pub weight: f32, // Positive = malicious, Negative = certified benign veto
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingSeal {
+    pub seal_id: String,
+    pub policy_version_id: String, // 16-hex
+    pub action_digest: String,     // 64-hex SHA-256
+    pub issued_at: u64,           // Unix epoch seconds
+    pub expires_at: u64,          // issued_at + 30s
+    pub signature: String,        // HMAC-SHA256 hex
 }
 ```
 
-### Universal 8-Detector REA Voting Contract
+### 2. Multi-Format Policy Compiler (`crates/osoosi-policy/src/cage/policy_ingest.rs`)
 ```rust
-// Casts recorded vote with BLAKE3 seal across all 8 detectors:
-// 1. Process/ETW/CLI
-// 2. Malware/YARA
-// 3. HAR/Network
-// 4. DLP
-// 5. Agent/Alignment
-// 6. CVE/SCA
-// 7. Siquery / Memory / Shield
-// 8. P2P / Nostr Mesh
-pub fn cast_consensus_vote(...) -> Option<VoteResult>;
-pub fn universal_coverage_snapshot() -> CoverageSnapshot; // All 8 detectors > 0
+pub enum PolicyFormat {
+    MicrosoftAcs,
+    LinuxFoundationAaif,
+    NistOscal,
+    LulaValidation,
+    CageStpa,
+}
+
+pub struct CompiledCagePolicy {
+    pub policy_version_id: String, // 16-hex
+    pub format: PolicyFormat,
+    pub raw_content: String,
+    pub cedar_rules: Vec<String>,
+    pub unsafe_control_actions: Vec<UnsafeControlAction>,
+    pub cbf_gamma: f64,
+    pub cbf_b_min: f64,
+}
+```
+
+### 3. Control Barrier Function (`crates/osoosi-policy/src/cage/cbf.rs`)
+```rust
+pub struct ControlBarrierFunction {
+    pub gamma: f64,
+    pub b_min: f64,
+}
+
+impl ControlBarrierFunction {
+    /// h_{t+1} = (B_t - cost) - B_min >= (1 - gamma) * h_t >= 0
+    pub fn evaluate_step(&self, current_budget: f64, cost: f64, current_h: f64) -> Result<f64, CbfViolation>;
+}
+```
+
+### 4. Routing Seal Verifier (`crates/osoosi-sandbox/src/host_capability_gate.rs`)
+```rust
+pub trait RoutingSealVerifier: Send + Sync {
+    /// Validates seal signature, policy version, action digest, TTL (30s), and consumes single-use nonce
+    fn validate_and_consume(&self, seal: &RoutingSeal, expected_action_digest: &str) -> Result<(), SealRejection>;
+}
 ```
 
 ---
 
 ## Code Layout
-- `crates/osoosi-core/src/voters.rs` (or `rea/voters.rs`): `BehavioralProcessLineageVoter`, `ClefDecisionVoter`, `ReaVoter`, `OpenJevVoter`.
-- `crates/osoosi-core/src/rea/`: `global_rea_engine().cast_consensus_vote(...)` across all 8 detectors.
-- `crates/osoosi-core/src/orchestrator/event_pipeline.rs`: Telemetry ingestion, containment gating, consensus adjudication.
-- `crates/osoosi-core/src/orchestrator/query.rs`: `adjudicate_threat_signature_with_rea_and_voters` and multi-voter routing.
-- `crates/osoosi-core/src/orchestrator/init.rs`: `post_init_voters` registration into `PolicyEngine`.
-- `crates/osoosi-agent-anomaly/src/detector.rs`: Anomaly detection and non-premature autotomy emission.
-- `crates/osoosi-policy/src/engine.rs`: `PolicyEngine`, `classify_vote`, consensus aggregation.
-- `scripts/Invoke-RaptorScan.ps1`: Automated RAPTOR pentest execution script.
-- `~/.security-audit-skill/OshoosiClaw/run-4/`: Security audit findings ledger and coverage matrix.
-- `.github/workflows/*.yml`: CI and release workflows.
-- `scripts/build_and_submit.ps1`: Windows release build, WiX v5 packaging, SDK `signtool.exe` signing, and WDSI submission.
-- `packaging/linux/build_packages.sh`: Linux `.deb`, `.rpm`, `.tar.gz`, and standalone ELF build.
-- `packaging/macos/build_packages.sh`: macOS portable archive packaging script.
-- `deploy/windows/`, `deploy/linux/`, `deploy/macos/`: Distribution directories with GPG signatures and DSSE in-toto provenance.
-- `D:\harfile\AgentOctopus`: Cross-repository synchronized codebase.
+- `crates/osoosi-types/src/cage.rs`: Shared types (`RoutingSeal`, `GovernanceVerdict`, `StageOutcome`, `CbfParameters`).
+- `crates/osoosi-policy/src/cage/`:
+  - `mod.rs`: Public API re-exports for the CAGE governance substrate.
+  - `policy_ingest.rs`: Multi-format parser, auto-detector, Cedar/UCA compiler, 16-hex version generator.
+  - `pipeline.rs`: 2-Phase 7-tier deterministic governance pipeline.
+  - `cbf.rs`: Discrete-time exponential Control Barrier Function & fiscal ledger.
+  - `routing_seal.rs`: 30-second TTL single-use cryptographic seal generator & verifier.
+  - `formal_model.rs`: Pure-Rust 34-state BFS model proving `NoDirectBind`.
+  - `stream_verifier.rs`: 5-stream invariant verifier with 64-hex receipts.
+- `crates/osoosi-policy/src/breakout/`:
+  - Submodules decomposing `breakout_gate.rs` with 100% public re-export compatibility.
+- `crates/osoosi-sandbox/src/host_capability_gate.rs`: Routing seal enforcement (`NoDirectBind`).
+- `crates/osoosi-audit/src/canonical_json.rs`: RFC 8785 JCS canonical formatting.
+- `crates/osoosi-memory/src/lib.rs`: Tables `cage_policies`, `cage_routing_seals`, `cage_governance_traces`.
+- `crates/osoosi-dashboard/src/routes/cage.rs`: REST handlers for CAGE Substrate Contract v1.0.
+- `dashboard/src/` & `dashboard/dist/`: `#cage-governance-card` with 0-diff parity.
+- `.github/workflows/cage-governance-gate.yml`: Consolidated CI/CD governance gate.
+- `tests/e2e_cage_governance/`: Opaque-box E2E test suite across Tiers 1-4.

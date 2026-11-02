@@ -8,6 +8,7 @@ description = "Local persistence and threat intelligence memory for OpenỌ̀ṣ
 [dependencies]
 blake3 = { workspace = true }
 osoosi-types = { path = "../osoosi-types" }
+osoosi-audit = { path = "../osoosi-audit" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rusqlite = { workspace = true }
