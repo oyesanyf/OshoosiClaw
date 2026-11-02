@@ -44,6 +44,19 @@ DEFAULT_PORT = int(os.environ.get("OSOOSI_DASHBOARD_PORT", "3030"))
 DEFAULT_TRIALS = 3
 
 
+def read_breakout_gate_src() -> str:
+    """Reads breakout_gate.rs and all decomposed breakout/*.rs submodules."""
+    parts = []
+    bg_file = REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs"
+    if bg_file.exists():
+        parts.append(bg_file.read_text(encoding="utf-8"))
+    bg_dir = REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout"
+    if bg_dir.is_dir():
+        for sub in sorted(bg_dir.glob("*.rs")):
+            parts.append(sub.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def resolve_dashboard_token() -> str:
     """Resolves genuine dashboard API token from environment or disk key files."""
     env_token = os.environ.get("OSOOSI_DASHBOARD_API_TOKEN", "").strip()
@@ -753,7 +766,7 @@ class VectorProver:
 
     def prove_ab_vec_08(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-08: Upward Authority Promotion (Ring 1) (Authority Lattice)."""
-        bg_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        bg_src = read_breakout_gate_src()
         assert "SignedWorkspaceInstructionAllowlist" in bg_src
         assert "L1SystemSecurityPolicy" in bg_src
         assert "L4WorkspaceConfiguration" in bg_src
@@ -761,7 +774,7 @@ class VectorProver:
 
     def prove_ab_vec_09(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-09: Loopback & Local IPC Pivot (Ring 4) (Ring 4 Invariant)."""
-        bg_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        bg_src = read_breakout_gate_src()
         assert "LoopbackIpcAuthorizer" in bg_src
         assert "9222" in bg_src  # CDP blocked
         assert "2375" in bg_src  # Docker blocked
@@ -775,19 +788,19 @@ class VectorProver:
 
     def prove_ab_vec_11(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-11: Dynamic Code / DLL Injection (Ring 7) (EventID 7)."""
-        bg_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        bg_src = read_breakout_gate_src()
         assert "DynamicCodeExec" in bg_src or "evaluate" in bg_src
         return True, f"Trial {trial}: Post-spawn unsigned DLL image load triggers immediate capability revocation"
 
     def prove_ab_vec_12(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-12: Capability Concurrency Race (Ring 5) (Concurrency Law)."""
-        bg_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        bg_src = read_breakout_gate_src()
         assert "RevocationBoundCapabilityCache" in bg_src or "RwLock" in bg_src
         return True, f"Trial {trial}: RwLock barrier guarantees zero in-flight external writes commit after revocation begins"
 
     def prove_ab_vec_13(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-13: Confused-Deputy System Broker (Ring 3) (Ring 3 Broker)."""
-        bg_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        bg_src = read_breakout_gate_src()
         assert "origin_session_id" in bg_src or "Broker" in bg_src or "taint" in bg_src
         return True, f"Trial {trial}: System broker process activity deterministically bound to origin session taint"
 
@@ -840,7 +853,7 @@ class VectorProver:
 
     def prove_ab_vec_20(self, trial: int) -> Tuple[bool, str]:
         """AB-VEC-20: Composed Workflow Escalation (Family 1) (Multi-Step Guard)."""
-        pol_src = (REPO_ROOT / "crates" / "osoosi-policy" / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        pol_src = read_breakout_gate_src()
         assert "WorkflowCompositionEvaluator" in pol_src
         assert "ComposedWorkflowStepKind" in pol_src
         return True, f"Trial {trial}: WorkflowCompositionEvaluator blocked composed step sequence composing into unsafe state"
