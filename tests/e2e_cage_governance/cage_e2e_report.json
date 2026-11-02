@@ -1,10 +1,10 @@
 {
-  "timestamp_utc": "2026-11-02T07:10:38Z",
+  "timestamp_utc": "2026-11-02T08:35:46Z",
   "total_tests": 174,
   "total_passed": 174,
   "total_failed": 0,
   "total_errors": 0,
-  "duration_seconds": 0.289,
+  "duration_seconds": 0.347,
   "overall_success": true,
   "suites": [
     {
@@ -13,7 +13,7 @@
       "passed": 75,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.036,
+      "duration_seconds": 0.04,
       "success": true
     },
     {
@@ -22,7 +22,7 @@
       "passed": 75,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.159,
+      "duration_seconds": 0.164,
       "success": true
     },
     {
@@ -31,7 +31,7 @@
       "passed": 16,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.007,
+      "duration_seconds": 0.008,
       "success": true
     },
     {
@@ -40,7 +40,7 @@
       "passed": 8,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.085,
+      "duration_seconds": 0.134,
       "success": true
     }
   ]

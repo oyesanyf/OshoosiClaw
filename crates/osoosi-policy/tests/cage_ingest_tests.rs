@@ -193,7 +193,9 @@ fn test_microsoft_acs_compilation() {
     assert_eq!(uca.uca_id, "ACS-TRADE-001");
     assert_eq!(uca.hazard_ref, "H-FIN-01");
     assert_eq!(uca.control_action, "ExecuteStockOrder");
-    assert!(uca.context_condition.contains("context.order_value_usd > 10000"));
+    assert!(uca
+        .context_condition
+        .contains("context.order_value_usd > 10000"));
 }
 
 #[test]

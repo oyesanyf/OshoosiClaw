@@ -183,4 +183,3 @@ pub struct CedarResource {
     pub service_identity: Option<String>,
     pub service_operation: Option<String>,
 }
-

@@ -25,13 +25,25 @@ use osoosi_types::cage::PolicyFormat;
 #[test]
 fn test_malformed_inputs_fail_cleanly_without_panic() {
     let malformed_cases = vec![
-        ("unbalanced_curly_brace", "{\n  \"behaviorDeclarations\": [\n"),
+        (
+            "unbalanced_curly_brace",
+            "{\n  \"behaviorDeclarations\": [\n",
+        ),
         ("unbalanced_square_bracket", "{\"behaviorDeclarations\": ["),
         ("trailing_garbage", "{\"a\": 1} trailing garbage"),
         ("invalid_escape_sequence", "{\"name\": \"invalid \\u12\"}"),
-        ("raw_unquoted_string", "just some raw text not json or yaml: : : ["),
-        ("broken_yaml_indentation", "behaviorDeclarations:\n- id: 1\n   action: bad\n  - id: 2"),
-        ("yaml_tab_indentation", "behaviorDeclarations:\n\t- id: test\n\t  action: test"),
+        (
+            "raw_unquoted_string",
+            "just some raw text not json or yaml: : : [",
+        ),
+        (
+            "broken_yaml_indentation",
+            "behaviorDeclarations:\n- id: 1\n   action: bad\n  - id: 2",
+        ),
+        (
+            "yaml_tab_indentation",
+            "behaviorDeclarations:\n\t- id: test\n\t  action: test",
+        ),
         ("null_byte_in_json", "{\"key\": \"val\0ue\"}"),
         ("unterminated_string", "{\"name\": \"unterminated"),
         ("double_colon_yaml_error", "key: : value"),
@@ -122,11 +134,7 @@ fn test_primitive_and_empty_roots_handling() {
                 assert_eq!(compiled.policy_version_id.len(), 16);
             }
         }));
-        assert!(
-            unwind_res.is_ok(),
-            "Non-object input '{}' panicked!",
-            name
-        );
+        assert!(unwind_res.is_ok(), "Non-object input '{}' panicked!", name);
     }
 }
 
@@ -189,9 +197,18 @@ component-definition:
 
     // 4. Truncated mid-stream documents
     let truncated_cases = vec![
-        ("truncated_acs", "{\"behaviorDeclarations\": [{\"id\": \"ACS-1\""),
-        ("truncated_aaif", "{\"governedRunLoop\": {\"stages\": [{\"name\":"),
-        ("truncated_oscal", "{\"component-definition\": {\"components\": ["),
+        (
+            "truncated_acs",
+            "{\"behaviorDeclarations\": [{\"id\": \"ACS-1\"",
+        ),
+        (
+            "truncated_aaif",
+            "{\"governedRunLoop\": {\"stages\": [{\"name\":",
+        ),
+        (
+            "truncated_oscal",
+            "{\"component-definition\": {\"components\": [",
+        ),
     ];
 
     for (name, input) in truncated_cases {

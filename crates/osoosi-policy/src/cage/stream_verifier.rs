@@ -134,8 +134,14 @@ impl StreamInvariantVerifier {
                 // Invariant 3: seal
                 "GOVERNANCE_DECISION" => {
                     let verdict = rec.get("verdict").and_then(|v| v.as_str()).unwrap_or("");
-                    let rec_hash = rec.get("record_hash").and_then(|v| v.as_str()).unwrap_or("");
-                    let seal_present = rec.get("seal_present").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let rec_hash = rec
+                        .get("record_hash")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let seal_present = rec
+                        .get("seal_present")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
 
                     if (verdict == "ALLOW" || verdict == "NARROW") && !seal_present {
                         findings.push(StreamFinding {
@@ -204,7 +210,10 @@ impl StreamInvariantVerifier {
                 // Invariant 2: cbf_barrier
                 "CBF_COMMIT" => {
                     let debit_id = rec.get("debit_id").and_then(|v| v.as_str()).unwrap_or("");
-                    let state_before = rec.get("state_before").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let state_before = rec
+                        .get("state_before")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     let cost = rec.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let b_min = rec.get("b_min").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let gamma = rec.get("gamma").and_then(|v| v.as_f64()).unwrap_or(0.5);
@@ -236,8 +245,14 @@ impl StreamInvariantVerifier {
 
                     if status == "ROLLED_BACK" {
                         if let Some(commit_rec) = cbf_commits.get(debit_id) {
-                            let commit_cost = commit_rec.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let restored_cost = rec.get("restored_amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let commit_cost = commit_rec
+                                .get("cost")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                            let restored_cost = rec
+                                .get("restored_amount")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
 
                             if (commit_cost - restored_cost).abs() > 1e-6 {
                                 findings.push(StreamFinding {
@@ -323,7 +338,8 @@ impl StreamInvariantVerifier {
             hasher.update(format!("rec[{i}]:{s}\n").as_bytes());
         }
         for f in &findings {
-            hasher.update(format!("finding:{}:{}:{}\n", f.record_index, f.rule, f.detail).as_bytes());
+            hasher
+                .update(format!("finding:{}:{}:{}\n", f.record_index, f.rule, f.detail).as_bytes());
         }
         let stream_proof_hash = hex::encode(hasher.finalize());
 
@@ -354,7 +370,9 @@ impl StreamInvariantVerifier {
     /// Checks if a string exactly conforms to `^[0-9a-f]{64}$`.
     #[inline]
     pub fn is_64_hex_lowercase(s: &str) -> bool {
-        s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+        s.len() == 64
+            && s.chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
     }
 }
 
@@ -393,4 +411,3 @@ mod tests {
         assert!(report.findings.iter().any(|f| f.rule == "no_direct_bind"));
     }
 }
-

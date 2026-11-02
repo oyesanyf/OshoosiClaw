@@ -62,18 +62,45 @@ fn test_gated_bfs_model_explores_34_states_and_proves_no_direct_bind() {
     assert_eq!(exec.phase, BfsPhase::Executed);
     assert_eq!(exec.label, "executed");
     assert_eq!(exec.tier, 7);
-    assert!(exec.seal_present, "EXECUTED state must have seal_present == true");
-    assert!(exec.resolved_allow, "EXECUTED state must have resolved_allow == true");
+    assert!(
+        exec.seal_present,
+        "EXECUTED state must have seal_present == true"
+    );
+    assert!(
+        exec.resolved_allow,
+        "EXECUTED state must have resolved_allow == true"
+    );
     assert!(exec.executed_or_narrow);
 
     // Verify all phases are represented
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::Initial));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::Checking));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::NarrowEval));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::NarrowPassed));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::SealIssued));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::Executed));
-    assert!(result.visited_states.iter().any(|s| s.phase == BfsPhase::Denied));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::Initial));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::Checking));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::NarrowEval));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::NarrowPassed));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::SealIssued));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::Executed));
+    assert!(result
+        .visited_states
+        .iter()
+        .any(|s| s.phase == BfsPhase::Denied));
 }
 
 #[test]
@@ -90,11 +117,14 @@ fn test_ungated_counterexample_model_17_states_and_violation() {
 
     // Must trigger direct-bind violation counterexample
     assert_eq!(
-        result.violations.len(), 1,
+        result.violations.len(),
+        1,
         "Ungated model must trigger exactly 1 violation counterexample"
     );
     assert!(
-        result.violations[0].error.contains("Direct-bind violation counterexample"),
+        result.violations[0]
+            .error
+            .contains("Direct-bind violation counterexample"),
         "Violation message must flag direct-bind counterexample: {}",
         result.violations[0].error
     );
@@ -206,7 +236,9 @@ fn test_stream_verifier_conformant_stream() {
     assert!(report.findings.is_empty());
 
     assert_eq!(report.stream_proof_hash.len(), 64);
-    assert!(StreamInvariantVerifier::is_64_hex_lowercase(&report.stream_proof_hash));
+    assert!(StreamInvariantVerifier::is_64_hex_lowercase(
+        &report.stream_proof_hash
+    ));
 }
 
 #[test]
@@ -221,7 +253,9 @@ fn test_stream_verifier_no_direct_bind_unsealed_actuation() {
     assert!(!report.is_conformant());
     assert_eq!(report.status, StreamConformanceStatus::NonConformant);
     assert!(report.has_rule_violation("no_direct_bind"));
-    assert!(report.findings[0].detail.contains("without preceding GOVERNANCE_SEAL_CONSUMED"));
+    assert!(report.findings[0]
+        .detail
+        .contains("without preceding GOVERNANCE_SEAL_CONSUMED"));
 }
 
 #[test]
@@ -253,7 +287,10 @@ fn test_stream_verifier_no_direct_bind_seal_replay() {
     let report = StreamInvariantVerifier::verify_stream(&records);
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("no_direct_bind"));
-    assert!(report.findings.iter().any(|f| f.detail.contains("replay detected")));
+    assert!(report
+        .findings
+        .iter()
+        .any(|f| f.detail.contains("replay detected")));
 }
 
 #[test]
@@ -268,7 +305,10 @@ fn test_stream_verifier_no_direct_bind_unknown_decision_hash() {
     let report = StreamInvariantVerifier::verify_stream(&records);
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("no_direct_bind"));
-    assert!(report.findings.iter().any(|f| f.detail.contains("unknown decision hash")));
+    assert!(report
+        .findings
+        .iter()
+        .any(|f| f.detail.contains("unknown decision hash")));
 }
 
 #[test]
@@ -345,7 +385,10 @@ fn test_stream_verifier_cbf_rollback_budget_leakage() {
     let report = StreamInvariantVerifier::verify_stream(&records);
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("cbf_rollback"));
-    assert!(report.findings.iter().any(|f| f.detail.contains("budget leakage")));
+    assert!(report
+        .findings
+        .iter()
+        .any(|f| f.detail.contains("budget leakage")));
 }
 
 #[test]
@@ -361,7 +404,10 @@ fn test_stream_verifier_cbf_rollback_unledgered_debit() {
     let report = StreamInvariantVerifier::verify_stream(&records);
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("cbf_rollback"));
-    assert!(report.findings.iter().any(|f| f.detail.contains("unledgered debit_id")));
+    assert!(report
+        .findings
+        .iter()
+        .any(|f| f.detail.contains("unledgered debit_id")));
 }
 
 #[test]
@@ -397,7 +443,9 @@ fn test_stream_verifier_digest_format_uppercase() {
     let report = StreamInvariantVerifier::verify_stream(&records);
     assert!(!report.is_conformant());
     assert!(report.has_rule_violation("digest_format"));
-    assert!(report.findings[0].detail.contains("uppercase or invalid chars"));
+    assert!(report.findings[0]
+        .detail
+        .contains("uppercase or invalid chars"));
 }
 
 #[test]

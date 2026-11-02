@@ -86,7 +86,10 @@ impl AdversarialBfsHarness {
                 true,
             );
 
-            transitions.insert(current_check, vec![next_check, direct_deny, narrow_eval.clone()]);
+            transitions.insert(
+                current_check,
+                vec![next_check, direct_deny, narrow_eval.clone()],
+            );
 
             let narrow_rerun_deny = BfsState::new(
                 BfsPhase::Denied,
@@ -107,20 +110,15 @@ impl AdversarialBfsHarness {
                 );
                 transitions.insert(narrow_eval, vec![next_narrow, narrow_rerun_deny]);
             } else {
-                let narrow_pass = BfsState::new(
-                    BfsPhase::NarrowPassed,
-                    "all_clamped",
-                    7,
-                    true,
-                    true,
-                    true,
-                );
+                let narrow_pass =
+                    BfsState::new(BfsPhase::NarrowPassed, "all_clamped", 7, true, true, true);
                 transitions.insert(narrow_eval, vec![narrow_pass, narrow_rerun_deny]);
             }
         }
 
         let seal_issued = BfsState::new(BfsPhase::SealIssued, "valid", 7, true, true, false);
-        let completed_check = BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
+        let completed_check =
+            BfsState::new(BfsPhase::Checking, "completed", 7, false, false, false);
         transitions.insert(completed_check, vec![seal_issued.clone()]);
 
         let narrow_pass = BfsState::new(BfsPhase::NarrowPassed, "all_clamped", 7, true, true, true);
@@ -132,11 +130,25 @@ impl AdversarialBfsHarness {
 
         for idx in 0..7 {
             transitions.insert(
-                BfsState::new(BfsPhase::Denied, format!("direct_tier_{idx}"), idx, false, false, false),
+                BfsState::new(
+                    BfsPhase::Denied,
+                    format!("direct_tier_{idx}"),
+                    idx,
+                    false,
+                    false,
+                    false,
+                ),
                 Vec::new(),
             );
             transitions.insert(
-                BfsState::new(BfsPhase::Denied, format!("narrow_rerun_tier_{idx}"), idx, false, false, false),
+                BfsState::new(
+                    BfsPhase::Denied,
+                    format!("narrow_rerun_tier_{idx}"),
+                    idx,
+                    false,
+                    false,
+                    false,
+                ),
                 Vec::new(),
             );
         }
@@ -223,8 +235,18 @@ impl AdversarialBfsHarness {
         // Invariant 5: Unique execution state
         if executed_count > 1 {
             violations.push(BfsViolation {
-                state: BfsState::new(BfsPhase::Executed, "multiple_executions", 7, true, true, true),
-                error: format!("Multiple execution states detected: count={}", executed_count),
+                state: BfsState::new(
+                    BfsPhase::Executed,
+                    "multiple_executions",
+                    7,
+                    true,
+                    true,
+                    true,
+                ),
+                error: format!(
+                    "Multiple execution states detected: count={}",
+                    executed_count
+                ),
             });
         }
 
@@ -271,7 +293,8 @@ fn test_adversarial_gated_model_100_sequential_trials_stability() {
         assert!(
             result.violations.is_empty(),
             "Trial #{}: Expected 0 violations, found {:?}",
-            trial, result.violations
+            trial,
+            result.violations
         );
         assert!(result.no_direct_bind_proven);
 
@@ -282,27 +305,69 @@ fn test_adversarial_gated_model_100_sequential_trials_stability() {
         assert_eq!(exec.phase, BfsPhase::Executed);
         assert_eq!(exec.label, "executed");
         assert_eq!(exec.tier, 7);
-        assert!(exec.seal_present, "Trial #{}: seal_present must be true", trial);
-        assert!(exec.resolved_allow, "Trial #{}: resolved_allow must be true", trial);
+        assert!(
+            exec.seal_present,
+            "Trial #{}: seal_present must be true",
+            trial
+        );
+        assert!(
+            exec.resolved_allow,
+            "Trial #{}: resolved_allow must be true",
+            trial
+        );
         assert!(exec.executed_or_narrow);
 
         // 5. Phase population breakdown:
         //    1 Initial + 8 Checking + 7 NarrowEval + 1 NarrowPassed + 1 SealIssued + 1 Executed + 15 Denied = 34
-        let initial_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Initial).count();
-        let checking_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Checking).count();
-        let narrow_eval_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::NarrowEval).count();
-        let narrow_pass_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::NarrowPassed).count();
-        let seal_issued_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::SealIssued).count();
-        let executed_phase_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Executed).count();
-        let denied_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Denied).count();
+        let initial_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Initial)
+            .count();
+        let checking_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Checking)
+            .count();
+        let narrow_eval_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::NarrowEval)
+            .count();
+        let narrow_pass_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::NarrowPassed)
+            .count();
+        let seal_issued_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::SealIssued)
+            .count();
+        let executed_phase_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Executed)
+            .count();
+        let denied_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Denied)
+            .count();
 
         assert_eq!(initial_count, 1, "Initial count mismatch");
-        assert_eq!(checking_count, 8, "Checking count mismatch (7 tiers + completed)");
+        assert_eq!(
+            checking_count, 8,
+            "Checking count mismatch (7 tiers + completed)"
+        );
         assert_eq!(narrow_eval_count, 7, "NarrowEval count mismatch (7 tiers)");
         assert_eq!(narrow_pass_count, 1, "NarrowPassed count mismatch");
         assert_eq!(seal_issued_count, 1, "SealIssued count mismatch");
         assert_eq!(executed_phase_count, 1, "Executed count mismatch");
-        assert_eq!(denied_count, 15, "Denied count mismatch (7 direct + 7 narrow rerun + 1 seal expired)");
+        assert_eq!(
+            denied_count, 15,
+            "Denied count mismatch (7 direct + 7 narrow rerun + 1 seal expired)"
+        );
 
         // 6. Complete state set invariance across all 100 trials
         if let Some(ref base) = baseline_states {
@@ -346,15 +411,33 @@ fn test_adversarial_ungated_model_100_sequential_trials_negative_control() {
         assert_eq!(violation.state.phase, BfsPhase::Executed);
         assert_eq!(violation.state.label, "ungated_direct_bind");
         assert!(!violation.state.seal_present);
-        assert!(violation.error.contains("Direct-bind violation counterexample"));
+        assert!(violation
+            .error
+            .contains("Direct-bind violation counterexample"));
         assert!(!result.no_direct_bind_proven);
 
         // 4. Phase breakdown:
         //    1 Initial + 7 Checking + 1 Executed + 8 Denied (7 tier denies + 1 terminal_failure) = 17
-        let initial_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Initial).count();
-        let checking_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Checking).count();
-        let executed_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Executed).count();
-        let denied_count = result.visited_states.iter().filter(|s| s.phase == BfsPhase::Denied).count();
+        let initial_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Initial)
+            .count();
+        let checking_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Checking)
+            .count();
+        let executed_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Executed)
+            .count();
+        let denied_count = result
+            .visited_states
+            .iter()
+            .filter(|s| s.phase == BfsPhase::Denied)
+            .count();
 
         assert_eq!(initial_count, 1);
         assert_eq!(checking_count, 7);
@@ -363,7 +446,11 @@ fn test_adversarial_ungated_model_100_sequential_trials_negative_control() {
 
         // 5. Invariance across trials
         if let Some(ref base) = baseline_states {
-            assert_eq!(base, &result.visited_states, "Trial #{}: Ungated state set drifted", trial);
+            assert_eq!(
+                base, &result.visited_states,
+                "Trial #{}: Ungated state set drifted",
+                trial
+            );
         } else {
             baseline_states = Some(result.visited_states.clone());
         }
@@ -397,20 +484,30 @@ fn test_adversarial_skipped_tier_variations_all_7_tiers_100_trials() {
             assert!(
                 result.violations.is_empty(),
                 "Tier {} Trial #{}: Unexpected violations: {:?}",
-                skip_tier, trial, result.violations
+                skip_tier,
+                trial,
+                result.violations
             );
             assert!(result.no_direct_bind_proven);
 
             // 4. Verify terminal status: SealExpired is reachable, but Executed is strictly absent
             assert!(
-                result.visited_states.iter().any(|s| s.label == "seal_expired"),
+                result
+                    .visited_states
+                    .iter()
+                    .any(|s| s.label == "seal_expired"),
                 "Tier {} Trial #{}: seal_expired state must be reached",
-                skip_tier, trial
+                skip_tier,
+                trial
             );
             assert!(
-                !result.visited_states.iter().any(|s| s.phase == BfsPhase::Executed),
+                !result
+                    .visited_states
+                    .iter()
+                    .any(|s| s.phase == BfsPhase::Executed),
                 "Tier {} Trial #{}: Executed state must not be reachable",
-                skip_tier, trial
+                skip_tier,
+                trial
             );
         }
     }
@@ -452,18 +549,37 @@ fn test_graph_corruption_tier2_direct_jump_to_unsealed_executed() {
 
     // Adversarial injection: Tier 2 ("opa") jumps directly to an EXECUTED state without seal
     let tier2_state = BfsState::new(BfsPhase::Checking, "opa", 2, false, false, false);
-    let rogue_exec = BfsState::new(BfsPhase::Executed, "rogue_tier2_actuation", 2, false, false, true);
+    let rogue_exec = BfsState::new(
+        BfsPhase::Executed,
+        "rogue_tier2_actuation",
+        2,
+        false,
+        false,
+        true,
+    );
 
-    transitions.get_mut(&tier2_state).unwrap().push(rogue_exec.clone());
+    transitions
+        .get_mut(&tier2_state)
+        .unwrap()
+        .push(rogue_exec.clone());
     transitions.insert(rogue_exec, Vec::new());
 
     let result = AdversarialBfsHarness::verify_transitions(initial_state, &transitions);
 
     // BFS verifier must flag both NoDirectBind violation and premature execution tier
     assert!(!result.no_direct_bind_proven);
-    assert!(result.violations.iter().any(|v| v.error.contains("NoDirectBind violation in EXECUTED phase")));
-    assert!(result.violations.iter().any(|v| v.error.contains("Premature execution tier")));
-    assert!(result.violations.iter().any(|v| v.error.contains("Illegal pipeline jump")));
+    assert!(result
+        .violations
+        .iter()
+        .any(|v| v.error.contains("NoDirectBind violation in EXECUTED phase")));
+    assert!(result
+        .violations
+        .iter()
+        .any(|v| v.error.contains("Premature execution tier")));
+    assert!(result
+        .violations
+        .iter()
+        .any(|v| v.error.contains("Illegal pipeline jump")));
 }
 
 #[test]
@@ -523,10 +639,20 @@ fn test_graph_corruption_double_execution_injection_replay_attack() {
     // Adversarial injection: Two distinct EXECUTED states (e.g. seal replay)
     let seal_issued = BfsState::new(BfsPhase::SealIssued, "valid", 7, true, true, false);
     let exec1 = BfsState::new(BfsPhase::Executed, "executed_1", 7, true, true, true);
-    let exec2 = BfsState::new(BfsPhase::Executed, "executed_2_replayed", 7, true, true, true);
+    let exec2 = BfsState::new(
+        BfsPhase::Executed,
+        "executed_2_replayed",
+        7,
+        true,
+        true,
+        true,
+    );
     let seal_expired = BfsState::new(BfsPhase::Denied, "seal_expired", 7, true, false, false);
 
-    transitions.insert(seal_issued, vec![exec1.clone(), exec2.clone(), seal_expired]);
+    transitions.insert(
+        seal_issued,
+        vec![exec1.clone(), exec2.clone(), seal_expired],
+    );
     transitions.insert(exec1, Vec::new());
     transitions.insert(exec2, Vec::new());
 
@@ -536,7 +662,9 @@ fn test_graph_corruption_double_execution_injection_replay_attack() {
     assert!(!result.no_direct_bind_proven);
     assert_eq!(result.executed_count, 2);
     assert!(
-        result.violations.iter().any(|v| v.error.contains("Multiple execution states detected: count=2")),
+        result.violations.iter().any(|v| v
+            .error
+            .contains("Multiple execution states detected: count=2")),
         "Expected multiple execution states violation, got: {:?}",
         result.violations
     );
@@ -548,7 +676,8 @@ fn test_graph_corruption_seal_expired_resurrection_bypass() {
 
     // Adversarial injection: Seal expired state resurrects and transitions to EXECUTED
     let seal_expired = BfsState::new(BfsPhase::Denied, "seal_expired", 7, true, false, false);
-    let resurrected_exec = BfsState::new(BfsPhase::Executed, "resurrected_exec", 7, true, true, true);
+    let resurrected_exec =
+        BfsState::new(BfsPhase::Executed, "resurrected_exec", 7, true, true, true);
 
     transitions.insert(seal_expired, vec![resurrected_exec.clone()]);
     transitions.insert(resurrected_exec, Vec::new());
@@ -558,8 +687,7 @@ fn test_graph_corruption_seal_expired_resurrection_bypass() {
     assert!(!result.no_direct_bind_proven);
     assert!(
         result.violations.iter().any(|v| {
-            v.error.contains("Illegal resurrection")
-                && v.error.contains("seal_expired")
+            v.error.contains("Illegal resurrection") && v.error.contains("seal_expired")
         }),
         "Expected illegal resurrection violation, got: {:?}",
         result.violations
@@ -614,7 +742,8 @@ fn test_concurrency_20_threads_deterministic_proof_receipts() {
                 assert!(
                     StreamInvariantVerifier::is_64_hex_lowercase(&proof.proof_receipt),
                     "Thread {}: proof receipt must be valid 64-hex lowercase: {}",
-                    thread_idx, proof.proof_receipt
+                    thread_idx,
+                    proof.proof_receipt
                 );
 
                 receipts.push(proof.proof_receipt);
@@ -695,7 +824,9 @@ fn test_concurrency_50_threads_mixed_workload_stress() {
     }
 
     for handle in handles {
-        handle.join().expect("All 50 worker threads must succeed without panic");
+        handle
+            .join()
+            .expect("All 50 worker threads must succeed without panic");
     }
 }
 

@@ -258,7 +258,10 @@ fn compile_acs(
         if let Some(constraints) = decl.get("constraints").and_then(|v| v.as_array()) {
             for c in constraints {
                 let c_type = c.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let param = c.get("parameter").and_then(|v| v.as_str()).unwrap_or("param");
+                let param = c
+                    .get("parameter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("param");
                 let val_str = c
                     .get("value")
                     .map(|v| match v {
@@ -387,7 +390,10 @@ fn compile_aaif(
                 if let Some(constraints) = hook.get("constraints").and_then(|v| v.as_array()) {
                     for c in constraints {
                         let c_type = c.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        let param = c.get("parameter").and_then(|v| v.as_str()).unwrap_or("param");
+                        let param = c
+                            .get("parameter")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("param");
                         if c_type == "forbidden" {
                             conditions.push(format!("context.{} == true", param));
                         } else if c_type == "max" {
@@ -479,7 +485,9 @@ fn compile_oscal(
             .and_then(|v| v.as_array())
         {
             for imp in impls {
-                if let Some(reqs) = imp.get("implemented-requirements").and_then(|v| v.as_array())
+                if let Some(reqs) = imp
+                    .get("implemented-requirements")
+                    .and_then(|v| v.as_array())
                 {
                     for req in reqs {
                         let control_id = req
@@ -499,7 +507,10 @@ fn compile_oscal(
                             "ac-6" => "LeastPrivilege".to_string(),
                             "sc-7" => "BoundaryProtection".to_string(),
                             "si-4" => "InformationSystemMonitoring".to_string(),
-                            _ => format!("Control{}", control_id.replace('-', "_").to_ascii_uppercase()),
+                            _ => format!(
+                                "Control{}",
+                                control_id.replace('-', "_").to_ascii_uppercase()
+                            ),
                         };
 
                         let cedar_rule = format!(
@@ -633,8 +644,14 @@ fn compile_stpa(
                 .to_string();
 
             let condition_str = if let Some(cond) = uca.get("condition") {
-                let param = cond.get("param").and_then(|v| v.as_str()).unwrap_or("param");
-                let op = cond.get("operator").and_then(|v| v.as_str()).unwrap_or("is_null");
+                let param = cond
+                    .get("param")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("param");
+                let op = cond
+                    .get("operator")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("is_null");
                 format!("{}:{}", param, op)
             } else {
                 "unsafe_condition".to_string()
@@ -766,10 +783,7 @@ pub fn canonicalize_jcs(val: &serde_json::Value) -> Result<String, PolicyIngestE
     Ok(out)
 }
 
-fn write_jcs_value(
-    val: &serde_json::Value,
-    out: &mut String,
-) -> Result<(), PolicyIngestError> {
+fn write_jcs_value(val: &serde_json::Value, out: &mut String) -> Result<(), PolicyIngestError> {
     match val {
         serde_json::Value::Null => out.push_str("null"),
         serde_json::Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -901,9 +915,9 @@ behaviorDeclarations:
         assert_ne!(p1.policy_version_id, p2.policy_version_id);
 
         assert!(verify_version_pinning(Some(&p1.policy_version_id), &p1.policy_version_id).is_ok());
-        let conflict = verify_version_pinning(Some(&p1.policy_version_id), &p2.policy_version_id).unwrap_err();
+        let conflict =
+            verify_version_pinning(Some(&p1.policy_version_id), &p2.policy_version_id).unwrap_err();
         assert_eq!(conflict.pinned_version, p1.policy_version_id);
         assert_eq!(conflict.incoming_version, p2.policy_version_id);
     }
 }
-

@@ -175,7 +175,7 @@ jobs:
         env:
           OPENSSL_STATIC: 1
           OPENSSL_VENDORED: 1
-        run: cross build --release --target aarch64-unknown-linux-musl
+        run: cross build --release --target aarch64-unknown-linux-musl -p osoosi-cli
 
       - name: Package Linux ARM64 artifacts (.deb, .tar.gz)
         run: |

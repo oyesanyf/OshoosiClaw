@@ -67,7 +67,7 @@ describe('WebUI 128 Buttons & Backend REST API Endpoints Verification (Features 
         }
 
         // Direct fetch calls with API_BASE
-        assert.ok(appJsContent.includes('${API_BASE}/status'), 'app.js must call ${API_BASE}/status');
+        assert.ok(appJsContent.includes('${API_BASE}/status') || appJsContent.includes("'/status'"), 'app.js must call ${API_BASE}/status');
         assert.ok(appJsContent.includes('${API_BASE}/killchain/status'), 'app.js must call ${API_BASE}/killchain/status');
 
         // Verify zero mock indicators

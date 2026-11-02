@@ -159,11 +159,7 @@ pub struct CageGovernancePipeline {
 
 impl CageGovernancePipeline {
     /// Constructs a new governance pipeline with compiled policy, fiscal ledger, and seal signer.
-    pub fn new(
-        policy: CompiledCagePolicy,
-        ledger: FiscalLedger,
-        secret_key: &[u8],
-    ) -> Self {
+    pub fn new(policy: CompiledCagePolicy, ledger: FiscalLedger, secret_key: &[u8]) -> Self {
         let policy_ver = policy.policy_version_id.clone();
         let seal_signer = RoutingSealSigner::new(secret_key, &policy_ver);
 
@@ -261,7 +257,9 @@ impl CageGovernancePipeline {
     ) -> Result<StageOutcome, (String, String)> {
         for uca in ucas {
             // Match control action
-            if uca.control_action.eq_ignore_ascii_case(&request.action_name)
+            if uca
+                .control_action
+                .eq_ignore_ascii_case(&request.action_name)
                 || uca.control_action == "*"
             {
                 // Check if context condition matches hazardous state
@@ -278,7 +276,10 @@ impl CageGovernancePipeline {
         Ok(StageOutcome {
             stage_name: "stpa".to_string(),
             passed: true,
-            details: Some(format!("Passed {} compiled STPA UCA safety invariants", ucas.len())),
+            details: Some(format!(
+                "Passed {} compiled STPA UCA safety invariants",
+                ucas.len()
+            )),
         })
     }
 
@@ -292,7 +293,9 @@ impl CageGovernancePipeline {
             let rule_trimmed = rule.trim();
 
             // Explicit forbid check
-            if rule_trimmed.starts_with("forbid") && Self::matches_cedar_forbid(rule_trimmed, request) {
+            if rule_trimmed.starts_with("forbid")
+                && Self::matches_cedar_forbid(rule_trimmed, request)
+            {
                 let reason = format!(
                     "CEDAR_FORBID_VIOLATION: Action '{}' forbidden by Cedar policy rule: {}",
                     request.action_name, rule_trimmed
@@ -304,7 +307,10 @@ impl CageGovernancePipeline {
         Ok(StageOutcome {
             stage_name: "cedar".to_string(),
             passed: true,
-            details: Some(format!("Cleared {} compiled Cedar authorization rules", cedar_rules.len())),
+            details: Some(format!(
+                "Cleared {} compiled Cedar authorization rules",
+                cedar_rules.len()
+            )),
         })
     }
 
@@ -432,7 +438,8 @@ impl CageGovernancePipeline {
         match self.evaluate_tier1_ftra(request) {
             Ok(outcome) => stage_outcomes.push(outcome),
             Err((stage, reason)) => {
-                let proof_hash = Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
+                let proof_hash =
+                    Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
                 stage_outcomes.push(StageOutcome {
                     stage_name: stage,
                     passed: false,
@@ -453,7 +460,8 @@ impl CageGovernancePipeline {
         match self.evaluate_tier2_stpa(request, &policy.unsafe_control_actions) {
             Ok(outcome) => stage_outcomes.push(outcome),
             Err((stage, reason)) => {
-                let proof_hash = Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
+                let proof_hash =
+                    Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
                 stage_outcomes.push(StageOutcome {
                     stage_name: stage,
                     passed: false,
@@ -474,7 +482,8 @@ impl CageGovernancePipeline {
         match self.evaluate_tier3_cedar(request, &policy.cedar_rules) {
             Ok(outcome) => stage_outcomes.push(outcome),
             Err((stage, reason)) => {
-                let proof_hash = Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
+                let proof_hash =
+                    Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
                 stage_outcomes.push(StageOutcome {
                     stage_name: stage,
                     passed: false,
@@ -516,7 +525,8 @@ impl CageGovernancePipeline {
         match self.evaluate_tier5_consensus(request.consensus_score) {
             Ok(outcome) => stage_outcomes.push(outcome),
             Err((stage, reason)) => {
-                let proof_hash = Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
+                let proof_hash =
+                    Self::compute_refusal_proof(&request.action_name, &stage, &reason, now);
                 stage_outcomes.push(StageOutcome {
                     stage_name: stage,
                     passed: false,
@@ -583,7 +593,8 @@ impl CageGovernancePipeline {
                 });
 
                 let reason = format!("CBF_BARRIER_VIOLATION: {}", violation);
-                let proof_hash = Self::compute_refusal_proof(&request.action_name, "cbf", &reason, now);
+                let proof_hash =
+                    Self::compute_refusal_proof(&request.action_name, "cbf", &reason, now);
 
                 GovernanceEvaluationResult {
                     verdict: GovernanceVerdict::Deny { reason, proof_hash },
@@ -614,7 +625,10 @@ impl CageGovernancePipeline {
 
         // If primary evaluation already allowed or required approval, return directly
         if primary_result.verdict.is_allowed_or_narrowed()
-            || matches!(primary_result.verdict, GovernanceVerdict::RequireApproval { .. })
+            || matches!(
+                primary_result.verdict,
+                GovernanceVerdict::RequireApproval { .. }
+            )
         {
             return primary_result;
         }
@@ -629,9 +643,7 @@ impl CageGovernancePipeline {
 
             if let GovernanceVerdict::Allow = clamped_result.verdict {
                 return GovernanceEvaluationResult {
-                    verdict: GovernanceVerdict::Narrow {
-                        clamped_params,
-                    },
+                    verdict: GovernanceVerdict::Narrow { clamped_params },
                     seal: clamped_result.seal,
                     stage_outcomes: clamped_result.stage_outcomes,
                     commit_receipt: clamped_result.commit_receipt,
@@ -720,7 +732,9 @@ impl CageGovernancePipeline {
                         if parts.len() == 2 {
                             let key = parts[0].trim();
                             let expected = parts[1].trim().trim_matches('"');
-                            if let Some(actual) = request.parameters.get(key).and_then(|v| v.as_str()) {
+                            if let Some(actual) =
+                                request.parameters.get(key).and_then(|v| v.as_str())
+                            {
                                 return actual == expected;
                             }
                         }
@@ -730,7 +744,8 @@ impl CageGovernancePipeline {
                         if parts.len() == 2 {
                             let key = parts[0].trim();
                             let threshold: f64 = parts[1].trim().parse().unwrap_or(f64::MAX);
-                            if let Some(val) = request.parameters.get(key).and_then(|v| v.as_f64()) {
+                            if let Some(val) = request.parameters.get(key).and_then(|v| v.as_f64())
+                            {
                                 return val > threshold;
                             }
                         }

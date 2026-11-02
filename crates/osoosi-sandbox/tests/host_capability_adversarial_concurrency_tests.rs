@@ -133,7 +133,9 @@ fn test_extreme_concurrent_double_spend_race_condition_10_trials_50_threads() {
                         success_count.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(GateError::SealRejection(err_msg)) => {
-                        if err_msg.contains("Replay detected") && err_msg.contains(&expected_seal_id) {
+                        if err_msg.contains("Replay detected")
+                            && err_msg.contains(&expected_seal_id)
+                        {
                             replay_reject_count.fetch_add(1, Ordering::SeqCst);
                         } else {
                             eprintln!("Unexpected SealRejection message: {}", err_msg);
@@ -165,7 +167,8 @@ fn test_extreme_concurrent_double_spend_race_condition_10_trials_50_threads() {
             trial_replays,
             THREADS_PER_TRIAL - 1,
             "Trial {}: EXACTLY 49 threads must receive 'Replay detected', found {}",
-            trial, trial_replays
+            trial,
+            trial_replays
         );
         assert_eq!(
             trial_errors, 0,
@@ -175,7 +178,8 @@ fn test_extreme_concurrent_double_spend_race_condition_10_trials_50_threads() {
         assert!(
             gate.is_seal_consumed(&seal_id),
             "Trial {}: Seal '{}' must be permanently marked consumed",
-            trial, seal_id
+            trial,
+            seal_id
         );
 
         total_successes += trial_successes;
@@ -315,7 +319,10 @@ fn test_multi_seal_cross_thread_contention_30_threads_10_seals() {
                     }
                 }
                 Err(err) => {
-                    eprintln!("Thread {} failed with unexpected error: {:?}", thread_idx, err);
+                    eprintln!(
+                        "Thread {} failed with unexpected error: {:?}",
+                        thread_idx, err
+                    );
                     unexpected_counter.fetch_add(1, Ordering::SeqCst);
                 }
             }
@@ -366,7 +373,8 @@ fn test_multi_seal_cross_thread_contention_30_threads_10_seals() {
             seal_r,
             THREADS_PER_SEAL - 1,
             "Seal {}: Exactly 2 threads must be rejected with replay detection, got {}",
-            i, seal_r
+            i,
+            seal_r
         );
         assert!(
             gate.is_seal_consumed(&seals[i].seal_id),

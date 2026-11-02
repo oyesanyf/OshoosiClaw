@@ -1,10 +1,10 @@
 //! Unit and Integration Tests for RFC 8785 JCS, CAGE Audit Records, and Merkle Anchoring
 
 use osoosi_audit::{
-    canonicalize_jcs, compute_canonical_hash, verify_trace_chain, CageTraceRecord,
-    MerkleAuditTree, AUDIT_SCHEMA_VERSION, EVENT_ACTUATION_RECEIPT, EVENT_CBF_COMMIT,
-    EVENT_CBF_ROLLBACK, EVENT_GOVERNANCE_DECISION, EVENT_GOVERNANCE_REFUSAL,
-    EVENT_GOVERNANCE_SEAL_CONSUMED, GENESIS_PREV_HASH,
+    canonicalize_jcs, compute_canonical_hash, verify_trace_chain, CageTraceRecord, MerkleAuditTree,
+    AUDIT_SCHEMA_VERSION, EVENT_ACTUATION_RECEIPT, EVENT_CBF_COMMIT, EVENT_CBF_ROLLBACK,
+    EVENT_GOVERNANCE_DECISION, EVENT_GOVERNANCE_REFUSAL, EVENT_GOVERNANCE_SEAL_CONSUMED,
+    GENESIS_PREV_HASH,
 };
 use serde_json::json;
 
@@ -36,10 +36,10 @@ fn test_jcs_utf16_key_sorting() {
     // 'e' (0x0065) < '\u00e9' (0x00E9) < '\u0100' (0x0100) < '\uff41' (0xFF41)
     assert_eq!(
         c_unicode,
-        r#"{"e":"latin-e","\u00e9":"e-acute","\u0100":"A-macron","\uff41":"fullwidth-a"}"#.replace(
-            "\\u00e9",
-            "\u{00E9}"
-        ).replace("\\u0100", "\u{0100}").replace("\\uff41", "\u{FF41}")
+        r#"{"e":"latin-e","\u00e9":"e-acute","\u0100":"A-macron","\uff41":"fullwidth-a"}"#
+            .replace("\\u00e9", "\u{00E9}")
+            .replace("\\u0100", "\u{0100}")
+            .replace("\\uff41", "\u{FF41}")
     );
 }
 
@@ -75,8 +75,8 @@ fn test_jcs_number_formatting() {
     );
 
     // Floats with decimals
-    let pi_val = json!({"pi": 3.1415});
-    assert_eq!(canonicalize_jcs(&pi_val).unwrap(), r#"{"pi":3.1415}"#);
+    let dec_val = json!({"val": 123.456});
+    assert_eq!(canonicalize_jcs(&dec_val).unwrap(), r#"{"val":123.456}"#);
 
     // Exponential notation without '+'
     let exp_val = json!({"large": 1e20});
@@ -149,7 +149,9 @@ fn test_canonical_hash_determinism_under_key_permutation() {
 
     assert_eq!(hash_a, hash_b);
     assert_eq!(hash_a.len(), 64);
-    assert!(hash_a.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    assert!(hash_a
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
 }
 
 #[test]
@@ -173,7 +175,7 @@ fn test_merkle_audit_tree_empty_and_single_leaf() {
     assert_eq!(empty_root, "0".repeat(64));
 
     let leaf = compute_canonical_hash(&json!({"event": "INIT"}));
-    let single_root = MerkleAuditTree::compute_root(&[leaf.clone()]);
+    let single_root = MerkleAuditTree::compute_root(std::slice::from_ref(&leaf));
     assert_eq!(single_root, leaf);
 }
 

@@ -39,4 +39,7 @@ passthrough = [
     "OSOOSI_USE_BUNDLED_HF_WEIGHTS",
     "ORT_DYLIB_PATH",
     "RUST_LOG",
+    "OPENSSL_STATIC",
+    "OPENSSL_VENDORED",
+    "OPENSSL_DIR",
 ]

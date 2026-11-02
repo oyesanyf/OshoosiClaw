@@ -15,21 +15,21 @@ pub const DEFAULT_SUPERVISOR_DECLASSIFY_KEY: &[u8; 32] = b"OSHOOSICLAW_SUPERVISO
 pub const DEFAULT_CONTROL_PLANE_KEY: &[u8; 32] = b"OSHOOSICLAW_CTRLPLANE_PQ_KEY__32";
 
 pub mod authority;
-pub mod cedar_types;
-pub mod temporal;
-pub mod causal_graph;
-pub mod loopback;
 pub mod capability_cache;
+pub mod causal_graph;
+pub mod cedar_types;
+pub mod composition;
+pub mod loopback;
 pub mod protected_store;
 pub mod ring7_authorizer;
-pub mod composition;
+pub mod temporal;
 
 pub use authority::*;
-pub use cedar_types::*;
-pub use temporal::*;
-pub use causal_graph::*;
-pub use loopback::*;
 pub use capability_cache::*;
+pub use causal_graph::*;
+pub use cedar_types::*;
+pub use composition::*;
+pub use loopback::*;
 pub use protected_store::*;
 pub use ring7_authorizer::*;
-pub use composition::*;
+pub use temporal::*;

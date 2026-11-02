@@ -2867,7 +2867,10 @@ impl MemoryStore {
     }
 
     /// Retrieve a CAGE governance policy by its deterministic 16-character hex version ID.
-    pub fn get_cage_policy(&self, policy_version_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
+    pub fn get_cage_policy(
+        &self,
+        policy_version_id: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT policy_version_id, format, raw_content, compiled_cedar, compiled_ucas, cbf_gamma, cbf_b_min, created_at 
@@ -2968,7 +2971,11 @@ impl MemoryStore {
 
     /// Atomically mark a routing seal as consumed, enforcing single-use capability invariants.
     /// Returns true if the seal was successfully consumed; returns false if already consumed or absent.
-    pub fn mark_cage_routing_seal_consumed(&self, seal_id: &str, consumed_at: u64) -> anyhow::Result<bool> {
+    pub fn mark_cage_routing_seal_consumed(
+        &self,
+        seal_id: &str,
+        consumed_at: u64,
+    ) -> anyhow::Result<bool> {
         let conn = self.conn.lock();
         let rows_affected = conn.execute(
             "UPDATE cage_routing_seals 
@@ -2980,7 +2987,10 @@ impl MemoryStore {
     }
 
     /// Retrieve a recorded routing seal by seal_id.
-    pub fn get_cage_routing_seal(&self, seal_id: &str) -> anyhow::Result<Option<osoosi_types::cage::RoutingSeal>> {
+    pub fn get_cage_routing_seal(
+        &self,
+        seal_id: &str,
+    ) -> anyhow::Result<Option<osoosi_types::cage::RoutingSeal>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT seal_id, policy_version_id, action_digest, issued_at, expires_at, signature 
@@ -3043,7 +3053,10 @@ impl MemoryStore {
     }
 
     /// Retrieve persisted CAGE governance trace events ordered by sequence number.
-    pub fn get_cage_governance_traces(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
+    pub fn get_cage_governance_traces(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT trace_id, sequence_number, prev_hash, action_name, verdict, cbf_h_value, fuel_consumed, policy_version_id, merkle_leaf_hash, merkle_root, payload_json, created_at 
@@ -3091,11 +3104,17 @@ impl MemoryStore {
             if seq != Some(i as u64) {
                 return Ok(false);
             }
-            let prev = trace.get("prev_hash").and_then(|v| v.as_str()).unwrap_or("");
+            let prev = trace
+                .get("prev_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if prev != expected_prev {
                 return Ok(false);
             }
-            let leaf = trace.get("merkle_leaf_hash").and_then(|v| v.as_str()).unwrap_or("");
+            let leaf = trace
+                .get("merkle_leaf_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if leaf.len() != 64 || !leaf.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Ok(false);
             }

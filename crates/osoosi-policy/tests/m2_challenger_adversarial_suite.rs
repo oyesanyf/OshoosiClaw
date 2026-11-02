@@ -88,7 +88,10 @@ fn test_adversarial_seal_expiration_attacks() {
 
     // At t = issued_at + 30s: Exact expiration boundary
     let res_t30 = signer.validate_seal_properties(&seal, &action_digest, issued_at + 30);
-    assert!(res_t30.is_ok(), "Seal at exact boundary t = expires_at is not expired");
+    assert!(
+        res_t30.is_ok(),
+        "Seal at exact boundary t = expires_at is not expired"
+    );
 
     // 2. Attack Scenario A: Evaluation at t = issued_at + 31s
     // Explicitly 1s beyond the 30-second TTL
@@ -129,7 +132,10 @@ fn test_adversarial_seal_expiration_attacks() {
 
     // 5. Atomic consumption at expired timestamp MUST fail closed without recording consumption
     let consume_expired = signer.validate_and_consume(&seal, &action_digest, issued_at + 31);
-    assert!(matches!(consume_expired, Err(SealRejection::Expired { .. })));
+    assert!(matches!(
+        consume_expired,
+        Err(SealRejection::Expired { .. })
+    ));
     assert!(
         !signer.is_seal_consumed(&seal.seal_id),
         "Expired seal MUST NOT be marked as consumed"
@@ -176,7 +182,10 @@ fn test_adversarial_single_use_replay_attack() {
     // If action digest differs, action digest mismatch triggers first:
     let fake_digest = compute_action_digest("TransferFunds", &json!({"amount": 9999}));
     let fourth_consumption = signer.validate_and_consume(&seal, &fake_digest, now + 5);
-    assert!(matches!(fourth_consumption, Err(SealRejection::ActionDigestMismatch { .. })));
+    assert!(matches!(
+        fourth_consumption,
+        Err(SealRejection::ActionDigestMismatch { .. })
+    ));
 
     // Total consumed count must remain strictly 1
     assert_eq!(signer.consumed_count(), 1);
@@ -188,7 +197,10 @@ fn test_adversarial_single_use_replay_attack() {
 
 #[test]
 fn test_adversarial_concurrent_double_spend_race_condition_20_threads() {
-    let signer = Arc::new(RoutingSealSigner::new(CHALLENGER_SECRET_KEY, TEST_POLICY_VERSION));
+    let signer = Arc::new(RoutingSealSigner::new(
+        CHALLENGER_SECRET_KEY,
+        TEST_POLICY_VERSION,
+    ));
     let now = 1793584800_u64;
     let action_digest = compute_action_digest("DisburseGrant", &json!({"grant_id": "G-42"}));
     let seal = Arc::new(signer.issue_seal(&action_digest, now));
@@ -267,7 +279,10 @@ fn test_adversarial_extreme_concurrent_double_spend_50_threads_multi_trial() {
     const TRIALS: usize = 10;
 
     for trial in 0..TRIALS {
-        let signer = Arc::new(RoutingSealSigner::new(CHALLENGER_SECRET_KEY, TEST_POLICY_VERSION));
+        let signer = Arc::new(RoutingSealSigner::new(
+            CHALLENGER_SECRET_KEY,
+            TEST_POLICY_VERSION,
+        ));
         let now = 1793584800_u64 + (trial as u64 * 100);
         let action_digest = compute_action_digest(
             "HighValueLedgerWrite",
@@ -368,7 +383,10 @@ fn test_adversarial_action_digest_tampering() {
     // 3. Attack Vector C: Attacker modifies the action name
     let tampered_action_digest = compute_action_digest("ExecuteScript", &original_params);
     let res_c = signer.validate_seal_properties(&seal, &tampered_action_digest, now);
-    assert!(matches!(res_c, Err(SealRejection::ActionDigestMismatch { .. })));
+    assert!(matches!(
+        res_c,
+        Err(SealRejection::ActionDigestMismatch { .. })
+    ));
 
     // 4. Attack Vector D: Attacker updates seal.action_digest to match tampered action,
     // attempting to bypass action digest check without knowing secret key
@@ -376,7 +394,8 @@ fn test_adversarial_action_digest_tampering() {
     forged_action_seal.action_digest = tampered_expected_digest.clone();
 
     // Now seal.action_digest matches expected, BUT HMAC signature will not match!
-    let res_d = signer.validate_seal_properties(&forged_action_seal, &tampered_expected_digest, now);
+    let res_d =
+        signer.validate_seal_properties(&forged_action_seal, &tampered_expected_digest, now);
     assert!(
         matches!(res_d, Err(SealRejection::InvalidSignature)),
         "Forging action_digest to bypass check MUST fail closed at HMAC signature verification"
@@ -506,12 +525,16 @@ fn test_adversarial_parameter_clamping_under_narrow() {
     assert!(clamped_params["order_value_usd"].as_f64().unwrap() <= 10000.0);
 
     // 3. Routing seal MUST be issued
-    assert!(narrow_eval.seal.is_some(), "Routing seal must be issued on NARROW verdict");
+    assert!(
+        narrow_eval.seal.is_some(),
+        "Routing seal must be issued on NARROW verdict"
+    );
     let seal = narrow_eval.seal.unwrap();
 
     // 4. Assert routing seal binds EXCLUSIVELY to clamped action digest
     let clamped_digest = compute_action_digest("ExecuteStockOrder", &clamped_params);
-    let unconstrained_digest = compute_action_digest("ExecuteStockOrder", &unconstrained_request.parameters);
+    let unconstrained_digest =
+        compute_action_digest("ExecuteStockOrder", &unconstrained_request.parameters);
 
     assert_ne!(
         clamped_digest, unconstrained_digest,
@@ -635,7 +658,11 @@ fn test_adversarial_phase1_read_only_gating_stress_zero_fiscal_leakage() {
             "Hostile request {} must not be cleared",
             i
         );
-        assert!(result.seal.is_none(), "No seal may be issued for hostile request {}", i);
+        assert!(
+            result.seal.is_none(),
+            "No seal may be issued for hostile request {}",
+            i
+        );
         assert!(result.commit_receipt.is_none());
 
         // STRICT INVARIANT: Zero fiscal leakage across every single iteration

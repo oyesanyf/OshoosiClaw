@@ -37,6 +37,15 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         cls.dashboard_dir = cls.root / "dashboard"
         cls.corpus_dir = cls.root / "tests" / "corpus"
 
+    def _get_breakout_src(self):
+        gate_path = self.policy_dir / "src" / "breakout_gate.rs"
+        src = gate_path.read_text(encoding="utf-8") if gate_path.exists() else ""
+        breakout_dir = self.policy_dir / "src" / "breakout"
+        if breakout_dir.exists():
+            for p in breakout_dir.glob("*.rs"):
+                src += "\n" + p.read_text(encoding="utf-8")
+        return src
+
     # =========================================================================
     # Feature 1: F-R1-01 Wasm Tier 1 Pre-Bound Linker Caching & Zero-Copy Buffer Slicing
     # =========================================================================
@@ -197,12 +206,12 @@ class TestTier1FeatureCoverage(unittest.TestCase):
     # =========================================================================
     def test_feat06_tc01_ring7_authorizer_exists(self):
         """F-R1-06.1: Verify Ring 7 capability authorizer is defined in policy crate."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("Ring7" in breakout_src or "evaluate_effect" in breakout_src or "Authorizer" in breakout_src)
 
     def test_feat06_tc02_direct_byte_hashing_logic(self):
         """F-R1-06.2: Verify authorizer hashes raw binary bytes directly instead of metadata."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("hash" in breakout_src.lower() or "blake3" in breakout_src.lower() or "sha256" in breakout_src.lower())
 
     def test_feat06_tc03_toctou_prevention_on_file_tampering(self):
@@ -215,12 +224,12 @@ class TestTier1FeatureCoverage(unittest.TestCase):
 
     def test_feat06_tc04_manifest_digest_comparison(self):
         """F-R1-06.4: Verify computed hash is compared against permitted capability manifest."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("manifest" in breakout_src.lower() or "capability" in breakout_src.lower() or "effect" in breakout_src.lower())
 
     def test_feat06_tc05_missing_binary_fails_closed(self):
         """F-R1-06.5: Verify authorizer fails closed when binary path does not exist."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("Err" in breakout_src or "Deny" in breakout_src or "false" in breakout_src)
 
     # =========================================================================
@@ -228,17 +237,17 @@ class TestTier1FeatureCoverage(unittest.TestCase):
     # =========================================================================
     def test_feat07_tc01_authority_lattice_l1_to_l5_defined(self):
         """F-R1-07.1: Verify 5-Level Immutable Authority Lattice (L1-L5) is defined."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("L1" in breakout_src or "Lattice" in breakout_src or "Authority" in breakout_src)
 
     def test_feat07_tc02_genesis_envelope_pinned_at_creation(self):
         """F-R1-07.2: Verify agent genesis pins immutable capability envelope."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("genesis" in breakout_src.lower() or "immutable" in breakout_src.lower() or "envelope" in breakout_src.lower())
 
     def test_feat07_tc03_dynamic_dilation_strictly_prohibited(self):
         """F-R1-07.3: Verify runtime attempts to dilate capability envelope fail closed."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("dilation" in breakout_src.lower() or "escalat" in breakout_src.lower() or "deny" in breakout_src.lower())
 
     def test_feat07_tc04_parent_child_envelope_confinement(self):
@@ -249,7 +258,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
 
     def test_feat07_tc05_genesis_cryptographic_verification(self):
         """F-R1-07.5: Verify genesis token incorporates cryptographic signature or integrity hash."""
-        breakout_src = (self.policy_dir / "src" / "breakout_gate.rs").read_text(encoding="utf-8")
+        breakout_src = self._get_breakout_src()
         self.assertTrue("token" in breakout_src.lower() or "sig" in breakout_src.lower() or "verify" in breakout_src.lower())
 
     # =========================================================================

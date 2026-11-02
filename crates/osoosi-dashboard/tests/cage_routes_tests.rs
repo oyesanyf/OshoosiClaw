@@ -57,9 +57,8 @@ async fn send_request(
     let val: Value = if body_bytes.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
-            json!({"raw": String::from_utf8_lossy(&body_bytes)})
-        })
+        serde_json::from_slice(&body_bytes)
+            .unwrap_or_else(|_| json!({"raw": String::from_utf8_lossy(&body_bytes)}))
     };
 
     (status, val)
@@ -68,10 +67,19 @@ async fn send_request(
 #[tokio::test]
 async fn test_ingest_policy_missing_content_returns_400() {
     let mut app = build_test_app();
-    let (status, res) = send_request(&mut app, "POST", "/governance/ingest-policy", Some(json!({}))).await;
+    let (status, res) = send_request(
+        &mut app,
+        "POST",
+        "/governance/ingest-policy",
+        Some(json!({})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(res["error"], "BAD_REQUEST");
-    assert!(res["message"].as_str().unwrap().contains("Missing policy_content"));
+    assert!(res["message"]
+        .as_str()
+        .unwrap()
+        .contains("Missing policy_content"));
 }
 
 #[tokio::test]
@@ -412,7 +420,8 @@ async fn test_rollback_lifecycle_restores_cbf_budget() {
     .await;
 
     // 1. Missing debit_id returns 400
-    let (s_bad, r_bad) = send_request(&mut app, "POST", "/governance/rollback", Some(json!({}))).await;
+    let (s_bad, r_bad) =
+        send_request(&mut app, "POST", "/governance/rollback", Some(json!({}))).await;
     assert_eq!(s_bad, StatusCode::BAD_REQUEST);
     assert_eq!(r_bad["error"], "BAD_REQUEST");
 

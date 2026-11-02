@@ -11,15 +11,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
-pub mod canonical_json;
 pub mod cage_audit;
+pub mod canonical_json;
 pub mod hierarchical;
 pub mod nsrl_aslr_merkle;
 pub mod pqc_primitives;
 pub mod tpm;
 
-pub use canonical_json::*;
 pub use cage_audit::*;
+pub use canonical_json::*;
 pub use hierarchical::*;
 pub use nsrl_aslr_merkle::*;
 pub use pqc_primitives::*;

@@ -488,4 +488,3 @@ impl SignedWorkspaceInstructionAllowlist {
         }
     }
 }
-
