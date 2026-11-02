@@ -5,10 +5,18 @@ https://github.com/oyesanyf/OshoosiClaw so no stale PRs remain open.
 """
 import json
 import subprocess
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
+
+# Ensure functional Git is available in PATH (process-scoped)
+for gdir in [r"C:\Program Files\Git\cmd", r"C:\Program Files\Git\bin"]:
+    if os.path.exists(os.path.join(gdir, "git.exe")):
+        if gdir not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = gdir + os.pathsep + os.environ.get("PATH", "")
+        break
 
 REPO = "oyesanyf/OshoosiClaw"
 API_BASE = f"https://api.github.com/repos/{REPO}"

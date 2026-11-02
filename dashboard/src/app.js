@@ -582,6 +582,7 @@ function startApp() {
     fetchAutonomySettings();
     fetchBlockingRules();
     fetchSupervisorStatus();
+    refreshCageGovernanceUI();
     if (!supervisorInterval) {
         supervisorInterval = setInterval(fetchSupervisorStatus, 5000);
     }
@@ -16456,6 +16457,68 @@ window.renderResearchAccuracyResults = function(data, highlightRuleId) {
         </div>
     `;
 };
+
+// =========================================================================
+// CAGE Governance Substrate Client Telemetry & Handlers (Milestone 6)
+// =========================================================================
+
+async function refreshCageGovernanceUI() {
+    try {
+        const statsRes = await fetch('/governance/stats').catch(() => null);
+        if (statsRes && statsRes.ok) {
+            const data = await statsRes.json();
+            updateCageGovernanceUI(data);
+            return;
+        }
+
+        const policyRes = await fetch('/governance/policy-version').catch(() => null);
+        let policyVersion = 'None (Unpinned)';
+        if (policyRes && policyRes.ok) {
+            const data = await policyRes.json();
+            if (data.active_version_id) {
+                policyVersion = data.active_version_id;
+            }
+        }
+
+        const verifyRes = await fetch('/governance/trace/verify').catch(() => null);
+        let sealsCountText = '0 / 0';
+        if (verifyRes && verifyRes.ok) {
+            const data = await verifyRes.json();
+            if (typeof data.trace_count === 'number') {
+                sealsCountText = `${data.trace_count} / ${data.trace_count}`;
+            }
+        }
+
+        updateCageGovernanceUI({
+            policy_version: policyVersion,
+            cbf_barrier_val: 10.0,
+            seals_text: sealsCountText
+        });
+    } catch (e) {
+        console.warn('refreshCageGovernanceUI error:', e);
+    }
+}
+
+function updateCageGovernanceUI(stats) {
+    if (!stats) return;
+    const polEl = document.getElementById('cage-policy-version');
+    if (polEl && stats.policy_version !== undefined) {
+        polEl.textContent = stats.policy_version;
+    }
+    const cbfEl = document.getElementById('cage-cbf-indicator');
+    if (cbfEl && stats.cbf_barrier_val !== undefined) {
+        const val = Number(stats.cbf_barrier_val);
+        cbfEl.textContent = `h = ${val.toFixed(2)} (${val >= 0 ? 'Safe' : 'Breach'})`;
+        cbfEl.className = val >= 0 ? '' : 'cbf-danger';
+    }
+    const sealsEl = document.getElementById('cage-seals-count');
+    if (sealsEl && stats.seals_text !== undefined) {
+        sealsEl.textContent = stats.seals_text;
+    }
+}
+
+window.refreshCageGovernanceUI = refreshCageGovernanceUI;
+window.updateCageGovernanceUI = updateCageGovernanceUI;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

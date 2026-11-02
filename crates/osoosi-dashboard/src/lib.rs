@@ -107,6 +107,7 @@ pub struct DashboardState {
     pub mock_blocking_rules: Arc<tokio::sync::RwLock<Vec<osoosi_types::BlockingRule>>>,
     pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
     pub embedding_engine: Arc<osoosi_behavioral::EmbeddingGemma2Engine>,
+    pub cage: Arc<crate::routes::cage::CageServerState>,
 }
 
 impl DashboardState {
@@ -132,6 +133,7 @@ impl DashboardState {
             embedding_engine: Arc::new(osoosi_behavioral::EmbeddingGemma2Engine::new(
                 osoosi_behavioral::MatryoshkaDim::Dim128,
             )),
+            cage: Arc::new(crate::routes::cage::CageServerState::new()),
         }
     }
 }

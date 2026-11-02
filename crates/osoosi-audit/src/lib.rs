@@ -11,11 +11,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
+pub mod canonical_json;
+pub mod cage_audit;
 pub mod hierarchical;
 pub mod nsrl_aslr_merkle;
 pub mod pqc_primitives;
 pub mod tpm;
 
+pub use canonical_json::*;
+pub use cage_audit::*;
 pub use hierarchical::*;
 pub use nsrl_aslr_merkle::*;
 pub use pqc_primitives::*;
@@ -188,6 +192,60 @@ impl MerkleAuditTree {
         new_root
     }
 
+    /// Log a CAGE governance trace record into the Merkle audit tree.
+    /// Uses RFC 8785 canonical JSON hashing for leaf calculation.
+    /// Returns `(merkle_leaf_hash, merkle_root)`.
+    pub fn log_cage_governance_trace(&self, trace: &serde_json::Value) -> (String, String) {
+        let mut inner = self.inner.lock().expect("audit mutex poisoned");
+
+        let entry = AuditEntry {
+            timestamp: Utc::now(),
+            event_type: "GOVERNANCE_TRACE".to_string(),
+            data: trace.clone(),
+        };
+
+        // 1. Compute leaf hash using RFC 8785 JCS
+        let leaf_hash = crate::canonical_json::compute_canonical_hash(trace);
+
+        inner.entries.push(entry);
+        inner.leaves.push(leaf_hash.clone());
+
+        // 2. Incremental Merkle root update via right-spine accumulation
+        let n = inner.leaves.len();
+        update_spine(&mut inner.spine, &leaf_hash, n);
+
+        // 3. Auto-compact if in-memory entries reach 2x limit (8192) down to 4096
+        if inner.entries.len() >= MAX_IN_MEMORY_AUDIT_ENTRIES * 2 {
+            let evict_count = inner.entries.len() - MAX_IN_MEMORY_AUDIT_ENTRIES;
+            let current_root = Self::compute_root_from_spine(
+                &inner.spine,
+                inner.leaves.len(),
+                inner.epoch_checkpoint_root.as_deref(),
+            );
+            inner.epoch_checkpoint_root = Some(current_root);
+            inner.entries.drain(0..evict_count);
+            inner.leaves.drain(0..evict_count);
+            inner.spine = rebuild_spine(&inner.leaves);
+            inner.entries.shrink_to_fit();
+            inner.leaves.shrink_to_fit();
+            inner.spine.shrink_to_fit();
+        }
+
+        // 4. Compute final root by folding spine in O(log n) time
+        let new_root = Self::compute_root_from_spine(
+            &inner.spine,
+            inner.leaves.len(),
+            inner.epoch_checkpoint_root.as_deref(),
+        );
+        inner.root = new_root.clone();
+        drop(inner);
+
+        // 5. Extend to hardware TPM for root-of-trust outside the mutex
+        let _ = tpm::extend_audit_to_tpm("GOVERNANCE_TRACE", &new_root);
+
+        (leaf_hash, new_root)
+    }
+
     /// Compact in-memory audit log entries to cap RAM usage.
     /// Drains the oldest `inner.entries.len() - max_entries` entries, records the checkpoint root,
     /// rebuilds the spine for retained leaves, and returns the number of evicted entries.
@@ -222,10 +280,8 @@ impl MerkleAuditTree {
         evict_count
     }
 
-    /// Compute the final Merkle root from the current leaf set.
-    /// Used by `generate_proof()` and reference testing.
-    #[allow(dead_code)]
-    fn compute_root_from_leaves(leaf_hashes: &[String]) -> String {
+    /// Compute the final Merkle root from the given leaf hashes.
+    pub fn compute_root_from_leaves(leaf_hashes: &[String]) -> String {
         if leaf_hashes.is_empty() {
             return "0".repeat(64);
         }
@@ -244,6 +300,11 @@ impl MerkleAuditTree {
             current_level = next_level;
         }
         current_level.into_iter().next().unwrap()
+    }
+
+    /// Static helper to compute the Merkle root of a slice of leaf hashes.
+    pub fn compute_root(leaf_hashes: &[String]) -> String {
+        Self::compute_root_from_leaves(leaf_hashes)
     }
 
     /// Derive the root from the spine in O(log n) time, folding with epoch checkpoint if set.

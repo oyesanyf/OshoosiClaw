@@ -6,6 +6,7 @@
 pub mod agentjacking;
 pub mod arm_role;
 pub mod blocking;
+pub mod cage;
 pub mod config;
 pub mod error;
 pub mod executor;
@@ -23,6 +24,7 @@ pub mod utils;
 pub use agentjacking::*;
 pub use arm_role::*;
 pub use blocking::*;
+pub use cage::*;
 pub use config::*;
 pub use error::*;
 pub use executor::*;

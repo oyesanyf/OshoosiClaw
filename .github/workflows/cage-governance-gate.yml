@@ -1,0 +1,122 @@
+name: CAGE Governance Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: read-all
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  OSOOSI_NO_ORT: "1"
+  OSOOSI_NO_AI: "1"
+
+jobs:
+  # ── 1. TLC Formal BFS Model Check (NoDirectBind Invariant) ───────────────────
+  tlc-model-check:
+    name: Formal BFS Model Check (NoDirectBind)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: cage-tlc-model-check
+          cache-on-failure: true
+
+      - name: Execute 34-State BFS Formal Model Verification
+        run: |
+          cargo test -p osoosi-policy --lib cage::formal_model -- --nocapture
+          cargo test -p osoosi-policy --test cage_model_tests -- --nocapture
+
+  # ── 2. Deterministic Policy Compilation & Drift Gate ─────────────────────────
+  policy-compile-drift:
+    name: Policy Compilation Drift Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: cage-policy-compile-drift
+          cache-on-failure: true
+
+      - name: Verify Multi-Format Policy Parsing and Canonical Pinning
+        run: |
+          cargo test -p osoosi-policy --lib cage::policy_ingest -- --nocapture
+          cargo test -p osoosi-policy --test cage_ingest_tests -- --nocapture
+
+      - name: Execute CAGE E2E Governance Requirement Suite (Tiers 1-4)
+        run: python tests/e2e_cage_governance/run_suite.py
+
+  # ── 3. Compliance Audit Stream & Formal Invariants Replay ────────────────────
+  compliance-audit-stream:
+    name: Compliance Audit Stream Invariants Replay
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: cage-compliance-audit-stream
+          cache-on-failure: true
+
+      - name: Replay Audit Streams Against 5 Formal Invariants
+        run: |
+          cargo test -p osoosi-policy --lib cage::stream_verifier -- --nocapture
+          cargo test -p osoosi-audit --test cage_audit_tests -- --nocapture
+
+  # ── 4. License Guard & Attribution Integrity ─────────────────────────────────
+  license-guard:
+    name: License Compatibility & Attribution Guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Verify Apache-2.0 / MIT Compatibility and THIRD_PARTY_NOTICES Attribution
+        run: python scripts/verify_license_guard.py -v

@@ -84,6 +84,27 @@ Cleanup-OldLockedFiles
 # Helper: Cargo & WiX toolset auto-discovery in PATH and standard locations (Edge Case 2)
 # -----------------------------------------------------------------------------
 function Ensure-ToolchainInPath {
+    # 0a. Git discovery (ensure functional Git is in PATH ahead of any broken wrappers)
+    $gitWorks = $false
+    try {
+        $testGit = & git --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $testGit) { $gitWorks = $true }
+    } catch {}
+    if (-not $gitWorks) {
+        $candidateGitDirs = @(
+            "C:\Program Files\Git\cmd",
+            "C:\Program Files\Git\bin",
+            (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd")
+        )
+        foreach ($gdir in $candidateGitDirs) {
+            if ($gdir -and (Test-Path (Join-Path $gdir "git.exe"))) {
+                Write-Host "[TOOL] Discovered functional Git at '$gdir'. Adding to PATH." -ForegroundColor Cyan
+                $env:PATH = "$gdir;$env:PATH"
+                break
+            }
+        }
+    }
+
     # 0. Rustup toolchain bin discovery (executes directly from canonical .rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
     $rustupToolchain = "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
     $rustupBin = Join-Path $rustupToolchain "bin"

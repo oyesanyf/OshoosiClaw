@@ -1,4 +1,5 @@
 pub mod browser_sensor;
+pub mod cage;
 pub mod conformal_jailbreak;
 pub mod dlp;
 pub mod dlp_containment;
@@ -35,4 +36,5 @@ pub fn mount_routes() -> Router<DashboardState> {
         .merge(research_ingest::routes())
         .merge(hitl::routes())
         .merge(env_gateway::routes())
+        .merge(cage::routes())
 }
