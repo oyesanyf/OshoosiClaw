@@ -560,6 +560,80 @@ impl Service<Request<Body>> for SafeServeDir {
     }
 }
 
+async fn get_openapi_spec() -> Json<Value> {
+    Json(json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "OshoosiClaw (OpenỌ̀ṣọ́ọ̀sì) EDR & CAGE Governance API",
+            "version": "1.2.0",
+            "description": "OpenAPI 3.1.0 contract for Schemathesis property-based API & CAGE governance fuzzing."
+        },
+        "servers": [{ "url": "http://127.0.0.1:3030" }],
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "getHealth",
+                    "responses": { "200": { "description": "Daemon health status" } }
+                }
+            },
+            "/api/status": {
+                "get": {
+                    "operationId": "getStatus",
+                    "responses": {
+                        "200": { "description": "System status" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/mesh-stats": {
+                "get": {
+                    "operationId": "getMeshStats",
+                    "responses": {
+                        "200": { "description": "Mesh swarm telemetry" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/pending-joins": {
+                "get": {
+                    "operationId": "getPendingJoins",
+                    "responses": {
+                        "200": { "description": "Pending mesh peer joins with TPM version badges" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/zone-summary": {
+                "get": {
+                    "operationId": "getZoneSummary",
+                    "responses": {
+                        "200": { "description": "TPM 2.0 & Hardware Zone posture summary" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/governance/policy-version": {
+                "get": {
+                    "operationId": "getCagePolicyVersion",
+                    "responses": {
+                        "200": { "description": "Active CAGE Substrate Contract v1.0 policy version" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/cage/status": {
+                "get": {
+                    "operationId": "getCageStatus",
+                    "responses": {
+                        "200": { "description": "CAGE 7-Tier Governor & CBF barrier status" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            }
+        }
+    }))
+}
+
 fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     ensure_continuous_har_collector_started();
     // Autonomous HAR→DLP pipeline: every new HAR entry (files, imports, browser sensor) is
@@ -571,6 +645,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/health/", get(dashboard_health))
         .route("/api/health", get(dashboard_health))
         .route("/api/health/", get(dashboard_health))
+        .route("/api/openapi.json", get(get_openapi_spec))
+        .route("/openapi.json", get(get_openapi_spec))
         .route("/api/status", get(get_status))
         .route("/api/threats", get(get_threats))
         .route("/api/repair-status", get(get_repair_status))
@@ -1672,7 +1748,12 @@ async fn auth_middleware(
         && (path == "/" || path == "/index.html" || has_static_extension_str(&path));
 
     let is_public_bypass = if bind_all {
-        path == "/health" || path == "/api/health" || path == "/" || is_static_asset
+        path == "/health"
+            || path == "/api/health"
+            || path == "/api/openapi.json"
+            || path == "/openapi.json"
+            || path == "/"
+            || is_static_asset
     } else {
         path == "/health"
             || path == "/api/health"

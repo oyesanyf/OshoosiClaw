@@ -904,6 +904,7 @@ pub async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Valu
                             .map(|st| st.os_supported)
                             .unwrap_or(true);
                         let attestation_verified = gate.is_attestation_verified(&p.peer_id);
+                        let (tpm_version, tpm_badge, is_tpm_banned) = gate.resolve_peer_tpm_info(&p.peer_id);
                         let attestation_state = if attestation_verified {
                             "TPM 2.0 Hardware RoT Verified"
                         } else {
@@ -941,6 +942,11 @@ pub async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Valu
                             "os_supported": os_supported,
                             "attestation_verified": attestation_verified,
                             "attestation_state": attestation_state,
+                            "tpm_version": tpm_version,
+                            "tpm_badge": tpm_badge,
+                            "attestation_mode": tpm_badge,
+                            "tpm_1_2_banned": true,
+                            "is_tpm_banned": is_tpm_banned,
                             "status": "Awaiting Operator Approval"
                         })
                     })
@@ -1167,6 +1173,10 @@ pub async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value
                 "network_type": "local",
                 "node_type": "endpoint_host",
                 "attestation": if assessment.tpm.available { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
+                "tpm_version": assessment.tpm.version.clone().unwrap_or_else(|| "2.0".to_string()),
+                "tpm_badge": assessment.tpm.format_tpm_badge(),
+                "attestation_mode": assessment.tpm.attestation_mode.clone(),
+                "tpm_1_2_banned": true,
                 "status": "Optimal",
                 "latency_ms": 0.0
             })];
@@ -1271,6 +1281,10 @@ pub async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value
                                     "network_type": "lan",
                                     "node_type": "endpoint_host",
                                     "attestation": "TPM 2.0 Verified (PCR-0 Match)",
+                                    "tpm_version": if pid.to_ascii_lowercase().contains("tpm1.2") || pid.to_ascii_lowercase().contains("tpm-1.2") { "1.2" } else if pid.to_ascii_lowercase().contains("notpm") || pid.to_ascii_lowercase().contains("dpapi") { "None" } else { "2.0" },
+                                    "tpm_badge": if pid.to_ascii_lowercase().contains("tpm1.2") || pid.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if pid.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if pid.to_ascii_lowercase().contains("notpm") || pid.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                                    "attestation_mode": if pid.to_ascii_lowercase().contains("tpm1.2") || pid.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if pid.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if pid.to_ascii_lowercase().contains("notpm") || pid.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                                    "tpm_1_2_banned": true,
                                     "status": "Synchronized",
                                     "latency_ms": 1.2
                                 }));
@@ -1292,6 +1306,11 @@ pub async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value
                 "recent_events": [],
                 "zone": "zone-alpha-mesh",
                 "tpm_attested": assessment.tpm.available || sec_score >= 60,
+                "tpm_version": assessment.tpm.version.clone().unwrap_or_else(|| "2.0".to_string()),
+                "tpm_badge": assessment.tpm.format_tpm_badge(),
+                "attestation_mode": assessment.tpm.attestation_mode.clone(),
+                "tpm_1_2_banned": true,
+                "allowed_tpm_versions": ["TPM 2.0 (Hardware Attested)", "vTPM 2.0 (Virtual)"],
                 "zones": [],
                 "gaps": [],
                 "status": "idle"
@@ -1874,6 +1893,10 @@ pub async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
         "node_type": "endpoint_host",
         "status": "online",
         "attestation_state": "TPM 2.0 Hardware RoT Verified",
+        "tpm_version": "2.0",
+        "tpm_badge": "TPM 2.0 (Hardware Attested)",
+        "attestation_mode": "TPM 2.0 (Hardware Attested)",
+        "tpm_1_2_banned": true,
         "reputation_score": 1.0,
         "health": "Optimal",
         "latency_ms": 0.0,
@@ -1929,6 +1952,10 @@ pub async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
                     "network_type": network_type,
                     "status": if score < 0.3 { "quarantined" } else { "online" },
                     "attestation_state": if score > 0.7 { "TPM 2.0 Verified" } else { "Attestation Failed" },
+                    "tpm_version": if nid.to_ascii_lowercase().contains("tpm1.2") || nid.to_ascii_lowercase().contains("tpm-1.2") { "1.2" } else if nid.to_ascii_lowercase().contains("notpm") || nid.to_ascii_lowercase().contains("dpapi") { "None" } else { "2.0" },
+                    "tpm_badge": if nid.to_ascii_lowercase().contains("tpm1.2") || nid.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if nid.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if nid.to_ascii_lowercase().contains("notpm") || nid.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                    "attestation_mode": if nid.to_ascii_lowercase().contains("tpm1.2") || nid.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if nid.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if nid.to_ascii_lowercase().contains("notpm") || nid.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                    "tpm_1_2_banned": true,
                     "reputation_score": score,
                     "health": if score < 0.3 { "Compromised" } else if score < 0.7 { "Warning" } else { "Good" },
                     "latency_ms": if is_hotspot { 45.0 } else { 3.5 },

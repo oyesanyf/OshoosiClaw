@@ -780,6 +780,15 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                 assert.ok(activeTbody.innerHTML.includes('stego-canvas-'), 'HTML must contain stego-canvas elements');
                 assert.ok(activeTbody.innerHTML.includes('2025 (VERIFIED)'), 'HTML must contain 2025 (VERIFIED) badge for verified 2025 papers');
                 assert.ok(activeTbody.innerHTML.includes('2026+ (CURRENT)'), 'HTML must contain 2026+ (CURRENT) badge for frontier papers');
+
+                const resolve = env.mockWindow.resolveNodeTpmInfo;
+                assert.strictEqual(typeof resolve, 'function', 'resolveNodeTpmInfo must be exported on window');
+                assert.strictEqual(resolve({ tpm_version: '2.0', tpm_badge: 'TPM 2.0 (Hardware Attested)' }).badgeLabel, 'TPM 2.0 (Hardware Attested)');
+                assert.strictEqual(resolve({ tpm_version: '2.0', tpm_badge: 'vTPM 2.0 (Virtual)' }).badgeLabel, 'vTPM 2.0 (Virtual)');
+                assert.strictEqual(resolve({ tpm_version: 'None', tpm_badge: 'No TPM (Software / DPAPI Fallback)' }).badgeLabel, 'No TPM (Software / DPAPI Fallback)');
+                const legacyTpm = resolve({ peer_id: 'peer-tpm1.2-legacy', tpm_version: '1.2' });
+                assert.strictEqual(legacyTpm.badgeLabel, 'TPM 1.2 (Legacy)');
+                assert.strictEqual(legacyTpm.isBanned, true);
             });
         });
     }

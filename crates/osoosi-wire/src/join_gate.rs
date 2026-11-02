@@ -73,6 +73,73 @@ impl JoinGate {
         &self.memory
     }
 
+    /// Returns true if the peer reports or encodes Legacy TPM 1.2, which is strictly banned
+    /// across the OshoosiClaw mesh (only TPM 2.0 is allowed).
+    pub fn is_peer_tpm_1_2(&self, peer_id: &str) -> bool {
+        let id_lc = peer_id.to_ascii_lowercase();
+        if id_lc.contains("tpm1.2")
+            || id_lc.contains("tpm-1.2")
+            || id_lc.contains("tpm_1_2")
+            || id_lc.contains("tpm 1.2")
+        {
+            return true;
+        }
+        if let Ok(Some(st)) = self.memory.get_peer_status(peer_id) {
+            let combined = format!(
+                "{} {}",
+                st.os_name.to_ascii_lowercase(),
+                st.os_version.to_ascii_lowercase()
+            );
+            if combined.contains("tpm 1.2")
+                || combined.contains("tpm1.2")
+                || combined.contains("tpm-1.2")
+                || combined.contains("tpm_1_2")
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Resolves `(tpm_version, tpm_badge, is_tpm_banned)` for a peer in the mesh or pending joins list.
+    /// Canonical TPM badges:
+    /// - `"TPM 2.0 (Hardware Attested)"`
+    /// - `"TPM 1.2 (Legacy)"` (strictly banned; only TPM 2.0 is allowed)
+    /// - `"vTPM 2.0 (Virtual)"`
+    /// - `"No TPM (Software / DPAPI Fallback)"`
+    pub fn resolve_peer_tpm_info(&self, peer_id: &str) -> (&'static str, &'static str, bool) {
+        if self.is_peer_tpm_1_2(peer_id) {
+            return ("1.2", "TPM 1.2 (Legacy)", true);
+        }
+        let id_lc = peer_id.to_ascii_lowercase();
+        let st_combined = self
+            .memory
+            .get_peer_status(peer_id)
+            .ok()
+            .flatten()
+            .map(|st| {
+                format!(
+                    "{} {}",
+                    st.os_name.to_ascii_lowercase(),
+                    st.os_version.to_ascii_lowercase()
+                )
+            })
+            .unwrap_or_default();
+
+        if id_lc.contains("vtpm") || st_combined.contains("vtpm") {
+            return ("2.0", "vTPM 2.0 (Virtual)", false);
+        }
+        if id_lc.contains("notpm")
+            || id_lc.contains("no-tpm")
+            || id_lc.contains("dpapi")
+            || st_combined.contains("no tpm")
+            || st_combined.contains("dpapi")
+        {
+            return ("None", "No TPM (Software / DPAPI Fallback)", false);
+        }
+        ("2.0", "TPM 2.0 (Hardware Attested)", false)
+    }
+
     /// Called when a PeerAnnounce is received. Upserts to memory; removes from pending if peer fails rules.
     pub fn on_peer_announce_received(
         &self,
@@ -88,6 +155,17 @@ impl JoinGate {
         }
 
         self.memory.upsert_peer_status(announce)?;
+
+        // Enforce exclusive TPM 2.0 policy: Legacy TPM 1.2 is strictly banned
+        if self.is_peer_tpm_1_2(&announce.source_node) {
+            let reason = "Legacy TPM 1.2 is strictly banned (only TPM 2.0 is allowed)";
+            warn!(
+                "Peer {} blocked & removed from pending joins: {}",
+                announce.source_node, reason
+            );
+            self.memory.remove_pending_join(&announce.source_node).ok();
+            return Ok(());
+        }
 
         // Master Node Verification
         if let Some(ref master_pk_hex) = self.master_node_public_key {
@@ -383,6 +461,12 @@ impl JoinGate {
 
     /// User approved this peer. Manual operator approval via the UI succeeds for any non-quarantined pending peer.
     pub async fn allow(&self, peer_id: &str) -> anyhow::Result<()> {
+        if self.is_peer_tpm_1_2(peer_id) {
+            return Err(anyhow::anyhow!(
+                "Peer {} cannot join: Legacy TPM 1.2 is strictly banned (only TPM 2.0 is allowed)",
+                peer_id
+            ));
+        }
         if self.is_quarantined(peer_id)? {
             return Err(anyhow::anyhow!(
                 "Peer {} is quarantined and cannot be approved",

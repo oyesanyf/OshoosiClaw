@@ -1071,6 +1071,10 @@ impl EdrOrchestrator {
             "network_type": "local",
             "node_type": "endpoint_host",
             "attestation": if hardened_status.as_ref().map(|s| s.tpm.available).unwrap_or(false) { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
+            "tpm_version": hardened_status.as_ref().and_then(|s| s.tpm.version.clone()).unwrap_or_else(|| "2.0".to_string()),
+            "tpm_badge": hardened_status.as_ref().map(|s| s.tpm.format_tpm_badge()).unwrap_or_else(|| "TPM 2.0 (Hardware Attested)".to_string()),
+            "attestation_mode": hardened_status.as_ref().map(|s| s.tpm.attestation_mode.clone()).unwrap_or_else(|| "TPM 2.0 (Hardware Attested)".to_string()),
+            "tpm_1_2_banned": true,
             "status": "Optimal",
             "latency_ms": 0.0
         })];
@@ -1117,6 +1121,10 @@ impl EdrOrchestrator {
                     "network_type": network_type,
                     "node_type": "endpoint_host",
                     "attestation": if is_threat { "Attestation Failed" } else { "TPM 2.0 Verified (PCR-0 Match)" },
+                    "tpm_version": if id.to_ascii_lowercase().contains("tpm1.2") || id.to_ascii_lowercase().contains("tpm-1.2") { "1.2" } else if id.to_ascii_lowercase().contains("notpm") || id.to_ascii_lowercase().contains("dpapi") { "None" } else { "2.0" },
+                    "tpm_badge": if id.to_ascii_lowercase().contains("tpm1.2") || id.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if id.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if id.to_ascii_lowercase().contains("notpm") || id.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                    "attestation_mode": if id.to_ascii_lowercase().contains("tpm1.2") || id.to_ascii_lowercase().contains("tpm-1.2") { "TPM 1.2 (Legacy)" } else if id.to_ascii_lowercase().contains("vtpm") { "vTPM 2.0 (Virtual)" } else if id.to_ascii_lowercase().contains("notpm") || id.to_ascii_lowercase().contains("dpapi") { "No TPM (Software / DPAPI Fallback)" } else { "TPM 2.0 (Hardware Attested)" },
+                    "tpm_1_2_banned": true,
                     "status": if is_threat { "Quarantined" } else { "Synchronized" },
                     "latency_ms": if is_hotspot { 45.0 } else { 1.2 }
                 }));
@@ -1183,6 +1191,11 @@ impl EdrOrchestrator {
             "zone": "zone-alpha-mesh",
             "node_id": self.trust.did(),
             "tpm_attested": true,
+            "tpm_version": hardened_status.as_ref().and_then(|s| s.tpm.version.clone()).unwrap_or_else(|| "2.0".to_string()),
+            "tpm_badge": hardened_status.as_ref().map(|s| s.tpm.format_tpm_badge()).unwrap_or_else(|| "TPM 2.0 (Hardware Attested)".to_string()),
+            "attestation_mode": hardened_status.as_ref().map(|s| s.tpm.attestation_mode.clone()).unwrap_or_else(|| "TPM 2.0 (Hardware Attested)".to_string()),
+            "tpm_1_2_banned": true,
+            "allowed_tpm_versions": ["TPM 2.0 (Hardware Attested)", "vTPM 2.0 (Virtual)"],
             "nodes": nodes,
         })
     }

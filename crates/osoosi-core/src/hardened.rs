@@ -212,6 +212,14 @@ pub fn scrub_memory(data: &mut [u8]) {
 // ============================================================================
 
 /// TPM status and capabilities.
+fn default_tpm_1_2_banned() -> bool {
+    true
+}
+
+fn default_attestation_mode() -> String {
+    "TPM 2.0 (Hardware Attested)".to_string()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TpmStatus {
     pub available: bool,
@@ -220,6 +228,43 @@ pub struct TpmStatus {
     #[serde(default)]
     pub device_id: Option<String>,
     pub description: String,
+    #[serde(default = "default_attestation_mode")]
+    pub attestation_mode: String,
+    #[serde(default = "default_tpm_1_2_banned")]
+    pub tpm_1_2_banned: bool,
+}
+
+impl TpmStatus {
+    /// Returns the canonical WebUI TPM badge label:
+    /// - "TPM 2.0 (Hardware Attested)"
+    /// - "vTPM 2.0 (Virtual)"
+    /// - "TPM 1.2 (Legacy)"
+    /// - "No TPM (Software / DPAPI Fallback)"
+    pub fn format_tpm_badge(&self) -> String {
+        let ver = self.version.as_deref().unwrap_or("").trim();
+        let desc_lower = self.description.to_ascii_lowercase();
+        let mfg_lower = self
+            .manufacturer
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ver.starts_with("1.2") || desc_lower.contains("tpm 1.2") {
+            "TPM 1.2 (Legacy)".to_string()
+        } else if self.available {
+            if desc_lower.contains("vtpm")
+                || desc_lower.contains("virtual")
+                || mfg_lower.contains("qemu")
+                || mfg_lower.contains("vmware")
+                || mfg_lower.contains("hyper-v")
+            {
+                "vTPM 2.0 (Virtual)".to_string()
+            } else {
+                "TPM 2.0 (Hardware Attested)".to_string()
+            }
+        } else {
+            "No TPM (Software / DPAPI Fallback)".to_string()
+        }
+    }
 }
 
 /// Detect TPM 2.0 availability on this platform.
@@ -240,6 +285,8 @@ pub fn detect_tpm() -> TpmStatus {
                     manufacturer: None,
                     device_id: None,
                     description: "TPM detection timed out (WMI latency guard applied)".into(),
+                    attestation_mode: "No TPM (Software / DPAPI Fallback)".into(),
+                    tpm_1_2_banned: true,
                 })
         })
         .clone()
@@ -252,6 +299,8 @@ fn detect_tpm_internal() -> TpmStatus {
         manufacturer: None,
         device_id: None,
         description: String::new(),
+        attestation_mode: "No TPM (Software / DPAPI Fallback)".to_string(),
+        tpm_1_2_banned: true,
     };
 
     #[cfg(target_os = "windows")]
@@ -382,14 +431,32 @@ fn detect_tpm_internal() -> TpmStatus {
         }
     }
 
-    status.description = if status.available {
-        format!(
-            "TPM {} detected. Hardware attestation available.",
-            status.version.as_deref().unwrap_or("2.0")
-        )
+    // Strictly ban Legacy TPM 1.2: only TPM 2.0 is allowed for hardware root-of-trust attestation
+    if status
+        .version
+        .as_deref()
+        .is_some_and(|v| v.trim().starts_with("1.2"))
+    {
+        status.available = false;
+        status.attestation_mode = "TPM 1.2 (Legacy)".to_string();
+        status.tpm_1_2_banned = true;
+        status.description =
+            "Legacy TPM 1.2 detected and strictly BANNED by policy (only TPM 2.0 is allowed)."
+                .to_string();
     } else {
-        "No TPM detected. Audit attestation will use software-only signing.".to_string()
-    };
+        status.tpm_1_2_banned = true;
+        status.attestation_mode = status.format_tpm_badge();
+        status.description = if status.available {
+            format!(
+                "TPM {} detected ({}). Hardware attestation available (TPM 1.2 banned).",
+                status.version.as_deref().unwrap_or("2.0"),
+                status.attestation_mode
+            )
+        } else {
+            "No TPM 2.0 detected (No TPM: Software / DPAPI Fallback active; legacy TPM 1.2 banned)."
+                .to_string()
+        };
+    }
 
     info!("{}", status.description);
     status

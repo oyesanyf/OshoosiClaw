@@ -5239,6 +5239,84 @@ function updateTelemetryChart(data) {
 /**
  * Render Zone Overview
  */
+/**
+ * Resolve exact TPM version and attestation mode badge for a node or joining peer.
+ * Canonical badges:
+ * - "TPM 2.0 (Hardware Attested)"
+ * - "TPM 1.2 (Legacy)" (Strictly Banned — Only TPM 2.0 Allowed)
+ * - "vTPM 2.0 (Virtual)"
+ * - "No TPM (Software / DPAPI Fallback)"
+ */
+function resolveNodeTpmInfo(nodeOrPeer) {
+    const item = nodeOrPeer || {};
+    const rawBadge = String(item.tpm_badge || item.attestation_mode || '').trim();
+    const rawVer = String(item.tpm_version || '').trim().toLowerCase();
+    const rawAtt = String(item.attestation || item.attestation_state || '').trim().toLowerCase();
+    const rawId = String(item.peer_id || item.id || item.name || item.label || '').trim().toLowerCase();
+    const rawOs = String(item.os || '').trim().toLowerCase();
+    const combined = `${rawBadge.toLowerCase()} ${rawVer} ${rawAtt} ${rawId} ${rawOs}`;
+
+    if (
+        item.is_tpm_banned === true ||
+        rawBadge === 'TPM 1.2 (Legacy)' ||
+        rawVer === '1.2' ||
+        rawVer.startsWith('1.2') ||
+        combined.includes('tpm 1.2') ||
+        combined.includes('tpm1.2') ||
+        combined.includes('tpm-1.2') ||
+        combined.includes('tpm_1_2')
+    ) {
+        return {
+            version: '1.2',
+            badgeLabel: 'TPM 1.2 (Legacy)',
+            badgeClass: 'red',
+            isBanned: true,
+            policyNote: 'Banned — Only TPM 2.0 Allowed'
+        };
+    }
+
+    if (
+        rawBadge === 'vTPM 2.0 (Virtual)' ||
+        combined.includes('vtpm') ||
+        combined.includes('virtual tpm')
+    ) {
+        return {
+            version: '2.0',
+            badgeLabel: 'vTPM 2.0 (Virtual)',
+            badgeClass: 'blue',
+            isBanned: false,
+            policyNote: 'Allowed (TPM 2.0 Virtual)'
+        };
+    }
+
+    if (
+        rawBadge === 'No TPM (Software / DPAPI Fallback)' ||
+        rawVer === 'none' ||
+        combined.includes('no tpm') ||
+        combined.includes('notpm') ||
+        combined.includes('no-tpm') ||
+        combined.includes('dpapi') ||
+        combined.includes('software enclave')
+    ) {
+        return {
+            version: 'None',
+            badgeLabel: 'No TPM (Software / DPAPI Fallback)',
+            badgeClass: 'yellow',
+            isBanned: false,
+            policyNote: 'Software / DPAPI Fallback'
+        };
+    }
+
+    return {
+        version: '2.0',
+        badgeLabel: 'TPM 2.0 (Hardware Attested)',
+        badgeClass: 'green',
+        isBanned: false,
+        policyNote: 'Allowed (TPM 2.0 Hardware Root-of-Trust)'
+    };
+}
+window.resolveNodeTpmInfo = resolveNodeTpmInfo;
+
 async function renderZoneView() {
     try {
         let cachedZone = null;
@@ -5352,6 +5430,7 @@ async function renderZoneView() {
         ? "TPM 2.0 Anchored · WFP Containment Armed"
         : (score >= 60 ? "Calibrated Baseline · WFP Armed" : "TPM 2.0 Anchored · WFP Containment Armed");
     const attestationColor = summary.tpm_attested ? 'var(--accent-green)' : 'var(--accent-blue)';
+    const zoneLocalTpm = resolveNodeTpmInfo(summary);
 
     const container = document.getElementById('zone-summary-container');
     if (container) {
@@ -5383,7 +5462,7 @@ async function renderZoneView() {
             <div class="stat-card glass shadow-glow">
                 <div class="stat-info">
                     <span class="stat-label">Hardware Attestation</span>
-                    <span class="stat-value" style="font-size: 12px; font-weight: 600; color: ${attestationColor}; line-height: 1.4;">${escapeHtml(attestationLabel)}</span>
+                    <span class="stat-value" style="font-size: 12px; font-weight: 600; color: ${attestationColor}; line-height: 1.4;"><span class="badge ${zoneLocalTpm.badgeClass}" style="font-size:11px; margin-bottom:4px; display:inline-block;">${escapeHtml(zoneLocalTpm.badgeLabel)}</span><br>${escapeHtml(attestationLabel)}<span style="display:block; font-size:10.5px; color:#10b981; margin-top:2px;">🔒 Only TPM 2.0 Allowed • TPM 1.2 Banned</span></span>
                 </div>
             </div>
         `;
@@ -5539,6 +5618,7 @@ async function renderZoneView() {
             } else {
                 const isLocal = n.network_type === 'local' || n.role === 'Master Core' || String(n.id).includes('local') || (summary.node_id && n.id === summary.node_id);
                 const isHotspot = n.network_type === 'hotspot' || (n.role && (n.role.includes('Hotspot') || n.role.includes('Cellular'))) || String(n.id).includes('10812adc') || String(n.name).includes('10812adc');
+                const nodeTpm = resolveNodeTpmInfo(n);
 
                 let hostBadge;
                 let borderStyle;
@@ -5581,10 +5661,11 @@ async function renderZoneView() {
                     <div class="item-info" style="flex: 1;">
                         <div class="item-title" style="display: flex; justify-content: space-between; align-items: center;">
                             <span style="font-weight: 600;">${escapeHtml(n.name)} <code style="font-size: 11px; opacity: 0.8; margin-left: 6px;">${escapeHtml(n.address)}</code></span>
-                            ${hostBadge}
+                            <span style="display:inline-flex; gap:6px; align-items:center;"><span class="badge ${nodeTpm.badgeClass}" style="font-size:11px;">${escapeHtml(nodeTpm.badgeLabel)}${nodeTpm.isBanned ? ' • BANNED' : ''}</span>${hostBadge}</span>
                         </div>
                         <div class="item-meta" style="margin-top: 4px;">
                             <span><i data-lucide="shield-check"></i> ${escapeHtml(n.attestation)}</span>
+                            <span><i data-lucide="lock"></i> <strong>TPM:</strong> ${escapeHtml(nodeTpm.badgeLabel)}</span>
                             <span><i data-lucide="cpu"></i> Role: ${escapeHtml(n.role)}</span>
                             <span><i data-lucide="activity"></i> Latency: ${n.latency_ms} ms</span>
                             ${transportChannel}
