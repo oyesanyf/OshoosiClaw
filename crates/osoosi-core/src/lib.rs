@@ -67,6 +67,7 @@ pub mod openshell;
 pub mod orchestrator;
 pub mod otx_tarpit;
 pub mod pe_inspector;
+pub mod peer_pid;
 pub mod pii;
 pub mod privacy;
 pub mod privilege;

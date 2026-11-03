@@ -5925,9 +5925,11 @@ version = "1.2.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "blake3",
  "chrono",
  "dashmap",
+ "ed25519-dalek 2.2.0",
  "hex",
  "hmac 0.12.1",
  "once_cell",

@@ -37,10 +37,10 @@ pub mod spider_eyes;
 pub mod yara_analyzer;
 
 pub use conformal_jailbreak::{
-    bounds as conformal_bounds, embed_prompt_representation_64d, CalibratedSource,
-    DkwProductSupermartingale, KnownJailbreakSourceFamily, LayeredGuardrail, LayeredReplayMetrics,
-    MultiSourceCalibration, PersistDetector, PersistStepResult, SourceMonitor, SrDetector,
-    ThresholdCalibrationSummary,
+    bounds as conformal_bounds, compute_normative_conformal_p_value,
+    embed_prompt_representation_64d, CalibratedSource, DkwProductSupermartingale,
+    KnownJailbreakSourceFamily, LayeredGuardrail, LayeredReplayMetrics, MultiSourceCalibration,
+    PersistDetector, PersistStepResult, SourceMonitor, SrDetector, ThresholdCalibrationSummary,
 };
 pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{

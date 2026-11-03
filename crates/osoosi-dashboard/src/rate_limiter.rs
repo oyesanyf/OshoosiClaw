@@ -195,6 +195,13 @@ pub fn extract_client_key(req: &Request<Body>) -> String {
         }
     }
 
+    if let Some(axum::extract::ConnectInfo(addr)) = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
+        return addr.ip().to_string();
+    }
+
     // Default to loopback client identifier
     "127.0.0.1".to_string()
 }
@@ -208,6 +215,7 @@ pub async fn rate_limit_middleware(
 
     // Health probes are strictly exempt from rate limiting to prevent false-positive liveness stalls
     if path == "/health"
+        || path == "/.well-known/jwks.json"
         || path == "/api/health"
         || path == "/api/killchain/health-probe"
         || path == "/killchain/health-probe"
