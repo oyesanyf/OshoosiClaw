@@ -1627,8 +1627,27 @@ pub fn discover_preserved_management_ports() -> Vec<u16> {
             }
         }
     }
-    for candidate in ["logs/active_port.txt", "database/active_port.txt"] {
-        if let Ok(raw) = std::fs::read_to_string(candidate) {
+    let mut candidates = vec![
+        std::path::PathBuf::from("logs/active_port.txt"),
+        std::path::PathBuf::from("database/active_port.txt"),
+    ];
+    #[cfg(windows)]
+    if let Ok(pd) = std::env::var("ProgramData") {
+        candidates.push(
+            std::path::PathBuf::from(pd)
+                .join("OshoosiClaw")
+                .join("active_port.txt"),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    candidates.push(std::path::PathBuf::from(
+        "/var/run/oshoosiclaw/active_port.txt",
+    ));
+    for candidate in candidates {
+        if candidate.is_symlink() {
+            continue;
+        }
+        if let Ok(raw) = std::fs::read_to_string(&candidate) {
             if let Ok(p) = raw.trim().parse::<u16>() {
                 if p > 0 && !ports.contains(&p) {
                     ports.push(p);

@@ -201,3 +201,5 @@ submit_err.log
 submit_out.log
 patch_hayabusa*.py
 fix_hayabusa.py
+
+quarantine_journal.json

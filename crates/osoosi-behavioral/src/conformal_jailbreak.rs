@@ -1390,6 +1390,33 @@ fn moore_penrose_pseudoinverse_spd(mat: &Array2<f64>, rcond: f64) -> Array2<f64>
     pinv
 }
 
+/// Computes a calibrated split-conformal p-value over a variable-dimension CAGE nonconformity
+/// score vector using a normative identity Mahalanobis calibration set (`n = 500` over `[0.01..=5.00]`).
+pub fn compute_normative_conformal_p_value(scores: &[f64]) -> f64 {
+    if scores.is_empty() {
+        return 0.0;
+    }
+    let d = scores.len();
+    let calibration_scores: Vec<f64> = (1..=500).map(|i| (i as f64) * 0.01).collect();
+    let source = CalibratedSource::new(
+        "cage_normative_reference",
+        Array1::zeros(d),
+        Array2::eye(d),
+        calibration_scores,
+    );
+    let cal = MultiSourceCalibration {
+        pca_mean: Array1::zeros(d),
+        pca_components: Array2::eye(d),
+        sources: vec![source],
+    };
+    let arr = Array1::from_vec(scores.to_vec());
+    let raw_p = cal
+        .p_values(&arr.view())
+        .into_iter()
+        .fold(1.0_f64, |acc, p| acc.min(p));
+    (raw_p * 1_000_000.0).round() / 1_000_000.0
+}
+
 /// Cyclic Jacobi eigenvalue algorithm for real symmetric matrices $A \in \mathbb{R}^{d \times d}$.
 fn jacobi_eigen_symmetric(mat: &Array2<f64>, max_sweeps: usize) -> (Array1<f64>, Array2<f64>) {
     let d = mat.nrows();

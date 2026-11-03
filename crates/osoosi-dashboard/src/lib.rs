@@ -108,6 +108,7 @@ pub struct DashboardState {
     pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
     pub embedding_engine: Arc<osoosi_behavioral::EmbeddingGemma2Engine>,
     pub cage: Arc<crate::routes::cage::CageServerState>,
+    pub cage_substrate: Arc<crate::routes::cage_substrate::CageSubstrateState>,
 }
 
 impl DashboardState {
@@ -134,6 +135,7 @@ impl DashboardState {
                 osoosi_behavioral::MatryoshkaDim::Dim128,
             )),
             cage: Arc::new(crate::routes::cage::CageServerState::new()),
+            cage_substrate: Arc::new(crate::routes::cage_substrate::CageSubstrateState::new()),
         }
     }
 }
@@ -438,6 +440,8 @@ impl Service<Request<Body>> for SafeServeDir {
                 || lower_path.starts_with("/rea/")
                 || lower_path == "/health"
                 || lower_path.starts_with("/health/")
+                || lower_path == "/v1"
+                || lower_path.starts_with("/v1/")
             {
                 return Ok(Response::builder()
                     .status(StatusCode::NOT_FOUND)
@@ -1712,6 +1716,8 @@ async fn auth_middleware(
     // F14: Enforce Origin & Sec-Fetch-Site CSRF protection on state-changing requests and session endpoints
     if (is_state_changing || path == "/api/auth/session" || path == "/api/auth/status")
         && !path.starts_with("/api/browser-sensor/")
+        && !path.starts_with("/v1/cage/")
+        && !path.starts_with("/api/v1/cage/")
     {
         validate_csrf_origin_and_fetch_site(req.headers())?;
     }
@@ -1742,6 +1748,9 @@ async fn auth_middleware(
         // authentication themselves with constant-time comparison.
         || path == "/api/browser-sensor/pair"
         || path == "/api/browser-sensor/har"
+        || path == "/.well-known/jwks.json"
+        || path.starts_with("/v1/cage/")
+        || path.starts_with("/api/v1/cage/")
     {
         return Ok(next.run(req).await);
     }
@@ -1905,6 +1914,7 @@ pub async fn spawn_dashboard_with_backend(
     crate::routes::research_ingest::start_weekly_autonomous_research_scheduler();
     crate::routes::workflow_guard::start_workflow_guard_self_healing_watchdog();
 
+    let _ = state.cage_substrate.journal.recover_and_re_enforce().await;
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -3116,6 +3126,7 @@ pub async fn start_dashboard_with_backend(
         info!("Dashboard assets NOT found. API endpoints will work but no UI. Set OSOOSI_DASHBOARD_DIR or place files in dashboard/dist/");
     }
 
+    let _ = state.cage_substrate.journal.recover_and_re_enforce().await;
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -7542,6 +7553,8 @@ async fn post_killchain_isolate_endpoint(
 
 #[derive(Debug, Deserialize)]
 pub struct KillChainDisarmPayload {
+    #[serde(default)]
+    pub caller_pid: Option<u32>,
     pub username: Option<String>,
     pub password: Option<String>,
     pub credential: Option<String>,
@@ -7552,6 +7565,8 @@ pub struct KillChainDisarmPayload {
 
 async fn post_killchain_disarm_endpoint(
     State(state): State<DashboardState>,
+    connect_info: Option<axum::extract::ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(payload): Json<KillChainDisarmPayload>,
 ) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
     let expected_token = get_or_init_dashboard_api_token();
@@ -7611,6 +7626,39 @@ async fn post_killchain_disarm_endpoint(
     let reason = payload
         .reason
         .unwrap_or_else(|| "Operator Disarmed Isolation".to_string());
+
+    if let (Some(claimed_pid), Some(axum::extract::ConnectInfo(peer_addr))) =
+        (payload.caller_pid, connect_info)
+    {
+        let bound_port = headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|h| h.rsplit_once(':'))
+            .and_then(|(_, p)| p.trim().parse::<u16>().ok())
+            .unwrap_or(3030);
+        match osoosi_core::peer_pid::resolve_loopback_peer_pid(peer_addr, bound_port) {
+            Ok(actual_pid) if actual_pid != claimed_pid => {
+                return Err(api_error(
+                    StatusCode::UNAUTHORIZED,
+                    "CALLER_PID_SPOOF_DETECTED",
+                    format!(
+                        "Caller PID spoofing detected: payload claimed PID {}, kernel TCP socket table authenticated PID {}",
+                        claimed_pid, actual_pid
+                    ),
+                    "Submit disarm requests directly from the authenticated operator process without spoofing caller_pid.",
+                ));
+            }
+            Err(e) => {
+                return Err(api_error(
+                    StatusCode::UNAUTHORIZED,
+                    "PEER_PID_VERIFICATION_FAILED",
+                    format!("Failed to authenticate loopback peer PID in OS kernel TCP table: {e}"),
+                    "Ensure disarm request originates from a live local loopback TCP socket.",
+                ));
+            }
+            Ok(_) => {}
+        }
+    }
 
     match osoosi_core::killchain::disarm_killchain_isolation(&operator, &reason).await {
         Ok(status) => {
