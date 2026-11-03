@@ -1380,11 +1380,6 @@ struct MacAuditReader {
 }
 
 #[cfg(target_os = "macos")]
-struct MacAuditReader {
-    path: String,
-}
-
-#[cfg(target_os = "macos")]
 impl MacAuditReader {
     fn new(path: &str) -> anyhow::Result<Self> {
         let p = if path.is_empty() || path == "default" {
