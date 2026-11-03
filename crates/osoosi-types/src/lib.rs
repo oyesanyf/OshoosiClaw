@@ -19,6 +19,7 @@ pub mod taint;
 pub mod tarpit;
 pub mod threat;
 pub mod trust;
+pub mod universal_protocols;
 pub mod utils;
 
 pub use agentjacking::*;
@@ -37,6 +38,7 @@ pub use taint::*;
 pub use tarpit::*;
 pub use threat::*;
 pub use trust::*;
+pub use universal_protocols::*;
 pub use utils::*;
 
 /// Windows process creation flag to suppress interactive console windows (Feature 19).

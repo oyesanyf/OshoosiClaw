@@ -1417,6 +1417,7 @@ function setupNav() {
                     viewTitle.innerText = "Admin Settings & Emergency Kill Chain";
                     fetchKillchainStatus();
                     fetchKillchainHistory();
+                    loadUniversalProtocolMatrix();
                 } else if (view === 'adversarial-tests') {
                     document.getElementById('adversarial-tests-view').classList.add('active');
                     viewTitle.innerText = "Adversarial & Defense Test Execution Suite";
@@ -12874,8 +12875,9 @@ async function fetchKillchainStatus() {
         if (!res.ok) return;
         const data = await res.json();
         const status = data.status || data || {};
-        const isIsolated = Boolean(status.host_isolated);
-        const netContained = Boolean(status.network_hermetically_blocked || status.network_contained);
+        const isIsolated = Boolean(status.isolated || status.host_isolated);
+        const netContained = Boolean(status.network_isolated || status.network_hermetically_blocked || status.network_contained);
+        window.__osoosiHostIsolated = isIsolated;
         const frozenCount = Number(
             status.frozen_process_count !== undefined
                 ? status.frozen_process_count
@@ -12909,7 +12911,7 @@ async function fetchKillchainStatus() {
 
         const netStatus = document.getElementById('kc-metric-net') || document.getElementById('kc-net-status');
         if (netStatus) {
-            netStatus.innerText = netContained ? 'CONTAINED (Loopback / DNS / 3030)' : 'Unrestricted';
+            netStatus.innerText = netContained ? 'CONTAINED (22-Layer WFP • Loopback / 3030 Only)' : 'Unrestricted';
             netStatus.style.color = netContained ? '#ef4444' : '#10b981';
         }
 
@@ -12941,6 +12943,9 @@ async function fetchKillchainStatus() {
             renderKillchainHistoryRows(status.history);
         } else {
             await fetchKillchainHistory();
+        }
+        if (window.__osoosiProtocolCatalog) {
+            renderUniversalProtocolMatrix();
         }
     } catch (err) {
         console.warn('Failed to fetch killchain status:', err);
@@ -13071,7 +13076,7 @@ function openKillchainModal(action) {
         if (subtitle) subtitle.innerText = 'Reversible Host Isolation Protocol';
         if (icon) icon.innerText = '🚨';
         if (warning) {
-            warning.innerText = 'Engaging Kill Chain immediately severs all inbound/outbound IPv4/IPv6 traffic (preserving local loopback 127.0.0.1, DNS/DHCP, and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.';
+            warning.innerText = 'Engaging Kill Chain immediately severs all inbound/outbound traffic across all 16 classical, post-quantum, cryo, and quantum protocol domains (218 named protocols, IANA IP 0..=255, L2 EtherTypes, zero DNS/DHCP leaks; strictly preserving local loopback 127.0.0.1 / ::1 and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.';
             warning.style.background = 'rgba(239, 68, 68, 0.08)';
             warning.style.borderColor = 'rgba(239, 68, 68, 0.25)';
             warning.style.color = '#fca5a5';
@@ -13094,6 +13099,142 @@ function closeKillchainModal() {
     const modal = document.getElementById('killchain-action-modal');
     if (modal) modal.style.display = 'none';
 }
+
+async function loadUniversalProtocolMatrix() {
+    if (window.__osoosiProtocolCatalog) {
+        renderUniversalProtocolMatrix();
+        return;
+    }
+    try {
+        const res = await fetch(`${API_BASE}/killchain/protocols`);
+        if (!res.ok) return;
+        const catalog = await res.json();
+        window.__osoosiProtocolCatalog = catalog;
+        const sel = document.getElementById('kc-protocol-domain-select');
+        if (sel && Array.isArray(catalog.domains)) {
+            while (sel.options.length > 1) sel.remove(1);
+            catalog.domains.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.domain_id || d.name;
+                opt.textContent = `${d.domain_number ? d.domain_number + '. ' : ''}${d.name} (${d.protocol_count})`;
+                sel.appendChild(opt);
+            });
+        }
+        renderUniversalProtocolMatrix();
+    } catch (err) {
+        console.warn('Failed to load universal protocol catalog:', err);
+    }
+}
+
+function renderUniversalProtocolMatrix() {
+    const tbody = document.getElementById('kc-protocol-matrix-tbody');
+    const catalog = window.__osoosiProtocolCatalog;
+    if (!tbody || !catalog || !Array.isArray(catalog.protocols)) return;
+
+    const domainSel = document.getElementById('kc-protocol-domain-select');
+    const searchInput = document.getElementById('kc-protocol-search');
+    const selectedDomain = domainSel ? domainSel.value : 'ALL';
+    const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    const isQuarantined = Boolean(window.__osoosiHostIsolated);
+
+    const domainNames = {};
+    if (Array.isArray(catalog.domains)) {
+        catalog.domains.forEach(d => {
+            if (d.domain_id) domainNames[d.domain_id] = d.name || d.domain_id;
+        });
+    }
+
+    const filtered = catalog.protocols.filter(p => {
+        if (selectedDomain !== 'ALL' && p.domain !== selectedDomain) return false;
+        if (!q) return true;
+        const dName = domainNames[p.domain] || p.domain || '';
+        return (
+            String(p.id || '').toLowerCase().includes(q) ||
+            String(p.name || '').toLowerCase().includes(q) ||
+            String(dName).toLowerCase().includes(q) ||
+            String(p.description || '').toLowerCase().includes(q)
+        );
+    });
+
+    tbody.textContent = '';
+    if (filtered.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 6;
+        td.style.padding = '18px';
+        td.style.textAlign = 'center';
+        td.style.color = 'var(--text-muted)';
+        td.textContent = 'No protocols match your filter.';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    filtered.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--glass-border)';
+
+        const tdId = document.createElement('td');
+        tdId.style.padding = '7px 10px';
+        const codeEl = document.createElement('code');
+        codeEl.style.color = '#38bdf8';
+        codeEl.textContent = p.id || '';
+        tdId.appendChild(codeEl);
+
+        const tdName = document.createElement('td');
+        tdName.style.padding = '7px 10px';
+        const titleDiv = document.createElement('div');
+        titleDiv.style.fontWeight = '600';
+        titleDiv.style.color = '#f8fafc';
+        titleDiv.textContent = p.name || '';
+        const descDiv = document.createElement('div');
+        descDiv.style.fontSize = '11px';
+        descDiv.style.color = 'var(--text-muted)';
+        descDiv.textContent = p.description || '';
+        tdName.appendChild(titleDiv);
+        tdName.appendChild(descDiv);
+
+        const tdDomain = document.createElement('td');
+        tdDomain.style.padding = '7px 10px';
+        tdDomain.style.color = '#cbd5e1';
+        tdDomain.textContent = domainNames[p.domain] || p.domain || '';
+
+        const tdLayer = document.createElement('td');
+        tdLayer.style.padding = '7px 10px';
+        tdLayer.style.fontFamily = 'monospace';
+        tdLayer.style.color = '#a78bfa';
+        tdLayer.textContent = p.osi_layer || '';
+
+        const tdWire = document.createElement('td');
+        tdWire.style.padding = '7px 10px';
+        tdWire.style.fontFamily = 'monospace';
+        tdWire.style.fontSize = '11px';
+        const wireParts = [];
+        if (p.iana_ip_protocol !== null && p.iana_ip_protocol !== undefined) wireParts.push('IP:' + p.iana_ip_protocol);
+        if (Array.isArray(p.default_ports) && p.default_ports.length) wireParts.push('Ports:' + p.default_ports.join(','));
+        if (p.ethertype) wireParts.push('L2:0x' + Number(p.ethertype).toString(16).toUpperCase().padStart(4, '0'));
+        tdWire.textContent = wireParts.length ? wireParts.join(' ') : 'L2-L7 Wildcard';
+
+        const tdState = document.createElement('td');
+        tdState.style.padding = '7px 10px';
+        tdState.style.textAlign = 'right';
+        const badge = document.createElement('span');
+        badge.className = isQuarantined ? 'badge red' : 'badge blue';
+        badge.style.fontSize = '10.5px';
+        badge.textContent = isQuarantined ? '🚨 BLOCKED IN KERNEL' : '🛡️ ARMED (22-LAYER WFP)';
+        tdState.appendChild(badge);
+
+        tr.appendChild(tdId);
+        tr.appendChild(tdName);
+        tr.appendChild(tdDomain);
+        tr.appendChild(tdLayer);
+        tr.appendChild(tdWire);
+        tr.appendChild(tdState);
+        tbody.appendChild(tr);
+    });
+}
+window.loadUniversalProtocolMatrix = loadUniversalProtocolMatrix;
+window.renderUniversalProtocolMatrix = renderUniversalProtocolMatrix;
 
 async function submitKillchainAction(e) {
     e.preventDefault();

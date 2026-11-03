@@ -3417,14 +3417,14 @@
                                 Enterprise "Defend-in-Place Killswitch": Hermetic network isolation, non-destructive user process freeze, and kernel lockdown with loopback management preserved.
                             </p>
                         </div>
-                        <div style="display: flex; gap: 10px;">
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                             <button id="btn-engage-killchain" onclick="openKillchainModal('isolate')" class="btn-primary" style="background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); color: #fff; font-weight: 700; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);">
                                 <i data-lucide="zap-off" style="width: 16px; height: 16px;"></i>
-                                <span>ISOLATE HOST</span>
+                                <span>🚨 ISOLATE HOST (DISCONNECT INTERNET)</span>
                             </button>
                             <button id="btn-disarm-killchain" onclick="openKillchainModal('disarm')" class="btn-secondary" style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; font-weight: 700; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
                                 <i data-lucide="check-circle" style="width: 16px; height: 16px;"></i>
-                                <span>DISARM &amp; RESTORE</span>
+                                <span>🟢 DISARM &amp; RESTORE INTERNET</span>
                             </button>
                         </div>
                     </div>
@@ -3496,6 +3496,45 @@
                             <tbody id="killchain-history-tbody">
                                 <tr>
                                     <td colspan="6" style="padding: 24px; text-align: center; color: var(--text-muted);">No containment events recorded. System operating normally.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Universal 16-Domain 218-Protocol Kernel Quarantine Matrix -->
+                <div class="card glass shadow-glow" style="padding: 16px; margin-top: 20px; border-left: 4px solid #38bdf8;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px;">
+                        <div>
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc;">
+                                🌐 Universal 16-Domain Classical, Post-Quantum &amp; Quantum Protocol Quarantine Matrix
+                            </h4>
+                            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">
+                                218 Named Protocols &bull; 100% IANA IP Space (0..=255) &bull; L2 EtherTypes (0x88E5 MACsec, 0x88F7 PTP/White Rabbit, 0x8809 SyncE, 0xAEFE eCPRI) &bull; 22 WFP Kernel Layers &bull; Zero DNS/DHCP Port Leaks
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                            <select id="kc-protocol-domain-select" onchange="renderUniversalProtocolMatrix()" style="background: rgba(15, 23, 42, 0.85); color: #e2e8f0; border: 1px solid var(--glass-border); border-radius: 6px; padding: 6px 10px; font-size: 12px;">
+                                <option value="ALL">All 16 Protocol Domains (218)</option>
+                            </select>
+                            <input id="kc-protocol-search" type="text" oninput="renderUniversalProtocolMatrix()" placeholder="Search TCP, QUIC, TLS-PQC, BB84, TF-QKD..." style="background: rgba(15, 23, 42, 0.85); color: #e2e8f0; border: 1px solid var(--glass-border); border-radius: 6px; padding: 6px 10px; font-size: 12px; min-width: 240px;" />
+                        </div>
+                    </div>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--border-color); text-align: left; color: var(--text-muted);">
+                                    <th style="padding: 8px 10px;">Protocol ID</th>
+                                    <th style="padding: 8px 10px;">Full Protocol Specification</th>
+                                    <th style="padding: 8px 10px;">Domain</th>
+                                    <th style="padding: 8px 10px;">OSI / Quantum Layer</th>
+                                    <th style="padding: 8px 10px;">Wire Identifiers</th>
+                                    <th style="padding: 8px 10px; text-align: right;">Kernel Enforcement</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kc-protocol-matrix-tbody">
+                                <tr>
+                                    <td colspan="6" style="padding: 20px; text-align: center; color: var(--text-muted);">Loading 16-domain Universal Protocol Catalog...</td>
                                 </tr>
                             </tbody>
                         </table>
