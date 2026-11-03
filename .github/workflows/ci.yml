@@ -166,7 +166,10 @@ jobs:
             Write-Error "OpenAPI 3.1 schema endpoint /api/openapi.json returned HTTP $($openApiResp.StatusCode)"
             exit 1
           }
-          python -m pip install --quiet schemathesis 2>$null
+          $prevEap = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          python -m pip install --quiet --disable-pip-version-check schemathesis
+          $ErrorActionPreference = $prevEap
           if (Get-Command schemathesis -ErrorAction SilentlyContinue) {
             schemathesis run http://127.0.0.1:3030/api/openapi.json --checks not_a_server_error --max-examples 10
           }
