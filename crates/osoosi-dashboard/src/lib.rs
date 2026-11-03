@@ -753,6 +753,31 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         )
         .route("/api/killchain/status", get(get_killchain_status_endpoint))
         .route(
+            "/api/killchain/protocols",
+            get(get_killchain_protocols_endpoint),
+        )
+        .route(
+            "/api/killchain/protocol-catalog",
+            get(get_killchain_protocols_endpoint),
+        )
+        .route(
+            "/api/protocols/catalog",
+            get(get_killchain_protocols_endpoint),
+        )
+        .route("/api/killswitch/status", get(get_killchain_status_endpoint))
+        .route(
+            "/api/killswitch/protocols",
+            get(get_killchain_protocols_endpoint),
+        )
+        .route(
+            "/api/killswitch/engage",
+            post(post_killchain_isolate_endpoint),
+        )
+        .route(
+            "/api/killswitch/disarm",
+            post(post_killchain_disarm_endpoint),
+        )
+        .route(
             "/api/killchain/history",
             get(get_killchain_history_endpoint),
         )
@@ -1709,6 +1734,8 @@ async fn auth_middleware(
         || path == "/api/auth/reset-lockout"
         || path == "/api/killchain/isolate"
         || path == "/api/killchain/disarm"
+        || path == "/api/killswitch/engage"
+        || path == "/api/killswitch/disarm"
         || path == "/api/killchain/health-probe"
         || path == "/killchain/health-probe"
         // Browser DLP sensor: handlers enforce origin-bound sensor-token (or dashboard-token)
@@ -7389,6 +7416,10 @@ async fn post_auth_session_endpoint(
 
 async fn get_killchain_status_endpoint() -> Json<osoosi_core::killchain::KillChainStatus> {
     Json(osoosi_core::killchain::get_killchain_status())
+}
+
+async fn get_killchain_protocols_endpoint() -> Json<Value> {
+    Json(osoosi_types::UniversalProtocolCatalog::catalog_json_summary())
 }
 
 async fn get_killchain_history_endpoint() -> Json<Vec<osoosi_core::killchain::KillChainHistoryEntry>>

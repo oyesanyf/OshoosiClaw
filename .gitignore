@@ -59,6 +59,8 @@ Thumbs.db
 odidere.db*
 osoosi.db*
 killchain_state.json
+killswitch_wfp_filters.json
+osoosi_killswitch_wfp_filters.json
 workflow_guard_state.json
 **/workflow_guard_state.json
 database/dlp_containment_registry.json

@@ -12,7 +12,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{LazyLock, RwLock};
 use std::time::Instant;
 use tracing::{error, info, warn};
@@ -38,9 +37,41 @@ fn default_required_healthy_probes() -> u32 {
     REQUIRED_CONSECUTIVE_HEALTHY_PROBES
 }
 
+fn default_universal_domains_count() -> usize {
+    osoosi_types::UniversalProtocolCatalog::all_domains().len()
+}
+
+fn default_universal_protocols_count() -> usize {
+    osoosi_types::UniversalProtocolCatalog::total_protocols_count()
+}
+
+fn default_iana_ip_protocols_count() -> usize {
+    256
+}
+
+fn default_wfp_layers_enforced() -> usize {
+    crate::wfp::WFP_HERMETIC_LAYER_COUNT
+}
+
+fn default_isolation_engine() -> String {
+    if cfg!(windows) {
+        "Windows WFP 22-Layer + BFE + TCP Reset (Zero Subprocess)".to_string()
+    } else if cfg!(target_os = "linux") {
+        "Linux AF_NETLINK RTN_BLACKHOLE + SOCK_DESTROY (Zero Subprocess)".to_string()
+    } else {
+        "macOS /dev/pf Anchor Quarantine (Zero Subprocess)".to_string()
+    }
+}
+
+fn default_true_flag() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KillChainStatus {
     pub isolated: bool,
+    #[serde(default)]
+    pub host_isolated: bool,
     pub isolated_at: Option<String>,
     pub isolated_by: Option<String>,
     pub reason: Option<String>,
@@ -66,12 +97,25 @@ pub struct KillChainStatus {
     pub last_health_probe_passed: Option<bool>,
     #[serde(default)]
     pub last_health_probe_summary: Option<String>,
+    #[serde(default = "default_universal_domains_count")]
+    pub universal_domains_count: usize,
+    #[serde(default = "default_universal_protocols_count")]
+    pub universal_protocols_blocked: usize,
+    #[serde(default = "default_iana_ip_protocols_count")]
+    pub iana_ip_protocols_blocked: usize,
+    #[serde(default = "default_wfp_layers_enforced")]
+    pub wfp_layers_enforced: usize,
+    #[serde(default = "default_isolation_engine")]
+    pub isolation_engine: String,
+    #[serde(default = "default_true_flag")]
+    pub zero_subprocess_enforced: bool,
 }
 
 impl Default for KillChainStatus {
     fn default() -> Self {
         Self {
             isolated: false,
+            host_isolated: false,
             isolated_at: None,
             isolated_by: None,
             reason: None,
@@ -90,6 +134,12 @@ impl Default for KillChainStatus {
             last_health_probe_timestamp: None,
             last_health_probe_passed: None,
             last_health_probe_summary: None,
+            universal_domains_count: default_universal_domains_count(),
+            universal_protocols_blocked: default_universal_protocols_count(),
+            iana_ip_protocols_blocked: default_iana_ip_protocols_count(),
+            wfp_layers_enforced: default_wfp_layers_enforced(),
+            isolation_engine: default_isolation_engine(),
+            zero_subprocess_enforced: true,
         }
     }
 }
@@ -228,8 +278,22 @@ pub fn record_successful_auth() {
 
 /// Query current Kill Chain host isolation status.
 pub fn get_killchain_status() -> KillChainStatus {
-    let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
-    let mut status = guard.status.clone();
+    let mut status = {
+        let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
+        guard.status.clone()
+    };
+    #[cfg(windows)]
+    if status.isolated
+        && status.network_isolated
+        && !crate::wfp::is_cargo_test_simulation_mode()
+        && !crate::wfp::has_live_active_wfp_filters()
+    {
+        warn!("🔄 [KILLCHAIN] Reconciling stale disk state: isolated=true on disk, but 0 live WFP quarantine filters in BFE.");
+        status.isolated = false;
+        status.host_isolated = false;
+        status.network_isolated = false;
+    }
+    status.host_isolated = status.isolated;
     let (_, remaining) = check_lockout_status();
     status.lockout_remaining_secs = remaining;
     status
@@ -271,8 +335,17 @@ pub async fn engage_killchain_isolation(
 
     let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
     if guard.status.isolated {
-        info!("🛡️ [KILLCHAIN-IDEMPOTENCY] Host is already isolated; redundant engagement request from '{}' safely preserved.", operator);
-        return Ok(guard.status.clone());
+        let kernel_verified = !isolate_network
+            || crate::wfp::is_cargo_test_simulation_mode()
+            || !cfg!(windows)
+            || crate::wfp::has_live_active_wfp_filters();
+        if kernel_verified {
+            info!("🛡️ [KILLCHAIN-IDEMPOTENCY] Host is already isolated; redundant engagement request from '{}' safely preserved.", operator);
+            let mut st = guard.status.clone();
+            st.host_isolated = st.isolated;
+            return Ok(st);
+        }
+        warn!("🔄 [KILLCHAIN-RECONCILE] Ledger marked isolated=true, but 0 live WFP filters found in BFE; re-applying kernel quarantine.");
     }
     let now = Utc::now().to_rfc3339();
 
@@ -284,13 +357,19 @@ pub async fn engage_killchain_isolation(
             Ok(interfaces) => {
                 quarantined_interfaces = interfaces;
                 network_isolated = true;
-                info!("🚨 [KILLCHAIN] Hermetic network quarantine successfully applied.");
+                info!("🚨 [KILLCHAIN] Hermetic 16-domain network quarantine successfully applied.");
             }
             Err(e) => {
                 error!(
                     "❌ [KILLCHAIN] Failed to apply network hermetic quarantine: {}",
                     e
                 );
+                if !crate::wfp::is_cargo_test_simulation_mode() {
+                    return Err(anyhow!(
+                        "Kernel network quarantine failed (Administrator privileges required): {}",
+                        e
+                    ));
+                }
             }
         }
     }
@@ -342,6 +421,7 @@ pub async fn engage_killchain_isolation(
 
     guard.status = KillChainStatus {
         isolated: true,
+        host_isolated: true,
         isolated_at: Some(now.clone()),
         isolated_by: Some(operator.to_string()),
         reason: Some(reason.to_string()),
@@ -360,6 +440,12 @@ pub async fn engage_killchain_isolation(
         last_health_probe_timestamp: None,
         last_health_probe_passed: None,
         last_health_probe_summary: None,
+        universal_domains_count: default_universal_domains_count(),
+        universal_protocols_blocked: default_universal_protocols_count(),
+        iana_ip_protocols_blocked: default_iana_ip_protocols_count(),
+        wfp_layers_enforced: default_wfp_layers_enforced(),
+        isolation_engine: default_isolation_engine(),
+        zero_subprocess_enforced: true,
     };
 
     guard.history.insert(
@@ -460,6 +546,12 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
             "❌ [KILLCHAIN] Error removing network quarantine rules: {}",
             e
         );
+        if !crate::wfp::is_cargo_test_simulation_mode() {
+            return Err(anyhow!(
+                "Failed to flush kernel network quarantine (Administrator privileges required): {}",
+                e
+            ));
+        }
     } else {
         info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
     }
@@ -482,6 +574,7 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
 
     guard.status = KillChainStatus {
         isolated: false,
+        host_isolated: false,
         isolated_at: None,
         isolated_by: None,
         reason: Some(reason.to_string()),
@@ -500,6 +593,12 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
         last_health_probe_timestamp: Some(now.clone()),
         last_health_probe_passed: Some(true),
         last_health_probe_summary: Some("Isolation disarmed; host operational".to_string()),
+        universal_domains_count: default_universal_domains_count(),
+        universal_protocols_blocked: default_universal_protocols_count(),
+        iana_ip_protocols_blocked: default_iana_ip_protocols_count(),
+        wfp_layers_enforced: default_wfp_layers_enforced(),
+        isolation_engine: default_isolation_engine(),
+        zero_subprocess_enforced: true,
     };
 
     guard.history.insert(
@@ -586,6 +685,7 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
 
     guard.status = KillChainStatus {
         isolated: false,
+        host_isolated: false,
         isolated_at: None,
         isolated_by: None,
         reason: Some(reason.to_string()),
@@ -604,6 +704,12 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
         last_health_probe_timestamp: Some(now.clone()),
         last_health_probe_passed: Some(true),
         last_health_probe_summary: Some("Isolation disarmed; host operational".to_string()),
+        universal_domains_count: default_universal_domains_count(),
+        universal_protocols_blocked: default_universal_protocols_count(),
+        iana_ip_protocols_blocked: default_iana_ip_protocols_count(),
+        wfp_layers_enforced: default_wfp_layers_enforced(),
+        isolation_engine: default_isolation_engine(),
+        zero_subprocess_enforced: true,
     };
 
     guard.history.insert(
@@ -794,538 +900,21 @@ pub async fn evaluate_and_execute_intermediate_rollback(
 }
 
 // ---------------------------------------------------------------------------
-// Network Isolation Primitives
+// Network Isolation Primitives (Zero-Subprocess Native OS Kernel Enforcement)
 // ---------------------------------------------------------------------------
 
-/// Execute a system firewall command with stdout and stderr fully silenced,
-/// preventing command-line noise (e.g. netsh 'No rules match the specified criteria').
-fn run_firewall_cmd(cmd: &str, args: &[&str]) {
-    #[allow(unused_mut)]
-    let mut command = Command::new(cmd);
-    command
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    let _ = command.status();
-}
-
+/// Applies cross-platform zero-subprocess kernel network quarantine across all 16 classical,
+/// post-quantum, cryo/hardware, and quantum protocol domains (`218` named protocols, IANA IP
+/// `0..=255`, and L2 EtherTypes `0x88E5`, `0x88F7`, `0x8809`, `0xAEFE`), with zero DNS/DHCP leaks,
+/// strictly preserving loopback (`127.0.0.1`, `::1`) and local WebUI management ports (`3030..=3045`).
 fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
-    #[cfg(target_os = "windows")]
-    {
-        let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
-        let netsh_str = netsh_bin.to_string_lossy();
-        // 1. Ensure loopback and port 3030 allow rules exist first with highest priority
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-Loopback-In",
-                "dir=in",
-                "action=allow",
-                "localip=127.0.0.1,::1",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-Loopback-Out",
-                "dir=out",
-                "action=allow",
-                "remoteip=127.0.0.1,::1",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-WebUI-In",
-                "dir=in",
-                "action=allow",
-                "protocol=TCP",
-                "localport=3030",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-WebUI-Out",
-                "dir=out",
-                "action=allow",
-                "protocol=TCP",
-                "localport=3030",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-WebUI-Out-Remote",
-                "dir=out",
-                "action=allow",
-                "protocol=TCP",
-                "remoteport=3030",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DNS-Out",
-                "dir=out",
-                "action=allow",
-                "protocol=UDP",
-                "remoteport=53",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DHCP-Out",
-                "dir=out",
-                "action=allow",
-                "protocol=UDP",
-                "localport=68",
-                "remoteport=67",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DHCP-In",
-                "dir=in",
-                "action=allow",
-                "protocol=UDP",
-                "localport=68",
-                "remoteport=67",
-                "profile=any",
-            ],
-        );
-
-        // DNS TCP Fallback (RFC 7766)
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DNS-TCP-Out",
-                "dir=out",
-                "action=allow",
-                "protocol=TCP",
-                "remoteport=53",
-                "profile=any",
-            ],
-        );
-
-        // DHCPv6 Inbound and Outbound (UDP 546/547)
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DHCPv6-Out",
-                "dir=out",
-                "action=allow",
-                "protocol=UDP",
-                "localport=546",
-                "remoteport=547",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Allow-DHCPv6-In",
-                "dir=in",
-                "action=allow",
-                "protocol=UDP",
-                "localport=546",
-                "remoteport=547",
-                "profile=any",
-            ],
-        );
-
-        // 2. Block all non-loopback inbound and outbound network traffic
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Block-Inbound-Low",
-                "dir=in",
-                "action=block",
-                "remoteip=0.0.0.0-126.255.255.255",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Block-Inbound-High",
-                "dir=in",
-                "action=block",
-                "remoteip=128.0.0.0-255.255.255.255",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Block-Outbound-Low",
-                "dir=out",
-                "action=block",
-                "remoteip=0.0.0.0-126.255.255.255",
-                "profile=any",
-            ],
-        );
-
-        run_firewall_cmd(
-            &netsh_str,
-            &[
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                "name=Osoosi-KillChain-Block-Outbound-High",
-                "dir=out",
-                "action=block",
-                "remoteip=128.0.0.0-255.255.255.255",
-                "profile=any",
-            ],
-        );
-
-        Ok(vec![
-            "All-Windows-Adapters (Loopback/DNS/DHCP/3030 Preserved)".to_string(),
-        ])
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        run_firewall_cmd(
-            "iptables",
-            &["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "INPUT", "3", "-p", "udp", "--sport", "53", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "OUTPUT", "4", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "INPUT", "4", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "OUTPUT", "5", "-p", "tcp", "--dport", "53", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "INPUT", "5", "-p", "tcp", "--sport", "53", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "OUTPUT", "6", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-I", "INPUT", "6", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-A",
-                "INPUT",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-A",
-                "OUTPUT",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-A",
-                "FORWARD",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-
-        Ok(vec![
-            "All-Linux-Interfaces (lo/DNS/DHCP/3030 Preserved)".to_string()
-        ])
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        Ok(vec!["Non-Windows-Linux-Simulated".to_string()])
-    }
+    crate::wfp::engage_host_hermetic_quarantine()
 }
 
+/// Removes all persistent WFP, BFE, Netlink `RTN_BLACKHOLE`, and PF anchor quarantine rules
+/// without spawning external firewall subprocesses (`netsh`, `iptables`, `nft`, `pfctl`).
 fn remove_network_hermetic_quarantine() -> Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
-        let netsh_str = netsh_bin.to_string_lossy();
-        let rules = [
-            "Osoosi-KillChain-Block-Inbound-Low",
-            "Osoosi-KillChain-Block-Inbound-High",
-            "Osoosi-KillChain-Block-Outbound-Low",
-            "Osoosi-KillChain-Block-Outbound-High",
-            "Osoosi-KillChain-Allow-DNS-Out",
-            "Osoosi-KillChain-Allow-DNS-TCP-Out",
-            "Osoosi-KillChain-Allow-DHCP-Out",
-            "Osoosi-KillChain-Allow-DHCP-In",
-            "Osoosi-KillChain-Allow-DHCPv6-Out",
-            "Osoosi-KillChain-Allow-DHCPv6-In",
-            "Osoosi-KillChain-Allow-WebUI-In",
-            "Osoosi-KillChain-Allow-WebUI-Out",
-            "Osoosi-KillChain-Allow-WebUI-Out-Remote",
-            "Osoosi-KillChain-Allow-Loopback-In",
-            "Osoosi-KillChain-Allow-Loopback-Out",
-        ];
-        for r in rules {
-            run_firewall_cmd(
-                &netsh_str,
-                &[
-                    "advfirewall",
-                    "firewall",
-                    "delete",
-                    "rule",
-                    &format!("name={}", r),
-                ],
-            );
-        }
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D",
-                "INPUT",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D",
-                "OUTPUT",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D",
-                "FORWARD",
-                "-m",
-                "comment",
-                "--comment",
-                "Osoosi-KillChain",
-                "-j",
-                "DROP",
-            ],
-        );
-        run_firewall_cmd("iptables", &["-D", "INPUT", "-i", "lo", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-D", "OUTPUT", "-o", "lo", "-j", "ACCEPT"]);
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "INPUT", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "OUTPUT", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &["-D", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &["-D", "INPUT", "-p", "udp", "--sport", "53", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "OUTPUT", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "INPUT", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &["-D", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &["-D", "INPUT", "-p", "tcp", "--sport", "53", "-j", "ACCEPT"],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "OUTPUT", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT",
-            ],
-        );
-        run_firewall_cmd(
-            "iptables",
-            &[
-                "-D", "INPUT", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT",
-            ],
-        );
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        Ok(())
-    }
+    crate::wfp::disarm_host_hermetic_quarantine()
 }
 
 // ---------------------------------------------------------------------------

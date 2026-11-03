@@ -597,7 +597,8 @@ pub enum ResearchAction {
 pub enum KillchainAction {
     /// Display current host containment and isolation status
     Status,
-    /// Engage emergency reversible host isolation (cuts network, freezes processes, locks driver)
+    /// Engage emergency reversible host isolation (cuts network across all 16 protocol domains, freezes processes, locks driver)
+    #[command(alias = "engage")]
     Isolate {
         /// Administrator or Windows account password / master token
         #[arg(short = 'c', long)]
@@ -607,6 +608,7 @@ pub enum KillchainAction {
         reason: String,
     },
     /// Disarm and reverse host isolation (restores network and resumes processes)
+    #[command(alias = "restore")]
     Disarm {
         /// Administrator or Windows account password / master token
         #[arg(short = 'c', long)]
@@ -614,6 +616,13 @@ pub enum KillchainAction {
         /// Confirmation phrase (must be 'RESTORE HOST')
         #[arg(short = 'p', long)]
         phrase: Option<String>,
+    },
+    /// View the 16-domain, 218-protocol Universal Classical, Post-Quantum & Quantum Quarantine Catalog
+    #[command(alias = "catalog")]
+    Protocols {
+        /// Emit full machine-readable JSON summary
+        #[arg(long)]
+        json: bool,
     },
     /// View the cryptographic isolation history ledger
     History,
@@ -991,6 +1000,27 @@ fn main() -> anyhow::Result<()> {
             })
         {
             return Ok(());
+        }
+    }
+
+    // Fast-path (<20ms) elevated UAC helper for native 22-layer WFP kernel quarantine (--wfp-kernel-apply engage|disarm):
+    {
+        let raw_args: Vec<String> = std::env::args().collect();
+        for idx in 1..raw_args.len() {
+            if raw_args[idx] == "--wfp-kernel-apply" {
+                let action = raw_args.get(idx + 1).map(|s| s.as_str()).unwrap_or("");
+                if let Err(e) = osoosi_core::wfp::handle_wfp_kernel_apply_cli(action) {
+                    eprintln!("WFP kernel apply failed: {}", e);
+                    std::process::exit(1);
+                }
+                return Ok(());
+            } else if let Some(action) = raw_args[idx].strip_prefix("--wfp-kernel-apply=") {
+                if let Err(e) = osoosi_core::wfp::handle_wfp_kernel_apply_cli(action) {
+                    eprintln!("WFP kernel apply failed: {}", e);
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
         }
     }
 
@@ -2209,6 +2239,18 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     status.quarantined_interfaces
                 );
                 println!(
+                    "Universal Domains:        {} Classical / PQC / Cryo / Quantum Domains",
+                    status.universal_domains_count
+                );
+                println!(
+                    "Named Protocols Guarded:  {} (+ 256 IANA IP 0..=255 + 4 L2 EtherTypes)",
+                    status.universal_protocols_blocked
+                );
+                println!(
+                    "Kernel Isolation Engine:  {} ({} WFP layers)",
+                    status.isolation_engine, status.wfp_layers_enforced
+                );
+                println!(
                     "Lockout Remaining Secs:   {}",
                     status.lockout_remaining_secs
                 );
@@ -2333,6 +2375,37 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     println!("     Reason: {}", entry.reason);
                     println!("     Event Hash: {}", entry.event_hash);
                     println!("------------------------------------------------------------");
+                }
+            }
+            KillchainAction::Protocols { json } => {
+                if *json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &osoosi_types::UniversalProtocolCatalog::catalog_json_summary()
+                        )?
+                    );
+                } else {
+                    println!("============================================================");
+                    println!(
+                        "  OpenỌ̀ṣọ́ọ̀sì Universal 16-Domain Protocol Quarantine Catalog ({} Protocols)",
+                        osoosi_types::UniversalProtocolCatalog::total_protocols_count()
+                    );
+                    println!("  IANA IP Coverage: 0..=255 (256/256) | L2 EtherTypes: 0x88E5, 0x88F7, 0x8809, 0xAEFE");
+                    println!("============================================================");
+                    for d in osoosi_types::UniversalProtocolCatalog::all_domains() {
+                        let protos =
+                            osoosi_types::UniversalProtocolCatalog::protocols_for_domain(*d);
+                        println!(
+                            "[Domain {:02}] {} ({} protocols)",
+                            d.domain_number(),
+                            d.name(),
+                            protos.len()
+                        );
+                        let ids: Vec<&str> = protos.iter().map(|p| p.id).collect();
+                        println!("   {}", ids.join(", "));
+                    }
+                    println!("============================================================");
                 }
             }
             KillchainAction::ResetLockout => {
@@ -10175,6 +10248,16 @@ mod tests {
             Some(Commands::Killchain { action }) => match action {
                 KillchainAction::History => {}
                 _ => panic!("Expected KillchainAction::History"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+
+        let cli_protos =
+            Cli::try_parse_from(["osoosi", "killswitch", "protocols", "--json"]).unwrap();
+        match cli_protos.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Protocols { json } => assert!(json),
+                _ => panic!("Expected KillchainAction::Protocols"),
             },
             _ => panic!("Expected Commands::Killchain"),
         }
