@@ -323,6 +323,36 @@ impl SpiderEyes {
         Ok((buffer, hash))
     }
 
+    /// macOS / non-Linux Unix: Reads the executable segment directly from the target process binary image
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    fn read_process_memory(
+        &self,
+        pid: u32,
+        start: usize,
+        size: usize,
+    ) -> anyhow::Result<(Vec<u8>, String)> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut s = System::new();
+        let sys_pid = Pid::from(pid as usize);
+        s.refresh_process(sys_pid);
+        let exe_path = s
+            .process(sys_pid)
+            .and_then(|p| p.exe())
+            .ok_or_else(|| anyhow::anyhow!("Executable path not found for PID {}", pid))?;
+        let mut f = std::fs::File::open(exe_path)?;
+        let read_size = size.clamp(1, 8192);
+        let mut buf = vec![0u8; read_size];
+        let _ = f.seek(SeekFrom::Start(start as u64));
+        let bytes_read = f.read(&mut buf)?;
+        buf.truncate(bytes_read);
+
+        let mut hasher = Hasher::new();
+        hasher.update(&buf);
+        let hash = hasher.finalize().to_string();
+
+        Ok((buf, hash))
+    }
+
     /// Helper to find the primary executable segment without proc-maps crate
     fn find_executable_segment(
         &self,
@@ -374,6 +404,19 @@ impl SpiderEyes {
                     let start = usize::from_str_radix(range[0], 16)?;
                     let end = usize::from_str_radix(range[1], 16)?;
                     return Ok((start, end - start));
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let mut s = System::new();
+            let sys_pid = Pid::from(pid as usize);
+            s.refresh_process(sys_pid);
+            if let Some(exe_path) = s.process(sys_pid).and_then(|p| p.exe()) {
+                if let Ok(meta) = std::fs::metadata(exe_path) {
+                    let size = (meta.len() as usize).clamp(4096, 8192);
+                    return Ok((0x1000, size));
                 }
             }
         }
