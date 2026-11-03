@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 #[cfg(target_os = "windows")]
 use tracing::warn;
+#[allow(unused_imports)]
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
