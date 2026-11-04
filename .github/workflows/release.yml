@@ -17,7 +17,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # â”€â”€ Windows native MSVC & WiX MSI Packaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # -- Windows native MSVC & WiX MSI Packaging ----------------------------------
   build-windows:
     name: Windows x64 (MSVC & MSI)
     runs-on: windows-latest
@@ -90,7 +90,7 @@ jobs:
             OshoosiClaw.msi
           if-no-files-found: warn
 
-  # â”€â”€ Linux x86_64 Native Build & Multi-Format Packaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # -- Linux x86_64 Native Build & Multi-Format Packaging -----------------------
   build-linux-x64:
     name: Linux x64 (Native GCC, eBPF & Packages)
     runs-on: ubuntu-latest
@@ -143,7 +143,7 @@ jobs:
           path: dist-linux-x64/*
           if-no-files-found: error
 
-  # â”€â”€ Optional Multi-Platform Targets (non-blocking for release) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # -- Linux ARM64 Native Build & Multi-Format Packaging ------------------------
   build-linux-arm64:
     name: Linux ARM64 (Native GCC, eBPF & Packages)
     runs-on: ubuntu-24.04-arm
@@ -184,7 +184,7 @@ jobs:
           path: dist-linux-arm64/*
           if-no-files-found: warn
 
-  # â”€â”€ macOS Native Build & Multi-Format Packaging (.pkg, .app.tar.gz, .tar.gz) â”€â”€
+  # -- macOS Native Build & Multi-Format Packaging (.pkg, .app.tar.gz, .tar.gz) -
   build-macos:
     name: macOS Apple Silicon & Universal Packages
     runs-on: macos-latest
@@ -230,7 +230,7 @@ jobs:
           path: dist-macos/*
           if-no-files-found: error
 
-  # â”€â”€ SLSA Provenance Attestation & Cryptographic GitHub Release â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # -- SLSA Provenance Attestation & Cryptographic GitHub Release ---------------
   release:
     name: Generate SLSA Build Provenance, GPG Sign & GitHub Release
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
@@ -246,20 +246,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download all artifacts
+      - name: Download all OS release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.8
         with:
+          pattern: 'osoosi-*'
           path: dist/
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: 'dist/**/osoosi*'
+          subject-path: 'dist/**/oshoosiclaw*'
 
-      - name: Stage Canonical Single-Artifact-Per-OS Release Assets
+      - name: Stage Canonical Multi-OS Release Assets
         run: |
           mkdir -p release_assets
-          for pkg in oshoosiclaw_1.2.0_amd64.deb oshoosiclaw-1.2.0-1.x86_64.rpm oshoosiclaw-1.2.0-linux-x86_64.tar.gz oshoosiclaw-1.2.0-macos-universal.tar.gz; do
+          for pkg in \
+            oshoosiclaw_1.2.0_amd64.deb \
+            oshoosiclaw-1.2.0-1.x86_64.rpm \
+            oshoosiclaw-1.2.0-linux-x86_64.tar.gz \
+            oshoosiclaw_1.2.0_arm64.deb \
+            oshoosiclaw-1.2.0-1.aarch64.rpm \
+            oshoosiclaw-1.2.0-linux-aarch64.tar.gz \
+            oshoosiclaw-1.2.0-macos-universal.pkg \
+            oshoosiclaw-1.2.0-macos-universal.app.tar.gz \
+            oshoosiclaw-1.2.0-macos-universal.tar.gz; do
             found=$(find dist/ -type f -name "$pkg" | head -n 1 || true)
             if [ -n "$found" ]; then cp "$found" release_assets/; fi
           done
@@ -278,7 +288,7 @@ jobs:
             gpg --armor --export "$FPR" > release_assets/PUBLIC_KEY.asc
 
             cd release_assets
-            for f in *.deb *.rpm *.tar.gz; do
+            for f in *.deb *.rpm *.pkg *.tar.gz; do
               [ -f "$f" ] || continue
               echo "Signing $f..."
               gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
@@ -309,7 +319,7 @@ jobs:
           draft: false
           prerelease: false
 
-  # â”€â”€ Container Packaging to GHCR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # -- Container Packaging to GHCR ----------------------------------------------
   package-container:
     name: Package & Publish Container (GHCR)
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'

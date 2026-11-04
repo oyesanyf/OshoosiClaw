@@ -43,9 +43,14 @@ CANONICAL_LINUX_PACKAGES = {
     "oshoosiclaw_1.2.0_amd64.deb",
     "oshoosiclaw-1.2.0-1.x86_64.rpm",
     "oshoosiclaw-1.2.0-linux-x86_64.tar.gz",
+    "oshoosiclaw_1.2.0_arm64.deb",
+    "oshoosiclaw-1.2.0-1.aarch64.rpm",
+    "oshoosiclaw-1.2.0-linux-aarch64.tar.gz",
 }
 
 CANONICAL_MACOS_PACKAGES = {
+    "oshoosiclaw-1.2.0-macos-universal.pkg",
+    "oshoosiclaw-1.2.0-macos-universal.app.tar.gz",
     "oshoosiclaw-1.2.0-macos-universal.tar.gz",
 }
 
@@ -681,10 +686,16 @@ def main():
         "| Operating System | Format | Canonical Artifact | Verification |\n"
         "| :--- | :--- | :--- | :--- |\n"
         "| **Windows (x64)** | MSI Installer | `OshoosiClaw.msi` | Authenticode SHA-256 + RFC 3161 + `.asc` / `.sig` / `.intoto.jsonl` |\n"
-        "| **Linux (Debian/Ubuntu)** | DEB Package | `oshoosiclaw_1.2.0_amd64.deb` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
-        "| **Linux (RHEL/Fedora)** | RPM Package | `oshoosiclaw-1.2.0-1.x86_64.rpm` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **Linux (Debian/Ubuntu x64)** | DEB Package | `oshoosiclaw_1.2.0_amd64.deb` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **Linux (RHEL/Fedora x86_64)** | RPM Package | `oshoosiclaw-1.2.0-1.x86_64.rpm` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
         "| **Linux (Portable x86_64)** | Tarball | `oshoosiclaw-1.2.0-linux-x86_64.tar.gz` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
-        "| **macOS (Universal)** | Tarball | `oshoosiclaw-1.2.0-macos-universal.tar.gz` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n\n"
+        "| **Linux (Debian/Ubuntu ARM64)** | DEB Package | `oshoosiclaw_1.2.0_arm64.deb` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **Linux (RHEL/Fedora aarch64)** | RPM Package | `oshoosiclaw-1.2.0-1.aarch64.rpm` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **Linux (Portable aarch64)** | Tarball | `oshoosiclaw-1.2.0-linux-aarch64.tar.gz` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **macOS (Universal PKG)** | Installer | `oshoosiclaw-1.2.0-macos-universal.pkg` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **macOS (Universal App Bundle)** | App Archive | `oshoosiclaw-1.2.0-macos-universal.app.tar.gz` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **macOS (Universal CLI)** | Tarball | `oshoosiclaw-1.2.0-macos-universal.tar.gz` | OpenPGP `.asc` / `.sig` + `SHA256SUMS.txt` |\n"
+        "| **Container (OCI / GHCR)** | Docker Image | `ghcr.io/oyesanyf/oshoosiclaw:1.2.0` | Digest-Pinned Non-Root `65532:65532` + Seccomp |\n\n"
         "### Key Highlights in This Release\n"
         "- **Autonomous 4-Arm Research Swarm (Code-Backed Paper Prioritization)**: Prioritizes arXiv security papers with public code repositories (`+15..+25` relevance/novelty boost & 64-rule tie-breaking) and live-probes `BreakoutDefenseCoordinator`.\n"
         "- **CI/CD Supply-Chain & Workflow Guard Protection**: 6 Supply-Chain Protections, 6-Scenario Pipeline Breakout Gauntlet, 15-Vector Agent/EDR Suite, 4-Pillar Hybrid CVE Exploitability Engine (`NVD + CISA KEV + OSV/Cargo.lock + REA/OpenJEV`), Witness DSSE attestations, and OPA Rego policies.\n"
