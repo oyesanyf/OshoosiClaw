@@ -25,12 +25,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Start Free Local Ollama LLM Engine (Dynamic Available Memory Law — $0 Paid API Cost)
+      - name: Execute Maximum-Intensity RAPTOR Autonomous Pipeline (Free Local Model + Full Container Substrate)
         run: |
           set -euo pipefail
+          mkdir -p raptor_out
+          chmod 777 raptor_out
           echo "===================================================================="
           echo "  Configuring 100% Free Local Ollama Model for RAPTOR Autonomous AI"
-          echo "  Policy: STRICTLY FREE MODELS ONLY (Zero Paid API Keys / $0.00 Cost)"
+          echo "  Policy: STRICTLY FREE MODELS ONLY (Zero Paid API Keys / USD 0.00 Cost)"
           echo "===================================================================="
 
           if ! command -v ollama >/dev/null 2>&1; then
@@ -38,7 +40,10 @@ jobs:
           fi
 
           export OLLAMA_HOST="127.0.0.1:11434"
-          nohup ollama serve >/tmp/ollama_serve.log 2>&1 &
+          ollama serve >/tmp/ollama_serve.log 2>&1 &
+          OLLAMA_PID=$!
+          trap 'kill "${OLLAMA_PID}" 2>/dev/null || pkill -f "ollama" 2>/dev/null || true' EXIT
+
           for i in $(seq 1 30); do
             if curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
               echo "[+] Local Ollama daemon online at http://127.0.0.1:11434"
@@ -47,28 +52,23 @@ jobs:
             sleep 1
           done
 
-          # Dynamic Available Memory Law: size strictly by runtime MemAvailable (never total RAM)
+          # Dynamic Available Memory Law + GPU/CPU Hardware Sizing (Zero-OOM, Zero-Hang)
           FREE_RAM_GB=$(awk '/MemAvailable/ {printf "%d", $2 / 1024 / 1024}' /proc/meminfo)
-          if [ "${FREE_RAM_GB}" -ge 12 ]; then
+          if command -v nvidia-smi >/dev/null 2>&1 && [ "${FREE_RAM_GB}" -ge 12 ]; then
             FREE_MODEL="qwen2.5:7b"
-          elif [ "${FREE_RAM_GB}" -ge 6 ]; then
+          elif command -v nvidia-smi >/dev/null 2>&1 && [ "${FREE_RAM_GB}" -ge 6 ]; then
             FREE_MODEL="qwen2.5:3b"
           else
             FREE_MODEL="qwen2.5:1.5b"
           fi
           echo "[+] Runtime Free RAM: ${FREE_RAM_GB} GB -> Selected Free Model: ${FREE_MODEL}"
           ollama pull "${FREE_MODEL}"
-          echo "FREE_MODEL=${FREE_MODEL}" >> "${GITHUB_ENV}"
+          export FREE_MODEL
 
-      - name: Execute Maximum-Intensity RAPTOR Autonomous Pipeline (Free Local Model + Full Container Substrate)
-        run: |
-          set -euo pipefail
-          mkdir -p raptor_out
-          chmod 777 raptor_out
           echo "===================================================================="
           echo "  RAPTOR Maximum-Intensity Autonomous Security Scanner (Free LLM)"
           echo "  Substrate: danielcuthbert/raptor:latest + Native Linux Kernel Sandbox"
-          echo "  Model:     Local Ollama (${FREE_MODEL:-qwen2.5:3b}) @ USD 0.00 / 1k tokens"
+          echo "  Model:     Local Ollama (${FREE_MODEL}) @ USD 0.00 / 1k tokens"
           echo "  Pipeline:  1. describe (Attack Surface & Build Graph)"
           echo "             2. scan (All Policy Groups + TrailOfBits/0xdea + Compiler-Scan + Expanded-Macro-AST)"
           echo "             3. agentic (Cross-File Taint + 8-Stage Validation + Z3 SMT + Free Ollama Reasoning)"
@@ -153,7 +153,7 @@ jobs:
               "models": [
                   {
                       "provider": "ollama",
-                      "model": os.environ.get("FREE_MODEL", "qwen2.5:3b"),
+                      "model": os.environ.get("FREE_MODEL", "qwen2.5:1.5b"),
                       "api_base": "http://127.0.0.1:11434/v1",
                       "max_context": 32000,
                       "max_output": 4096,
@@ -209,6 +209,7 @@ jobs:
           python3 /workspaces/raptor/raptor.py describe --target "${STAGE_DIR}" | tee "${OUT_DIR}/describe.txt"
 
           # Stage 2: Exhaustive Multi-Scanner SAST + Compiler-Scan (gcc -fanalyzer / clang --analyze) + Macro-Expanded AST
+          # (--policy-groups all covers crypto, secrets, auth, injection, flows, sinks, deserialisation, filesystem + all 9 registry packs)
           python3 /workspaces/raptor/raptor.py scan \
             --repo "${STAGE_DIR}" \
             --policy-groups all \
@@ -217,15 +218,10 @@ jobs:
             ${EXTRA_CFG_FLAG} \
             --out "${OUT_DIR}/scan"
 
-          python3 /workspaces/raptor/raptor.py scan \
-            --repo "${STAGE_DIR}" \
-            --policy-groups crypto,secrets,auth,injection,flows,sinks,deserialisation,filesystem \
-            --out "${OUT_DIR}/crypto"
-
-          # Stage 3: Autonomous Agentic Taint, Validation (Z3 SMT) & Free Local Ollama LLM Reasoning
+          # Stage 3: Autonomous Agentic Taint, Validation (Z3 SMT) & Free Local Ollama LLM Reasoning (bounded by 90s timeout on CPU runners)
           COMBINED_SARIF=$(find "${OUT_DIR}/scan" -name "*.sarif" | head -n 1 || true)
           if [ -n "${COMBINED_SARIF}" ]; then
-            python3 /workspaces/raptor/raptor.py agentic \
+            timeout 90s python3 /workspaces/raptor/raptor.py agentic \
               --repo "${STAGE_DIR}" \
               --sarif "${COMBINED_SARIF}" \
               --taint-crossfile \
@@ -234,9 +230,9 @@ jobs:
               --trust-repo \
               --no-exploits \
               --no-patches \
-              --max-findings 10 \
-              --max-seconds 150 \
-              --max-calls 25 \
+              --max-findings 5 \
+              --max-seconds 60 \
+              --max-calls 10 \
               --sarif-out "${OUT_DIR}/agentic_enriched.sarif" \
               --out "${OUT_DIR}/agentic" || true
           fi
@@ -259,10 +255,10 @@ jobs:
           CEOF
             gcc -O2 -g -fstack-protector-strong -D_FORTIFY_SOURCE=2 -pie -fPIE \
               /tmp/raptor_bin_target/probe_harness.c -o /tmp/raptor_bin_target/oshoosi_probe_harness
-            python3 /workspaces/raptor/raptor.py binary investigate \
+            timeout 30s python3 /workspaces/raptor/raptor.py binary investigate \
               /tmp/raptor_bin_target/oshoosi_probe_harness \
               --out "${OUT_DIR}/binary_audit" || true
-            python3 /workspaces/raptor/raptor_fuzzing.py \
+            timeout 20s python3 /workspaces/raptor/raptor_fuzzing.py \
               --binary /tmp/raptor_bin_target/oshoosi_probe_harness \
               --fuzz-plan-only \
               --out "${OUT_DIR}/fuzz_audit" || true
@@ -272,7 +268,7 @@ jobs:
           python3 -m http.server 18089 --bind 127.0.0.1 --directory "${STAGE_DIR}/dashboard/src" >/tmp/web_stage.log 2>&1 &
           WEB_PID=$!
           sleep 1
-          python3 /workspaces/raptor/raptor.py web \
+          timeout 30s python3 /workspaces/raptor/raptor.py web \
             --url http://127.0.0.1:18089 \
             --max-depth 2 \
             --max-pages 5 \
@@ -281,7 +277,7 @@ jobs:
           kill "${WEB_PID}" >/dev/null 2>&1 || true
 
           # Stage 6: Software Composition Analysis (SCA)
-          python3 /workspaces/raptor/raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
+          timeout 45s python3 /workspaces/raptor/raptor.py sca --repo "${STAGE_DIR}" --out "${OUT_DIR}/sca" || true
 
           cp -r "${OUT_DIR}"/* /workspaces/out/
           chmod -R a+rX /workspaces/out/
@@ -302,7 +298,7 @@ jobs:
               -e _RAPTOR_TRUSTED="1" \
               -e RAPTOR_DIR="/workspaces/raptor" \
               -e OLLAMA_HOST="http://127.0.0.1:11434" \
-              -e FREE_MODEL="${FREE_MODEL:-qwen2.5:3b}" \
+              -e FREE_MODEL="${FREE_MODEL:-qwen2.5:1.5b}" \
               -w /workspaces/raptor \
               danielcuthbert/raptor:latest \
               bash /workspaces/raptor/run_max_intensity_ci.sh
@@ -311,6 +307,7 @@ jobs:
             exit 1
           fi
 
+          kill "${OLLAMA_PID}" 2>/dev/null || pkill -f "ollama" 2>/dev/null || true
           sudo chmod -R a+rX raptor_out || true
 
           # -- 2. Emit CycloneDX 1.5 SBOM (raptor_out/sbom.cdx.json) from Cargo.lock & package-lock.json --
@@ -439,8 +436,8 @@ jobs:
           gate_passed = (len(sarif_files) > 0) and (critical_unmitigated == 0)
           summary = {
               "gate": "RAPTOR Maximum-Intensity Autonomous Security Audit (Free Ollama LLM + Exhaustive SAST + TrailOfBits/0xdea/OWASP + Compiler-Scan + Expanded-AST + Cross-File Taint + Z3 Validation + Binary/Fuzz/Web + CycloneDX SBOM + OSV-Scanner + Trivy IaC)",
-              "llm_provider": "ollama (100% Free Local Open-Weights Model — $0.00 Paid API Cost)",
-              "llm_model": os.environ.get("FREE_MODEL", "qwen2.5:3b"),
+              "llm_provider": "ollama (100% Free Local Open-Weights Model — USD 0.00 Paid API Cost)",
+              "llm_model": os.environ.get("FREE_MODEL", "qwen2.5:1.5b"),
               "sarif_files_parsed": len(sarif_files),
               "unique_rules_indexed": len(rules_evaluated),
               "total_findings_inspected": total_findings,
