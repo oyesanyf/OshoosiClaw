@@ -1615,6 +1615,10 @@
                                         <input type="checkbox" id="env-config-all-drives">
                                         <span>Default to All Physical Drives (C:\, D:\)</span>
                                     </label>
+                                    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;" title="When unchecked (default), OshoosiClaw uses Non-Invasive Shadow Vault Mode so external apps reading .env directly never break.">
+                                        <input type="checkbox" id="env-config-in-place-disk-seal">
+                                        <span>Rewrite .env on Disk with Stand-In Tokens (Off = Non-Invasive Shadow Vault Mode)</span>
+                                    </label>
                                 </div>
 
                                 <div>

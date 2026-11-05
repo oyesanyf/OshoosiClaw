@@ -290,6 +290,8 @@ pub async fn get_env_gateway_status(State(_state): State<DashboardState>) -> Jso
                 "status": "online",
                 "enabled": cfg.enabled,
                 "experimental": true,
+                "in_place_disk_seal": cfg.in_place_disk_seal,
+                "excluded_files": cfg.excluded_files,
                 "vault_exists": st.exists,
                 "vault_path": st.vault_path.to_string_lossy(),
                 "dacl_protected": st.dacl_protected,
@@ -309,6 +311,8 @@ pub async fn get_env_gateway_status(State(_state): State<DashboardState>) -> Jso
                 "status": "online",
                 "enabled": cfg.enabled,
                 "experimental": true,
+                "in_place_disk_seal": cfg.in_place_disk_seal,
+                "excluded_files": cfg.excluded_files,
                 "vault_exists": false,
                 "vault_path": v_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ProtectedEnvBackupVault::default_vault_path().to_string_lossy().to_string()),
                 "dacl_protected": false,
@@ -530,11 +534,35 @@ pub async fn post_env_gateway_scan_files(Json(req): Json<ScanFilesRequest>) -> J
             .map(PathBuf::from)
             .collect();
 
-        let candidate_paths = if all_drives {
+        let mut candidate_paths = if all_drives {
             ProtectedEnvBackupVault::scan_all_physical_drives_with_magika(max_files, max_budget)
         } else {
             ProtectedEnvBackupVault::discover_environment_files(Path::new("."), &custom_paths)
         };
+
+        // Also surface any existing user-excluded files in the scan inventory so the user can see
+        // their "Excluded (Unsealed)" status and re-seal them manually if desired.
+        for ex in &cfg.excluded_files {
+            let ex_path = PathBuf::from(ex);
+            if ex_path.is_file() {
+                candidate_paths.push(ex_path);
+            }
+        }
+
+        let excluded_keys: HashSet<String> = ProtectedEnvBackupVault::configured_excluded_files();
+        let mut vault_file_keys: HashSet<String> = HashSet::new();
+        for v_path in ProtectedEnvBackupVault::locate_all_active_vault_paths(
+            cfg.vault_path.as_deref().map(Path::new),
+        ) {
+            if let Ok(st) = ProtectedEnvBackupVault::get_status(&v_path) {
+                for vf in st.files {
+                    let vp = Path::new(&vf.path);
+                    let vc = vp.canonicalize().unwrap_or_else(|_| vp.to_path_buf());
+                    vault_file_keys.insert(vc.to_string_lossy().to_ascii_lowercase());
+                    vault_file_keys.insert(vf.path.to_ascii_lowercase());
+                }
+            }
+        }
 
         let mut file_entries = Vec::new();
         let mut seen = HashSet::new();
@@ -542,9 +570,12 @@ pub async fn post_env_gateway_scan_files(Json(req): Json<ScanFilesRequest>) -> J
         for p in candidate_paths {
             let p_canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
             let p_key = p_canonical.to_string_lossy().to_ascii_lowercase();
-            if !seen.insert(p_key) {
+            if !seen.insert(p_key.clone()) {
                 continue;
             }
+            let p_raw_key = p.to_string_lossy().to_ascii_lowercase();
+            let is_excluded = excluded_keys.contains(&p_key) || excluded_keys.contains(&p_raw_key);
+            let in_vault = vault_file_keys.contains(&p_key) || vault_file_keys.contains(&p_raw_key);
 
             if !p.is_file() {
                 continue;
@@ -610,6 +641,9 @@ pub async fn post_env_gateway_scan_files(Json(req): Json<ScanFilesRequest>) -> J
                 "magika_group": magika_id.group,
                 "drive_root": drive_root,
                 "has_standin_tokens": has_standin,
+                "in_vault": in_vault,
+                "is_excluded": is_excluded,
+                "in_place_disk_seal": cfg.in_place_disk_seal,
                 "secret_variables": secret_variables,
                 "non_secret_variables": non_secret_variables,
             }));
