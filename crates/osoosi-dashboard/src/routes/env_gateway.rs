@@ -32,7 +32,11 @@ pub struct EnvSealConfig {
     #[serde(default = "default_env_experimental")]
     pub experimental: bool,
     #[serde(default)]
+    pub in_place_disk_seal: bool,
+    #[serde(default)]
     pub custom_paths: Vec<String>,
+    #[serde(default)]
+    pub excluded_files: Vec<String>,
     #[serde(default)]
     pub all_drives: bool,
     #[serde(default)]
@@ -88,7 +92,9 @@ impl Default for EnvSealConfig {
         Self {
             enabled: true,
             experimental: true,
+            in_place_disk_seal: false,
             custom_paths: Vec::new(),
+            excluded_files: Vec::new(),
             all_drives: false,
             auto_seal: false,
             selected_variables: default_selected_variables(),
@@ -179,7 +185,9 @@ pub fn get_watcher_events() -> Vec<WatcherEventRecord> {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct UpdateEnvSealConfigRequest {
     pub enabled: Option<bool>,
+    pub in_place_disk_seal: Option<bool>,
     pub custom_paths: Option<Vec<String>>,
+    pub excluded_files: Option<Vec<String>>,
     pub all_drives: Option<bool>,
     pub auto_seal: Option<bool>,
     pub selected_variables: Option<Vec<String>>,
@@ -353,8 +361,14 @@ pub async fn post_env_gateway_config(
             should_unseal_all = true;
         }
     }
+    if let Some(ip) = req.in_place_disk_seal {
+        cfg.in_place_disk_seal = ip;
+    }
     if let Some(cp) = req.custom_paths {
         cfg.custom_paths = cp;
+    }
+    if let Some(ef) = req.excluded_files {
+        cfg.excluded_files = ef;
     }
     if let Some(ad) = req.all_drives {
         cfg.all_drives = ad;
@@ -406,15 +420,9 @@ pub async fn post_env_gateway_config(
         let vp_opt = cfg.vault_path.clone();
         let _ = tokio::task::spawn_blocking(move || {
             osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
-            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(
+            let _ = ProtectedEnvBackupVault::auto_revert_and_remove_all_active_vaults(
                 vp_opt.as_deref().map(Path::new),
             );
-            let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
-                vp_opt.as_deref().map(Path::new),
-            );
-            for vp in &all_vaults {
-                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
-            }
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: "all".to_string(),
@@ -468,15 +476,9 @@ pub async fn post_env_gateway_toggle(
     let _ = tokio::task::spawn_blocking(move || {
         if !new_enabled {
             osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
-            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(
+            let _ = ProtectedEnvBackupVault::auto_revert_and_remove_all_active_vaults(
                 vp_opt.as_deref().map(Path::new),
             );
-            let _ = ProtectedEnvBackupVault::auto_revert_all_active_vaults(
-                vp_opt.as_deref().map(Path::new),
-            );
-            for vp in &all_vaults {
-                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
-            }
         } else {
             osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(false, Ordering::SeqCst);
         }
@@ -649,6 +651,7 @@ pub async fn post_env_gateway_seal(
             .or_else(|| cfg.vault_path.as_deref().map(PathBuf::from))
             .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
 
+        let explicit_files = req.files.is_some();
         let target_files: Vec<PathBuf> = if let Some(files) = req.files {
             files.into_iter().map(PathBuf::from).collect()
         } else if req.all_drives.unwrap_or(cfg.all_drives) {
@@ -670,6 +673,9 @@ pub async fn post_env_gateway_seal(
 
         for f in &target_files {
             if f.is_file() {
+                if explicit_files {
+                    ProtectedEnvBackupVault::remove_excluded_file_from_config(f);
+                }
                 match ProtectedEnvBackupVault::seal_and_backup_dynamic(f, &vault_path) {
                     Ok(enum_res) => {
                         sealed_count += 1;
@@ -743,9 +749,11 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
         );
 
         if let Some(fp) = req.file_path {
-            let vault = v_path.ok_or_else(|| "Active backup vault not found".to_string())?;
-            ProtectedEnvBackupVault::revert_single_file(&vault, Path::new(&fp))
-                .map_err(|e| format!("Revert failed: {}", e))?;
+            ProtectedEnvBackupVault::revert_single_file_across_all_vaults(
+                v_path.as_deref(),
+                Path::new(&fp),
+            )
+            .map_err(|e| format!("Revert failed: {}", e))?;
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: fp.clone(),
@@ -757,7 +765,7 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
             Ok(json!({
                 "status": "success",
                 "file_path": fp,
-                "message": "Target environment file restored from vault.",
+                "message": "Target environment file restored from vault and excluded from background re-sealing.",
             }))
         } else {
             osoosi_core::protected_env_backup::AUTO_SEAL_PAUSED.store(true, Ordering::SeqCst);
@@ -767,15 +775,8 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
             cfg.watcher_enabled = false;
             let _ = cfg.save(None);
 
-            let all_vaults = ProtectedEnvBackupVault::locate_all_active_vault_paths(v_path.as_deref());
-            ProtectedEnvBackupVault::auto_revert_all_active_vaults(v_path.as_deref())
+            ProtectedEnvBackupVault::auto_revert_and_remove_all_active_vaults(v_path.as_deref())
                 .map_err(|e| format!("Auto revert all failed: {}", e))?;
-            for vp in &all_vaults {
-                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
-            }
-            if let Some(ref vp) = v_path {
-                let _ = ProtectedEnvBackupVault::remove_backup(vp, true);
-            }
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: "all".to_string(),
@@ -825,11 +826,13 @@ pub async fn post_env_gateway_unseal_file(
                 .as_deref()
                 .or(cfg.vault_path.as_deref())
                 .map(Path::new),
-        )
-        .ok_or_else(|| "Active backup vault not found".to_string())?;
+        );
 
-        ProtectedEnvBackupVault::revert_single_file(&v_path, Path::new(&req.file_path))
-            .map_err(|e| format!("Revert failed: {}", e))?;
+        ProtectedEnvBackupVault::revert_single_file_across_all_vaults(
+            v_path.as_deref(),
+            Path::new(&req.file_path),
+        )
+        .map_err(|e| format!("Revert failed: {}", e))?;
 
         push_watcher_event(WatcherEventRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),

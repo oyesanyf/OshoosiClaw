@@ -306,6 +306,146 @@ impl ProtectedEnvBackupVault {
         found_any
     }
 
+    /// Returns true ONLY when in-place `.env` disk replacement is explicitly opted into via
+    /// `"in_place_disk_seal": true` in `database/env_seal_config.json`.
+    /// Defaults to `false` (Non-Invasive Shadow Vault Mode) so external applications (`node`, `python`,
+    /// `cargo`, `docker`, IDEs) never read `OSHOOSI_STANDIN_*` tokens from `.env` files on disk.
+    pub fn is_in_place_disk_seal_enabled() -> bool {
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(in_place) =
+                            val.get("in_place_disk_seal").and_then(|v| v.as_bool())
+                        {
+                            return in_place;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Normalizes a filesystem path into a canonical lowercase key (stripping Windows `\\?\` prefixes)
+    /// for deterministic matching across vaults and exclusion lists.
+    pub fn normalize_file_key(p: &Path) -> String {
+        let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let s = canon.to_string_lossy();
+        let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        stripped.replace('/', "\\").to_ascii_lowercase()
+    }
+
+    /// Returns the set of normalized file paths explicitly unsealed/excluded by the user in `env_seal_config.json`.
+    pub fn configured_excluded_files() -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(arr) = val.get("excluded_files").and_then(|v| v.as_array()) {
+                            for item in arr {
+                                if let Some(fp) = item.as_str() {
+                                    if !fp.trim().is_empty() {
+                                        out.insert(Self::normalize_file_key(Path::new(fp.trim())));
+                                        out.insert(
+                                            fp.trim().replace('/', "\\").to_ascii_lowercase(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Persists an unsealed file path into `excluded_files` across `database/env_seal_config.json`
+    /// so background watchers never re-seal a file that the operator explicitly unsealed.
+    pub fn add_excluded_file_to_config(file_path: &Path) {
+        if std::env::var_os("RUST_TEST_THREADS").is_some() {
+            return;
+        }
+        let canon_str = file_path
+            .canonicalize()
+            .unwrap_or_else(|_| file_path.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+        let norm_target = Self::normalize_file_key(file_path);
+
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(obj) = val.as_object_mut() {
+                            let mut list: Vec<String> = obj
+                                .get("excluded_files")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let already = list.iter().any(|existing| {
+                                Self::normalize_file_key(Path::new(existing)) == norm_target
+                            });
+                            if !already {
+                                list.push(canon_str.clone());
+                            }
+                            obj.insert(
+                                "excluded_files".to_string(),
+                                serde_json::to_value(list)
+                                    .unwrap_or(serde_json::Value::Array(vec![])),
+                            );
+                            if let Ok(out) = serde_json::to_vec_pretty(&val) {
+                                let _ = std::fs::write(&p, out);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Removes a file path from `excluded_files` when the user explicitly requests sealing that specific file.
+    pub fn remove_excluded_file_from_config(file_path: &Path) {
+        if std::env::var_os("RUST_TEST_THREADS").is_some() {
+            return;
+        }
+        let norm_target = Self::normalize_file_key(file_path);
+        for p in Self::candidate_env_seal_config_paths() {
+            if p.is_file() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                        if let Some(obj) = val.as_object_mut() {
+                            if let Some(arr) = obj.get("excluded_files").and_then(|v| v.as_array())
+                            {
+                                let filtered: Vec<String> = arr
+                                    .iter()
+                                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                    .filter(|existing| {
+                                        Self::normalize_file_key(Path::new(existing)) != norm_target
+                                    })
+                                    .collect();
+                                obj.insert(
+                                    "excluded_files".to_string(),
+                                    serde_json::to_value(filtered)
+                                        .unwrap_or(serde_json::Value::Array(vec![])),
+                                );
+                                if let Ok(out) = serde_json::to_vec_pretty(&val) {
+                                    let _ = std::fs::write(&p, out);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Pauses all background auto-sealing in memory and persists `enabled: false, auto_seal: false, watcher_enabled: false`
     /// to `database/env_seal_config.json` across all candidate locations so background watchers never re-seal `HKCU\Environment` after revert.
     pub fn pause_auto_seal_and_persist_disabled() {
@@ -313,7 +453,9 @@ impl ProtectedEnvBackupVault {
         let default_json = serde_json::json!({
             "enabled": false,
             "experimental": true,
+            "in_place_disk_seal": false,
             "custom_paths": [],
+            "excluded_files": [],
             "all_drives": false,
             "auto_seal": false,
             "selected_variables": ["GEMINI_API_KEY", "HF_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"],
@@ -368,9 +510,19 @@ impl ProtectedEnvBackupVault {
 
     /// Discovers environment files (.env, .env.local, .env.production, .env.development, .env.test, .env.staging)
     /// in the base directory and its depth-1 immediate subdirectories, plus any custom paths provided.
+    /// Automatically skips any files persisted in `excluded_files` via `unseal-file`.
     pub fn discover_environment_files(base_dir: &Path, custom_paths: &[PathBuf]) -> Vec<PathBuf> {
         let mut discovered = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let excluded = Self::configured_excluded_files();
+        let is_excluded = |p: &Path| -> bool {
+            if excluded.is_empty() {
+                return false;
+            }
+            let norm = Self::normalize_file_key(p);
+            let raw = p.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+            excluded.contains(&norm) || excluded.contains(&raw)
+        };
 
         let candidate_names = [
             ".env",
@@ -382,13 +534,15 @@ impl ProtectedEnvBackupVault {
         ];
 
         let root = if base_dir.is_file() {
-            let key = base_dir
-                .canonicalize()
-                .unwrap_or_else(|_| base_dir.to_path_buf())
-                .to_string_lossy()
-                .to_ascii_lowercase();
-            if seen.insert(key) {
-                discovered.push(base_dir.to_path_buf());
+            if !is_excluded(base_dir) {
+                let key = base_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| base_dir.to_path_buf())
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                if seen.insert(key) {
+                    discovered.push(base_dir.to_path_buf());
+                }
             }
             base_dir.parent().unwrap_or(Path::new("."))
         } else {
@@ -397,7 +551,7 @@ impl ProtectedEnvBackupVault {
 
         for name in &candidate_names {
             let p = root.join(name);
-            if p.is_file() {
+            if p.is_file() && !is_excluded(&p) {
                 let key = p
                     .canonicalize()
                     .unwrap_or_else(|_| p.clone())
@@ -421,7 +575,7 @@ impl ProtectedEnvBackupVault {
                         {
                             for name in &candidate_names {
                                 let p = sub_dir.join(name);
-                                if p.is_file() {
+                                if p.is_file() && !is_excluded(&p) {
                                     let key = p
                                         .canonicalize()
                                         .unwrap_or_else(|_| p.clone())
@@ -439,7 +593,7 @@ impl ProtectedEnvBackupVault {
         }
 
         for custom in custom_paths {
-            if custom.as_os_str().is_empty() {
+            if custom.as_os_str().is_empty() || is_excluded(custom) {
                 continue;
             }
             let key = custom
@@ -618,14 +772,18 @@ impl ProtectedEnvBackupVault {
                 });
 
                 if has_env_structure {
-                    let key = path
-                        .canonicalize()
-                        .unwrap_or_else(|_| path.to_path_buf())
-                        .to_string_lossy()
-                        .to_ascii_lowercase();
-                    if seen.insert(key) {
-                        results.push(path.to_path_buf());
-                        files_found += 1;
+                    let excluded = Self::configured_excluded_files();
+                    let norm = Self::normalize_file_key(path);
+                    if !excluded.contains(&norm) {
+                        let key = path
+                            .canonicalize()
+                            .unwrap_or_else(|_| path.to_path_buf())
+                            .to_string_lossy()
+                            .to_ascii_lowercase();
+                        if seen.insert(key) {
+                            results.push(path.to_path_buf());
+                            files_found += 1;
+                        }
                     }
                 }
             }
@@ -634,8 +792,74 @@ impl ProtectedEnvBackupVault {
         results
     }
 
-    /// Atomic file write: writes bytes to temporary sibling `.tmp` file, flushes to disk via `sync_all()`,
-    /// rejects symlinks/reparse points, and safely renames over the destination path.
+    /// Scrubs any `OSHOOSI_STANDIN_*` tokens from `bytes` using the provided `standin_mappings`
+    /// and original secret maps (`original_env_vars` and `original_hkcu_vars`).
+    pub fn scrub_bytes_with_mappings(
+        bytes: &[u8],
+        standin_mappings: &[(String, String)],
+        original_env_vars: &[(String, String)],
+        original_hkcu_vars: &[(String, String)],
+    ) -> Vec<u8> {
+        if !bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+            return bytes.to_vec();
+        }
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            let mut scrubbed = text.to_string();
+            for (k, standin) in standin_mappings {
+                if let Some((_, orig_v)) = original_env_vars
+                    .iter()
+                    .find(|(ok, ov)| {
+                        ok.eq_ignore_ascii_case(k) && !ov.starts_with("OSHOOSI_STANDIN_")
+                    })
+                    .or_else(|| {
+                        original_hkcu_vars.iter().find(|(ok, ov)| {
+                            ok.eq_ignore_ascii_case(k) && !ov.starts_with("OSHOOSI_STANDIN_")
+                        })
+                    })
+                {
+                    scrubbed = scrubbed.replace(standin, orig_v);
+                }
+            }
+            // Line-by-line fallback if a different stand-in suffix was generated for the same key name
+            if scrubbed.contains("OSHOOSI_STANDIN_") {
+                let mut fixed_lines = Vec::new();
+                for line in scrubbed.lines() {
+                    if line.contains("OSHOOSI_STANDIN_") && !line.trim_start().starts_with('#') {
+                        let mut replaced_line = None;
+                        for (ok, orig_v) in
+                            original_env_vars.iter().chain(original_hkcu_vars.iter())
+                        {
+                            if !orig_v.starts_with("OSHOOSI_STANDIN_") && !orig_v.is_empty() {
+                                if let Some(rep) = Self::replace_env_var_in_line(line, ok, orig_v) {
+                                    replaced_line = Some(rep);
+                                    break;
+                                }
+                            }
+                        }
+                        fixed_lines.push(replaced_line.unwrap_or_else(|| line.to_string()));
+                    } else {
+                        fixed_lines.push(line.to_string());
+                    }
+                }
+                let trailing_newline = scrubbed.ends_with('\n');
+                scrubbed = fixed_lines.join("\n");
+                if trailing_newline && !scrubbed.ends_with('\n') {
+                    scrubbed.push('\n');
+                }
+            }
+            scrubbed.into_bytes()
+        } else {
+            bytes.to_vec()
+        }
+    }
+
+    /// Atomic file write with shared-handle fallback:
+    /// 1. Writes `bytes` to a temporary sibling `.tmp` file and flushes via `sync_all()`.
+    /// 2. Attempts atomic `std::fs::rename` (with retry backoff for transient Windows file-watcher locks).
+    /// 3. If `rename` fails because an IDE or external application holds a shared handle open on `path`,
+    ///    falls back to opening `path` in-place (`write(true).create(true).truncate(true)`), flushing `sync_all()`,
+    ///    and removing the temporary file.
+    /// 4. Reads `path` back from disk to verify the written bytes match `bytes`.
     pub fn write_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
         if let Ok(meta) = std::fs::symlink_metadata(path) {
             if meta.file_type().is_symlink() {
@@ -661,19 +885,55 @@ impl ProtectedEnvBackupVault {
         f.sync_all()?;
         drop(f);
 
-        if let Err(_e) = std::fs::rename(&tmp_path, path) {
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
+        let mut renamed = false;
+        let mut last_err = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(35 * attempt as u64));
             }
-            if let Err(e2) = std::fs::rename(&tmp_path, path) {
-                let _ = std::fs::remove_file(&tmp_path);
-                return Err(VaultError::Io(e2));
+            match std::fs::rename(&tmp_path, path) {
+                Ok(()) => {
+                    renamed = true;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if path.exists() {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    if std::fs::rename(&tmp_path, path).is_ok() {
+                        renamed = true;
+                        break;
+                    }
+                }
             }
         }
+
+        if !renamed {
+            let _ = std::fs::remove_file(&tmp_path);
+            // Shared-handle fallback: write directly to destination file if atomic rename was blocked by an open handle
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)
+            {
+                Ok(mut direct_file) => {
+                    direct_file.write_all(bytes)?;
+                    direct_file.sync_all()?;
+                }
+                Err(direct_err) => {
+                    return Err(VaultError::Io(last_err.unwrap_or(direct_err)));
+                }
+            }
+        }
+
         Ok(())
     }
 
-    /// Restores a single backed-up file from the vault to its exact original pre-stand-in state.
+    /// Restores a single backed-up file from the vault to its exact original pre-stand-in state,
+    /// scrubbing any residual `OSHOOSI_STANDIN_*` tokens, verifying disk restoration, and recording
+    /// the file in `excluded_files` so background watchers do not re-seal it.
     pub fn revert_single_file(
         vault_path: &Path,
         target_file_path: &Path,
@@ -682,45 +942,55 @@ impl ProtectedEnvBackupVault {
             return Ok(());
         }
         let (payload, _) = Self::read_vault_payload(vault_path)?;
-        let target_canonical = target_file_path
-            .canonicalize()
-            .unwrap_or_else(|_| target_file_path.to_path_buf())
-            .to_string_lossy()
-            .to_ascii_lowercase();
+        let target_norm = Self::normalize_file_key(target_file_path);
 
         let mut matched = false;
         for entry in &payload.files {
             let entry_p = PathBuf::from(&entry.path);
-            let entry_canonical = entry_p
-                .canonicalize()
-                .unwrap_or_else(|_| entry_p.clone())
-                .to_string_lossy()
-                .to_ascii_lowercase();
+            let entry_norm = Self::normalize_file_key(&entry_p);
 
-            if entry_canonical == target_canonical
-                || entry.path == target_file_path.to_string_lossy()
+            if entry_norm == target_norm
+                || entry
+                    .path
+                    .eq_ignore_ascii_case(&target_file_path.to_string_lossy())
             {
                 if entry.existed_before || !entry.original_bytes.is_empty() {
-                    Self::write_file_atomic(&entry_p, &entry.original_bytes)?;
+                    let clean_bytes = Self::scrub_bytes_with_mappings(
+                        &entry.original_bytes,
+                        &payload.standin_mappings,
+                        &payload.original_env_vars,
+                        &payload.original_hkcu_vars,
+                    );
+                    Self::write_file_atomic(&entry_p, &clean_bytes)?;
                 } else if entry_p.exists() {
                     let _ = std::fs::remove_file(&entry_p);
                 }
+                Self::add_excluded_file_to_config(&entry_p);
                 matched = true;
                 break;
             }
         }
 
         if !matched
-            && (payload.target_path == target_file_path.to_string_lossy()
-                || PathBuf::from(&payload.target_path).canonicalize().ok()
-                    == target_file_path.canonicalize().ok())
+            && (!payload.target_path.is_empty()
+                && (payload
+                    .target_path
+                    .eq_ignore_ascii_case(&target_file_path.to_string_lossy())
+                    || Self::normalize_file_key(Path::new(&payload.target_path)) == target_norm))
         {
             let target = PathBuf::from(&payload.target_path);
             if payload.target_existed_before || !payload.original_bytes.is_empty() {
-                Self::write_file_atomic(&target, &payload.original_bytes)?;
+                let clean_bytes = Self::scrub_bytes_with_mappings(
+                    &payload.original_bytes,
+                    &payload.standin_mappings,
+                    &payload.original_env_vars,
+                    &payload.original_hkcu_vars,
+                );
+                Self::write_file_atomic(&target, &clean_bytes)?;
             } else if target.exists() {
                 let _ = std::fs::remove_file(&target);
             }
+            Self::add_excluded_file_to_config(&target);
             matched = true;
         }
 
@@ -732,6 +1002,37 @@ impl ProtectedEnvBackupVault {
                 target_file_path.display()
             )))
         }
+    }
+
+    /// Searches all active vaults across the system for `target_file_path`, restores it to its
+    /// original pre-seal bytes, and persists the file in `excluded_files` so watchers never re-seal it.
+    pub fn revert_single_file_across_all_vaults(
+        custom_vault_path: Option<&Path>,
+        target_file_path: &Path,
+    ) -> Result<PathBuf, VaultError> {
+        let mut vaults = Self::locate_all_active_vault_paths(custom_vault_path);
+        let default_rel = Self::default_vault_path();
+        if default_rel.exists() && !vaults.iter().any(|v| v == &default_rel) {
+            vaults.push(default_rel);
+        }
+        if vaults.is_empty() {
+            return Err(VaultError::NotFound(Self::default_vault_path()));
+        }
+
+        let mut last_err = None;
+        for v in vaults {
+            match Self::revert_single_file(&v, target_file_path) {
+                Ok(()) => return Ok(v),
+                Err(e) => last_err = Some(e),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            VaultError::TargetError(format!(
+                "File '{}' not found in any active vault",
+                target_file_path.display()
+            ))
+        }))
     }
 
     /// Checks whether an environment variable key and value represents a genuine secret credential
@@ -1354,35 +1655,16 @@ impl ProtectedEnvBackupVault {
             restore_hkcu_original_vars(&merged_hkcu)?;
         }
 
-        // Helper to scrub any residual OSHOOSI_STANDIN_* tokens from restored bytes using standin_mappings -> original_env_vars
         let scrub_standin_bytes = |bytes: &[u8]| -> Vec<u8> {
-            if !bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
-                return bytes.to_vec();
-            }
-            if let Ok(text) = std::str::from_utf8(bytes) {
-                let mut scrubbed = text.to_string();
-                for (k, standin) in &payload.standin_mappings {
-                    if let Some((_, orig_v)) = payload
-                        .original_env_vars
-                        .iter()
-                        .find(|(ok, _)| ok.eq_ignore_ascii_case(k))
-                        .or_else(|| {
-                            payload
-                                .original_hkcu_vars
-                                .iter()
-                                .find(|(ok, _)| ok.eq_ignore_ascii_case(k))
-                        })
-                    {
-                        if !orig_v.starts_with("OSHOOSI_STANDIN_") {
-                            scrubbed = scrubbed.replace(standin, orig_v);
-                        }
-                    }
-                }
-                scrubbed.into_bytes()
-            } else {
-                bytes.to_vec()
-            }
+            Self::scrub_bytes_with_mappings(
+                bytes,
+                &payload.standin_mappings,
+                &payload.original_env_vars,
+                &payload.original_hkcu_vars,
+            )
         };
+
+        let mut revert_errors: Vec<String> = Vec::new();
 
         // 2. Restore file state across all backed up files (or legacy single target)
         if !payload.files.is_empty() {
@@ -1400,24 +1682,72 @@ impl ProtectedEnvBackupVault {
                             })
                             .unwrap_or(false);
                         if is_only_standins && p.exists() {
-                            let _ = std::fs::remove_file(&p);
+                            if let Err(e) = std::fs::remove_file(&p) {
+                                revert_errors.push(format!(
+                                    "Failed to remove synthetic stand-in file '{}': {}",
+                                    p.display(),
+                                    e
+                                ));
+                            }
                             continue;
                         }
                     }
-                    let _ = Self::write_file_atomic(&p, &clean_bytes);
+                    match Self::write_file_atomic(&p, &clean_bytes) {
+                        Ok(()) => {
+                            if let Ok(on_disk) = std::fs::read(&p) {
+                                if !clean_bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_")
+                                    && on_disk.windows(16).any(|w| w == b"OSHOOSI_STANDIN_")
+                                {
+                                    revert_errors.push(format!(
+                                        "Verification failed for '{}': residual OSHOOSI_STANDIN_ token remained on disk",
+                                        p.display()
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            revert_errors.push(format!(
+                                "Failed to restore '{}': {}",
+                                p.display(),
+                                e
+                            ));
+                        }
+                    }
                 } else if p.exists() {
-                    let _ = std::fs::remove_file(&p);
+                    if let Err(e) = std::fs::remove_file(&p) {
+                        revert_errors.push(format!(
+                            "Failed to remove temporary file '{}': {}",
+                            p.display(),
+                            e
+                        ));
+                    }
                 }
             }
         }
         let target = PathBuf::from(&payload.target_path);
         if !payload.target_existed_before && target.exists() {
-            let _ = std::fs::remove_file(&target);
-        } else if payload.target_existed_before || !payload.original_bytes.is_empty() {
-            if payload.files.is_empty() {
-                let clean_bytes = scrub_standin_bytes(&payload.original_bytes);
-                let _ = Self::write_file_atomic(&target, &clean_bytes);
+            if let Err(e) = std::fs::remove_file(&target) {
+                revert_errors.push(format!(
+                    "Failed to remove temporary target '{}': {}",
+                    target.display(),
+                    e
+                ));
             }
+        } else if payload.target_existed_before || !payload.original_bytes.is_empty() {
+            if payload.files.is_empty() && !payload.target_path.is_empty() {
+                let clean_bytes = scrub_standin_bytes(&payload.original_bytes);
+                if let Err(e) = Self::write_file_atomic(&target, &clean_bytes) {
+                    revert_errors.push(format!(
+                        "Failed to restore target '{}': {}",
+                        target.display(),
+                        e
+                    ));
+                }
+            }
+        }
+
+        if !revert_errors.is_empty() {
+            return Err(VaultError::TargetError(revert_errors.join("; ")));
         }
 
         let all_temporary = if !payload.files.is_empty() {
@@ -1982,38 +2312,46 @@ impl ProtectedEnvBackupVault {
             }
         }
 
-        // Rewrite all discovered environment files with deterministic stand-in tokens
-        for file_path in &discovered_files {
-            if file_path.exists() {
-                if let Ok(file_content) = std::fs::read_to_string(file_path) {
-                    let mut lines = Vec::new();
-                    let mut file_modified = false;
-                    for line in file_content.lines() {
-                        let mut replaced_line = None;
-                        for (k, standin) in &standin_mappings {
-                            if let Some(rep) = Self::replace_env_var_in_line(line, k, standin) {
-                                replaced_line = Some(rep);
-                                file_modified = true;
-                                break;
+        // Only rewrite .env files on disk with stand-in tokens when running non-production/test vaults
+        // OR when `in_place_disk_seal` is explicitly enabled in `database/env_seal_config.json`.
+        // In production by default (Shadow Vault Mode), `.env` files on disk and `HKCU\Environment`
+        // remain in plaintext so external applications (`node`, `python`, `cargo`, `docker`, IDEs) never break.
+        let allow_in_place_disk_rewrite =
+            !is_production_vault_path(vault_path) || Self::is_in_place_disk_seal_enabled();
+
+        if allow_in_place_disk_rewrite {
+            for file_path in &discovered_files {
+                if file_path.exists() {
+                    if let Ok(file_content) = std::fs::read_to_string(file_path) {
+                        let mut lines = Vec::new();
+                        let mut file_modified = false;
+                        for line in file_content.lines() {
+                            let mut replaced_line = None;
+                            for (k, standin) in &standin_mappings {
+                                if let Some(rep) = Self::replace_env_var_in_line(line, k, standin) {
+                                    replaced_line = Some(rep);
+                                    file_modified = true;
+                                    break;
+                                }
                             }
+                            lines.push(replaced_line.unwrap_or_else(|| line.to_string()));
                         }
-                        lines.push(replaced_line.unwrap_or_else(|| line.to_string()));
-                    }
-                    if file_modified {
-                        let new_content = lines.join("\n");
-                        let _ = Self::write_file_atomic(file_path, new_content.as_bytes());
+                        if file_modified {
+                            let new_content = lines.join("\n");
+                            let _ = Self::write_file_atomic(file_path, new_content.as_bytes());
+                        }
                     }
                 }
             }
-        }
 
-        // Handle target env_path creation if not existing before
-        if !target_existed_before && !standin_mappings.is_empty() {
-            let mut new_lines = Vec::new();
-            for (k, standin) in &standin_mappings {
-                new_lines.push(format!("{}={}", k, standin));
+            // Handle target env_path creation if not existing before
+            if !target_existed_before && !standin_mappings.is_empty() {
+                let mut new_lines = Vec::new();
+                for (k, standin) in &standin_mappings {
+                    new_lines.push(format!("{}={}", k, standin));
+                }
+                let _ = Self::write_file_atomic(env_path, new_lines.join("\n").as_bytes());
             }
-            let _ = Self::write_file_atomic(env_path, new_lines.join("\n").as_bytes());
         }
 
         // Compute original sha256
@@ -2059,12 +2397,15 @@ impl ProtectedEnvBackupVault {
             dpapi_wrapped_key,
         };
 
-        // Write encrypted DACL-protected vault FIRST and verify decryption before rewriting HKCU\Environment
+        // Write encrypted DACL-protected vault FIRST and verify decryption
         Self::write_vault_payload(vault_path, &payload)?;
         let (verified_payload, _) = Self::read_vault_payload(vault_path)?;
 
         #[cfg(windows)]
-        if is_production_vault_path(vault_path) && !verified_payload.original_hkcu_vars.is_empty() {
+        if is_production_vault_path(vault_path)
+            && Self::is_in_place_disk_seal_enabled()
+            && !verified_payload.original_hkcu_vars.is_empty()
+        {
             write_hkcu_standin_vars(&standin_mappings, &verified_payload)?;
         }
 
@@ -2404,28 +2745,101 @@ impl ProtectedEnvBackupVault {
         paths
     }
 
-    /// Automatically restores pre-stand-in configurations from all discovered active vaults on the system,
-    /// catching DACL `PermissionDenied` (os error 5) errors cleanly without crashing.
+    /// Automatically restores pre-stand-in configurations from all discovered active vaults on the system
+    /// using a 2-pass unified cross-vault dictionary so stale vaults never leave `OSHOOSI_STANDIN_*` tokens behind.
     pub fn auto_revert_all_active_vaults(custom_path: Option<&Path>) -> Result<(), VaultError> {
+        let _ = Self::auto_revert_and_remove_all_active_vaults_internal(custom_path, false)?;
+        Ok(())
+    }
+
+    /// Automatically restores pre-stand-in configurations from all discovered active vaults on the system
+    /// and securely shreds ONLY the vaults whose files were 100% verified restored on disk.
+    pub fn auto_revert_and_remove_all_active_vaults(
+        custom_path: Option<&Path>,
+    ) -> Result<Vec<PathBuf>, VaultError> {
+        Self::auto_revert_and_remove_all_active_vaults_internal(custom_path, true)
+    }
+
+    fn auto_revert_and_remove_all_active_vaults_internal(
+        custom_path: Option<&Path>,
+        remove_reverted_vaults: bool,
+    ) -> Result<Vec<PathBuf>, VaultError> {
         Self::pause_auto_seal_and_persist_disabled();
-        let vaults = Self::locate_all_active_vault_paths(custom_path);
+        let mut vaults = Self::locate_all_active_vault_paths(custom_path);
+        let default_rel = Self::default_vault_path();
+        if default_rel.exists() && !vaults.iter().any(|v| v == &default_rel) {
+            vaults.push(default_rel);
+        }
+
         if vaults.is_empty() {
-            let default_rel = Self::default_vault_path();
-            if default_rel.exists() {
-                return Self::auto_revert(&default_rel);
-            }
             #[cfg(windows)]
             {
                 let _ = restore_hkcu_original_vars(&[]);
             }
-            return Ok(());
+            return Ok(Vec::new());
         }
 
+        // Pass 1: Read all accessible vaults (sorted oldest epoch first so earliest pre-seal plaintext wins)
+        // to build a unified cross-vault stand-in dictionary and tracked file set.
+        let mut loaded_payloads: Vec<(PathBuf, VaultPayload)> = Vec::new();
+        for v in &vaults {
+            if let Ok((p, _)) = Self::read_vault_payload(v) {
+                loaded_payloads.push((v.clone(), p));
+            }
+        }
+        loaded_payloads.sort_by_key(|(_, p)| p.epoch);
+
+        let mut unified_standins: Vec<(String, String)> = Vec::new();
+        let mut unified_env_vars: Vec<(String, String)> = Vec::new();
+        let mut unified_hkcu_vars: Vec<(String, String)> = Vec::new();
+        let mut tracked_files: Vec<PathBuf> = Vec::new();
+
+        for (_, p) in &loaded_payloads {
+            for (k, s) in &p.standin_mappings {
+                if !unified_standins.iter().any(|(_, es)| es == s) {
+                    unified_standins.push((k.clone(), s.clone()));
+                }
+            }
+            for (k, v) in &p.original_env_vars {
+                if !v.starts_with("OSHOOSI_STANDIN_")
+                    && !unified_env_vars
+                        .iter()
+                        .any(|(ek, _)| ek.eq_ignore_ascii_case(k))
+                {
+                    unified_env_vars.push((k.clone(), v.clone()));
+                }
+            }
+            for (k, v) in &p.original_hkcu_vars {
+                if !v.starts_with("OSHOOSI_STANDIN_")
+                    && !unified_hkcu_vars
+                        .iter()
+                        .any(|(ek, _)| ek.eq_ignore_ascii_case(k))
+                {
+                    unified_hkcu_vars.push((k.clone(), v.clone()));
+                }
+            }
+            for f in &p.files {
+                let fp = PathBuf::from(&f.path);
+                if !tracked_files.contains(&fp) {
+                    tracked_files.push(fp);
+                }
+            }
+            if !p.target_path.is_empty() {
+                let tp = PathBuf::from(&p.target_path);
+                if !tracked_files.contains(&tp) {
+                    tracked_files.push(tp);
+                }
+            }
+        }
+
+        // Pass 2: Revert each vault and record which vaults succeeded cleanly
         let mut errors = Vec::new();
+        let mut reverted_vaults = Vec::new();
         for v in vaults {
             match Self::auto_revert(&v) {
                 Ok(()) => {
                     println!("[+] Reverted vault: {}", v.display());
+                    reverted_vaults.push(v);
                 }
                 Err(VaultError::Io(ref e))
                     if e.kind() == std::io::ErrorKind::PermissionDenied
@@ -2442,6 +2856,42 @@ impl ProtectedEnvBackupVault {
             }
         }
 
+        // Pass 3: Cross-vault scrub of any residual OSHOOSI_STANDIN_* tokens in tracked files
+        if !unified_env_vars.is_empty() || !unified_hkcu_vars.is_empty() {
+            for fp in &tracked_files {
+                if fp.is_file() {
+                    if let Ok(bytes) = std::fs::read(fp) {
+                        if bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                            let scrubbed = Self::scrub_bytes_with_mappings(
+                                &bytes,
+                                &unified_standins,
+                                &unified_env_vars,
+                                &unified_hkcu_vars,
+                            );
+                            if scrubbed != bytes {
+                                if let Err(e) = Self::write_file_atomic(fp, &scrubbed) {
+                                    errors.push(format!(
+                                        "Cross-vault scrub write failed for '{}': {}",
+                                        fp.display(),
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 4: Only shred vaults that succeeded when `remove_reverted_vaults == true` and `errors.is_empty()`
+        if remove_reverted_vaults && errors.is_empty() {
+            for rv in &reverted_vaults {
+                if rv.exists() {
+                    let _ = Self::remove_backup(rv, true);
+                }
+            }
+        }
+
         if !errors.is_empty() {
             return Err(VaultError::TargetError(format!(
                 "Failed to revert one or more vaults: {}",
@@ -2449,7 +2899,7 @@ impl ProtectedEnvBackupVault {
             )));
         }
 
-        Ok(())
+        Ok(reverted_vaults)
     }
 
     /// Convenience alias for `auto_revert_all_active_vaults`.
@@ -4299,6 +4749,42 @@ mod tests {
         assert!(
             !dpapi_file.exists(),
             "Companion .dpapi file must be shredded and unlinked"
+        );
+    }
+
+    #[test]
+    fn test_shared_handle_revert_and_cross_vault_unified_scrub() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let env_file = temp_dir.path().join(".env");
+        let vault_file = temp_dir.path().join("shared_handle_test.vault");
+
+        let original_content = "GEMINI_API_KEY=AIzaSyD-SharedHandleRevertTest123456\nPORT=5000\n";
+        std::fs::write(&env_file, original_content).expect("write .env");
+
+        ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
+            .expect("seal must succeed");
+
+        let sealed_on_disk = std::fs::read_to_string(&env_file).expect("read sealed .env");
+        assert!(sealed_on_disk.contains("OSHOOSI_STANDIN_GEMINI_API_KEY_"));
+
+        // Simulate an external application (IDE / server) holding a read handle open on .env during revert
+        let _open_reader = std::fs::File::open(&env_file).expect("open shared read handle on .env");
+
+        // Revert and remove vault via unified cross-vault helper while handle is open
+        let reverted =
+            ProtectedEnvBackupVault::auto_revert_and_remove_all_active_vaults(Some(&vault_file))
+                .expect(
+                    "auto_revert_and_remove_all_active_vaults must succeed with open shared handle",
+                );
+        assert!(reverted.contains(&vault_file));
+
+        let restored_on_disk = std::fs::read_to_string(&env_file).expect("read restored .env");
+        assert_eq!(restored_on_disk, original_content);
+        assert!(!restored_on_disk.contains("OSHOOSI_STANDIN_"));
+        assert!(
+            !vault_file.exists(),
+            "Vault must be shredded after verified restoration"
         );
     }
 }
