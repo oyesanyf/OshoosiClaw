@@ -11883,6 +11883,10 @@ async function loadEnvGatewayConfig() {
             if (watcherCheck && typeof cfg.watcher_enabled === 'boolean') {
                 watcherCheck.checked = cfg.watcher_enabled;
             }
+            const inPlaceCheck = document.getElementById('env-config-in-place-disk-seal');
+            if (inPlaceCheck && typeof cfg.in_place_disk_seal === 'boolean') {
+                inPlaceCheck.checked = cfg.in_place_disk_seal;
+            }
 
             // Sync target variables checkboxes
             if (Array.isArray(cfg.selected_variables)) {
@@ -11910,8 +11914,10 @@ async function saveEnvGatewayConfig() {
     });
 
     const masterEnabledCheck = document.getElementById('env-config-master-enabled');
+    const inPlaceCheck = document.getElementById('env-config-in-place-disk-seal');
     const payload = {
         enabled: masterEnabledCheck ? masterEnabledCheck.checked : true,
+        in_place_disk_seal: inPlaceCheck ? inPlaceCheck.checked : false,
         custom_paths: customPaths,
         all_drives: allDrivesCheck ? allDrivesCheck.checked : false,
         auto_seal: autoSealCheck ? autoSealCheck.checked : false,
@@ -12042,11 +12048,17 @@ function renderEnvScanResults(files) {
             ? item.secret_variables.map(s => `<span class="badge cyan" style="font-size:10px; padding:1px 5px;">${escapeHtml(s)}</span>`).join(' ')
             : '<span style="color:var(--text-muted); font-size:11px;">None</span>';
 
-        const statusPill = item.has_standin_tokens
-            ? '<span class="badge green" style="font-size:10px;">SEALED (Stand-ins)</span>'
-            : '<span class="badge yellow" style="font-size:10px;">RAW (Unsealed)</span>';
+        const isSealedOrProtected = Boolean(item.has_standin_tokens || item.in_vault);
+        let statusPill = '<span class="badge yellow" style="font-size:10px;">RAW (Unsealed)</span>';
+        if (item.has_standin_tokens) {
+            statusPill = '<span class="badge green" style="font-size:10px;">SEALED (Stand-ins)</span>';
+        } else if (item.in_vault) {
+            statusPill = '<span class="badge cyan" style="font-size:10px;">PROTECTED (Shadow Vault)</span>';
+        } else if (item.is_excluded) {
+            statusPill = '<span class="badge gray" style="font-size:10px;">EXCLUDED (Unsealed)</span>';
+        }
 
-        const actionBtn = item.has_standin_tokens
+        const actionBtn = isSealedOrProtected
             ? `<button type="button" class="btn-secondary btn-sm" onclick="revertSingleEnvFile('${escapeJsArg(item.path)}')" style="padding:3px 8px; font-size:11px; color:#ff6b6b; border-color:rgba(255,77,77,0.3);">
                    <i data-lucide="rotate-ccw" style="width:11px; height:11px; margin-right:2px;"></i> Restore
                </button>`
