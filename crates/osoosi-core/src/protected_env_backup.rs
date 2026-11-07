@@ -374,6 +374,7 @@ impl ProtectedEnvBackupVault {
             .to_string_lossy()
             .to_string();
         let norm_target = Self::normalize_file_key(file_path);
+        let mut updated_any = false;
 
         for p in Self::candidate_env_seal_config_paths() {
             if p.is_file() {
@@ -402,11 +403,124 @@ impl ProtectedEnvBackupVault {
                             );
                             if let Ok(out) = serde_json::to_vec_pretty(&val) {
                                 let _ = std::fs::write(&p, out);
+                                updated_any = true;
                             }
                         }
                     }
                 }
             }
+        }
+
+        if !updated_any {
+            let default_path = PathBuf::from(DEFAULT_ENV_SEAL_CONFIG_PATH);
+            if let Some(parent) = default_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let initial = serde_json::json!({
+                "enabled": true,
+                "experimental": true,
+                "in_place_disk_seal": false,
+                "excluded_files": [canon_str],
+            });
+            let _ = std::fs::write(&default_path, serde_json::to_vec_pretty(&initial).unwrap_or_default());
+        }
+    }
+
+    /// Persistent cross-vault stand-in recovery ledger file path (`database/standin_recovery.vault`).
+    pub const RECOVERY_LEDGER_PATH: &'static str = "database/standin_recovery.vault";
+
+    /// Resolves the canonical path to the standin recovery ledger.
+    pub fn recovery_ledger_path() -> PathBuf {
+        let default_p = PathBuf::from(Self::RECOVERY_LEDGER_PATH);
+        if default_p.parent().map(|p| p.exists()).unwrap_or(false) || default_p.exists() {
+            return default_p;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(p) = exe.parent() {
+                let candidate = p.join(Self::RECOVERY_LEDGER_PATH);
+                if candidate.parent().map(|d| d.exists()).unwrap_or(false) || candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+        default_p
+    }
+
+    /// Loads the persistent cross-vault stand-in recovery ledger as a dictionary mapping:
+    /// `standin_token -> (key_name, plaintext_secret)`
+    pub fn load_standin_recovery_ledger() -> Result<std::collections::HashMap<String, (String, String)>, VaultError> {
+        let p = Self::recovery_ledger_path();
+        if !p.exists() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let (payload, _) = Self::read_vault_payload(&p)?;
+        let mut map = std::collections::HashMap::new();
+        for (k, standin) in payload.standin_mappings {
+            if let Some((_, orig_v)) = payload.original_env_vars.iter().find(|(ok, _)| ok.eq_ignore_ascii_case(&k)) {
+                if !orig_v.starts_with("OSHOOSI_STANDIN_") && !orig_v.is_empty() {
+                    map.insert(standin, (k, orig_v.clone()));
+                }
+            }
+        }
+        Ok(map)
+    }
+
+    /// Appends newly generated stand-in token mappings to the persistent recovery ledger
+    /// so that any stand-in token ever issued remains recoverable even across vault shred cycles.
+    pub fn record_in_standin_recovery_ledger(
+        new_mappings: &[(String, String)],
+        new_secrets: &[(String, String)],
+    ) {
+        if new_mappings.is_empty() {
+            return;
+        }
+        let p = Self::recovery_ledger_path();
+        let mut existing_payload = Self::read_vault_payload(&p).ok().map(|(payload, _)| payload).unwrap_or_else(|| {
+            VaultPayload {
+                target_path: "standin_recovery".to_string(),
+                epoch: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                sealed_variables: Vec::new(),
+                original_bytes: Vec::new(),
+                standin_mappings: Vec::new(),
+                original_env_vars: Vec::new(),
+                original_hkcu_vars: Vec::new(),
+                target_existed_before: true,
+                original_sha256: None,
+                files: Vec::new(),
+                user_sid_env: std::collections::HashMap::new(),
+                dpapi_wrapped_key: None,
+            }
+        });
+
+        let mut changed = false;
+        for (k, standin) in new_mappings {
+            if !existing_payload.standin_mappings.iter().any(|(_, s)| s == standin) {
+                existing_payload.standin_mappings.push((k.clone(), standin.clone()));
+                if !existing_payload.sealed_variables.contains(k) {
+                    existing_payload.sealed_variables.push(k.clone());
+                }
+                changed = true;
+            }
+        }
+        for (k, sec) in new_secrets {
+            if !sec.starts_with("OSHOOSI_STANDIN_") && !sec.is_empty() {
+                if let Some(entry) = existing_payload.original_env_vars.iter_mut().find(|(ek, _)| ek.eq_ignore_ascii_case(k)) {
+                    if entry.1.is_empty() || entry.1.starts_with("OSHOOSI_STANDIN_") {
+                        entry.1 = sec.clone();
+                        changed = true;
+                    }
+                } else {
+                    existing_payload.original_env_vars.push((k.clone(), sec.clone()));
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            let _ = Self::write_vault_payload(&p, &existing_payload);
         }
     }
 
@@ -820,6 +934,16 @@ impl ProtectedEnvBackupVault {
                     scrubbed = scrubbed.replace(standin, orig_v);
                 }
             }
+            // Consult persistent cross-vault standin recovery ledger if tokens remain
+            if scrubbed.contains("OSHOOSI_STANDIN_") {
+                if let Ok(ledger) = Self::load_standin_recovery_ledger() {
+                    for (s_tok, (_k, orig_sec)) in &ledger {
+                        if scrubbed.contains(s_tok) {
+                            scrubbed = scrubbed.replace(s_tok, orig_sec);
+                        }
+                    }
+                }
+            }
             // Line-by-line fallback if a different stand-in suffix was generated for the same key name
             if scrubbed.contains("OSHOOSI_STANDIN_") {
                 let mut fixed_lines = Vec::new();
@@ -833,6 +957,18 @@ impl ProtectedEnvBackupVault {
                                 if let Some(rep) = Self::replace_env_var_in_line(line, ok, orig_v) {
                                     replaced_line = Some(rep);
                                     break;
+                                }
+                            }
+                        }
+                        if replaced_line.is_none() {
+                            if let Ok(ledger) = Self::load_standin_recovery_ledger() {
+                                for (_s_tok, (k_name, sec_val)) in &ledger {
+                                    if !sec_val.starts_with("OSHOOSI_STANDIN_") && !sec_val.is_empty() {
+                                        if let Some(rep) = Self::replace_env_var_in_line(line, k_name, sec_val) {
+                                            replaced_line = Some(rep);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1716,6 +1852,7 @@ impl ProtectedEnvBackupVault {
         };
 
         Self::write_vault_payload(vault_path, &payload)?;
+        Self::record_in_standin_recovery_ledger(&payload.standin_mappings, &payload.original_env_vars);
 
         // Update active process memory for each grant
         for grant in grants {
@@ -1790,7 +1927,17 @@ impl ProtectedEnvBackupVault {
                     }
                 }
             }
+            if let Ok(ledger) = Self::load_standin_recovery_ledger() {
+                for (k, v) in ledger.values() {
+                    if !v.starts_with("OSHOOSI_STANDIN_")
+                        && !merged_hkcu.iter().any(|(mk, _)| mk.eq_ignore_ascii_case(k))
+                    {
+                        merged_hkcu.push((k.clone(), v.clone()));
+                    }
+                }
+            }
             restore_hkcu_original_vars(&merged_hkcu)?;
+            broadcast_wm_settingchange_environment();
         }
 
         let scrub_standin_bytes = |bytes: &[u8]| -> Vec<u8> {
@@ -1912,7 +2059,51 @@ impl ProtectedEnvBackupVault {
             return Ok(());
         }
 
-        // Unlock and shred companion .dpapi file if present
+        // VERIFIED ATOMIC REVERT GATE:
+        // Refuse to delete or shred the vault if any tracked file or HKCU registry key
+        // still contains an un-reverted OSHOOSI_STANDIN_* token.
+        if let Ok((payload, _)) = Self::read_vault_payload(vault_path) {
+            for file_entry in &payload.files {
+                let p = Path::new(&file_entry.path);
+                if p.is_file() {
+                    if let Ok(bytes) = std::fs::read(p) {
+                        if bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                            return Err(VaultError::TargetError(format!(
+                                "Refusing to shred vault '{}': residual stand-in tokens remain in '{}'. The file must be cleanly restored before vault deletion.",
+                                vault_path.display(),
+                                p.display()
+                            )));
+                        }
+                    }
+                }
+            }
+            let target = Path::new(&payload.target_path);
+            if target.is_file() {
+                if let Ok(bytes) = std::fs::read(target) {
+                    if bytes.windows(16).any(|w| w == b"OSHOOSI_STANDIN_") {
+                        return Err(VaultError::TargetError(format!(
+                            "Refusing to shred vault '{}': residual stand-in tokens remain in '{}'. The file must be cleanly restored before vault deletion.",
+                            vault_path.display(),
+                            target.display()
+                        )));
+                    }
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) {
+            for (k, v) in read_hkcu_environment_vars() {
+                if v.starts_with("OSHOOSI_STANDIN_") && !k.eq_ignore_ascii_case("PATH") {
+                    return Err(VaultError::TargetError(format!(
+                        "Refusing to shred vault '{}': residual stand-in token remains in HKCU\\Environment for '{}'. Registry must be cleanly restored before vault deletion.",
+                        vault_path.display(),
+                        k
+                    )));
+                }
+            }
+        }
+// Unlock and shred companion .dpapi file if present
         let dpapi_path = Self::companion_dpapi_path(vault_path);
         if dpapi_path.exists() {
             let _ = unlock_protected_ntfs_dacl(&dpapi_path);
@@ -2253,6 +2444,15 @@ impl ProtectedEnvBackupVault {
                             v = orig_v.clone();
                         }
                     }
+                    if v.starts_with("OSHOOSI_STANDIN_") {
+                        if let Ok(ledger) = Self::load_standin_recovery_ledger() {
+                            if let Some((_, sec)) = ledger.get(&v) {
+                                v = sec.clone();
+                            } else if let Some((_, sec)) = ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k)) {
+                                v = sec.clone();
+                            }
+                        }
+                    }
                 }
                 if !seen_keys.contains(&k) {
                     seen_keys.insert(k.clone());
@@ -2454,8 +2654,11 @@ impl ProtectedEnvBackupVault {
         // OR when `in_place_disk_seal` is explicitly enabled in `database/env_seal_config.json`.
         // In production by default (Shadow Vault Mode), `.env` files on disk and `HKCU\Environment`
         // remain in plaintext so external applications (`node`, `python`, `cargo`, `docker`, IDEs) never break.
-        let allow_in_place_disk_rewrite =
-            !is_production_vault_path(vault_path) || Self::is_in_place_disk_seal_enabled();
+        let allow_in_place_disk_rewrite = if is_production_vault_path(vault_path) {
+            Self::is_in_place_disk_seal_enabled()
+        } else {
+            true
+        };
 
         if allow_in_place_disk_rewrite {
             for file_path in &discovered_files {
@@ -2845,15 +3048,63 @@ impl ProtectedEnvBackupVault {
         };
 
         if let Some(p) = custom_path {
-            add_if_exists(p.to_path_buf());
+            if p.exists() {
+                add_if_exists(p.to_path_buf());
+                return paths;
+            }
         }
         add_if_exists(Self::default_vault_path());
+
+        let mut scan_dir_for_vaults = |dir: &Path| {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        if let Some(ext) = p.extension() {
+                            if ext.eq_ignore_ascii_case("vault") {
+                                if let Some(stem) = p.file_stem() {
+                                    if stem.eq_ignore_ascii_case("standin_recovery") {
+                                        continue;
+                                    }
+                                }
+                                add_if_exists(p);
+                            }
+                        }
+                    }
+                }
+            }
+            let db_dir = dir.join("database");
+            if db_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&db_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_file() {
+                            if let Some(ext) = p.extension() {
+                                if ext.eq_ignore_ascii_case("vault") {
+                                    if let Some(stem) = p.file_stem() {
+                                        if stem.eq_ignore_ascii_case("standin_recovery") {
+                                            continue;
+                                        }
+                                    }
+                                    add_if_exists(p);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if let Ok(cwd) = std::env::current_dir() {
+            scan_dir_for_vaults(&cwd);
+        }
+        scan_dir_for_vaults(Path::new("."));
 
         if let Ok(exe) = std::env::current_exe() {
             let mut cur = exe.parent();
             for _ in 0..6 {
                 if let Some(dir) = cur {
-                    add_if_exists(dir.join(DEFAULT_VAULT_PATH));
+                    scan_dir_for_vaults(dir);
                     cur = dir.parent();
                 } else {
                     break;
@@ -2864,20 +3115,16 @@ impl ProtectedEnvBackupVault {
         #[cfg(windows)]
         {
             if let Ok(pd) = std::env::var("ProgramData") {
-                add_if_exists(
-                    PathBuf::from(pd)
-                        .join("OshoosiClaw")
-                        .join(DEFAULT_VAULT_PATH),
-                );
+                scan_dir_for_vaults(&PathBuf::from(pd).join("OshoosiClaw"));
             }
-            add_if_exists(PathBuf::from(r"C:\ProgramData\OshoosiClaw").join(DEFAULT_VAULT_PATH));
-            add_if_exists(PathBuf::from(r"C:\Program Files\OshoosiClaw").join(DEFAULT_VAULT_PATH));
+            scan_dir_for_vaults(Path::new(r"C:\ProgramData\OshoosiClaw"));
+            scan_dir_for_vaults(Path::new(r"C:\Program Files\OshoosiClaw"));
         }
 
         #[cfg(unix)]
         {
-            add_if_exists(PathBuf::from("/var/lib/oshoosi").join(DEFAULT_VAULT_PATH));
-            add_if_exists(PathBuf::from("/etc/oshoosi").join(DEFAULT_VAULT_PATH));
+            scan_dir_for_vaults(Path::new("/var/lib/oshoosi"));
+            scan_dir_for_vaults(Path::new("/etc/oshoosi"));
         }
 
         paths
@@ -2985,6 +3232,12 @@ impl ProtectedEnvBackupVault {
                 {
                     eprintln!(
                         "[WARN] Skipping vault '{}': PermissionDenied (os error 5). Run as administrator or system service to unseal this vault.",
+                        v.display()
+                    );
+                }
+                Err(VaultError::InvalidFormat) => {
+                    eprintln!(
+                        "[WARN] Skipping corrupted/non-vault file '{}': Invalid vault magic header",
                         v.display()
                     );
                 }
@@ -3819,8 +4072,12 @@ pub fn is_production_vault_path(vault_path: &Path) -> bool {
         {
             return false;
         }
-        s == "database\\protected_env_backup.vault"
-            || s.ends_with("\\database\\protected_env_backup.vault")
+        s.ends_with(".vault")
+            && (s == "database\\protected_env_backup.vault"
+                || s.ends_with("\\database\\protected_env_backup.vault")
+                || s.contains("\\database\\")
+                || s.starts_with("database\\")
+                || s.contains("protected_"))
     }
 }
 
@@ -4123,6 +4380,16 @@ fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result
                     let _ = env_key.set_value(&k, clean_sec);
                     std::env::set_var(&k, clean_sec);
                     any_restored = true;
+                } else if let Ok(ledger) = ProtectedEnvBackupVault::load_standin_recovery_ledger() {
+                    if let Some((_, sec)) = ledger.get(&val) {
+                        let _ = env_key.set_value(&k, sec);
+                        std::env::set_var(&k, sec);
+                        any_restored = true;
+                    } else if let Some((_, sec)) = ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k)) {
+                        let _ = env_key.set_value(&k, sec);
+                        std::env::set_var(&k, sec);
+                        any_restored = true;
+                    }
                 }
             }
         }
@@ -4135,7 +4402,7 @@ fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result
 }
 
 #[cfg(windows)]
-fn broadcast_wm_settingchange_environment() {
+pub fn broadcast_wm_settingchange_environment() {
     #[link(name = "user32")]
     extern "system" {
         fn SendMessageTimeoutW(

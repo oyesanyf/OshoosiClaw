@@ -26,7 +26,7 @@ pub const FWPM_SESSION_FLAG_DYNAMIC: u32 = 0x0000_0001;
 pub const RPC_C_AUTHN_WINNT: u32 = 10;
 pub const RPC_C_AUTHN_DEFAULT: u32 = 0xFFFF_FFFF;
 pub const ERROR_SUCCESS: u32 = 0;
-pub const WFP_HERMETIC_LAYER_COUNT: usize = 22;
+pub const WFP_HERMETIC_LAYER_COUNT: usize = 24;
 pub const WFP_KILLSWITCH_RULE_PREFIX: &str = "Osoosi-KillSwitch";
 
 #[cfg(windows)]
@@ -267,6 +267,38 @@ const FWPM_LAYER_INBOUND_MAC_FRAME_ETHERNET: WfpGuid = WfpGuid {
     data2: 0x0055,
     data3: 0x4f9a,
     data4: [0xa2, 0x31, 0x4f, 0xf8, 0x13, 0x1a, 0xd1, 0x91],
+};
+
+// 444543b6-9046-4246-ab81-9b06227e243d (Incident A WSL2 NAT Interception)
+pub const FWPM_LAYER_IPFORWARD_V4: WfpGuid = WfpGuid {
+    data1: 0x444543b6,
+    data2: 0x9046,
+    data3: 0x4246,
+    data4: [0xab, 0x81, 0x9b, 0x06, 0x22, 0x7e, 0x24, 0x3d],
+};
+
+// 12fe69b5-485a-40e7-912a-82b818121294 (Incident A WSL2 NAT Interception)
+pub const FWPM_LAYER_IPFORWARD_V6: WfpGuid = WfpGuid {
+    data1: 0x12fe69b5,
+    data2: 0x485a,
+    data3: 0x40e7,
+    data4: [0x91, 0x2a, 0x82, 0xb8, 0x18, 0x12, 0x12, 0x94],
+};
+
+// a82acc24-4ee1-4ee1-b465-fd1d25cb10a4 (Official Windows SDK fwpmu.h)
+pub const FWPM_LAYER_IPFORWARD_V4_SDK: WfpGuid = WfpGuid {
+    data1: 0xa82acc24,
+    data2: 0x4ee1,
+    data3: 0x4ee1,
+    data4: [0xb4, 0x65, 0xfd, 0x1d, 0x25, 0xcb, 0x10, 0xa4],
+};
+
+// 7b964818-19c7-493a-b71f-832c3684d28c (Official Windows SDK fwpmu.h)
+pub const FWPM_LAYER_IPFORWARD_V6_SDK: WfpGuid = WfpGuid {
+    data1: 0x7b964818,
+    data2: 0x19c7,
+    data3: 0x493a,
+    data4: [0xb7, 0x1f, 0x83, 0x2c, 0x36, 0x84, 0xd2, 0x8c],
 };
 
 // --- WFP Condition Field GUIDs ---
@@ -1429,7 +1461,7 @@ impl WfpDynamicSession {
                 }
             }
 
-            // Additional defense-in-depth layers (Flow, Stream, ICMP Error, Inbound IPPacket)
+            // Additional defense-in-depth layers (Flow, Stream, ICMP Error, Inbound IPPacket, IPForward WSL2 NAT)
             for (label, layer) in [
                 ("Block-FlowEst-V4", FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4),
                 ("Block-FlowEst-V6", FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6),
@@ -1441,6 +1473,8 @@ impl WfpDynamicSession {
                 ("Block-ICMP-In-V6", FWPM_LAYER_INBOUND_ICMP_ERROR_V6),
                 ("Block-IPPacket-In-V4", FWPM_LAYER_INBOUND_IPPACKET_V4),
                 ("Block-IPPacket-In-V6", FWPM_LAYER_INBOUND_IPPACKET_V6),
+                ("Block-IPForward-V4", FWPM_LAYER_IPFORWARD_V4),
+                ("Block-IPForward-V6", FWPM_LAYER_IPFORWARD_V6),
             ] {
                 if let Some(id) = add_one(label, layer, FWP_ACTION_BLOCK, 1, &mut []) {
                     filter_ids.push(id);

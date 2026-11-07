@@ -5,6 +5,7 @@
 
 pub mod canary;
 pub mod discovery;
+pub mod exec_sensor;
 pub mod file_watch;
 pub mod genai_otel_monitor;
 pub mod hash;
@@ -18,6 +19,7 @@ pub mod timing_shear;
 
 pub use canary::*;
 pub use discovery::*;
+pub use exec_sensor::*;
 pub use file_watch::*;
 pub use genai_otel_monitor::*;
 pub use hash::*;

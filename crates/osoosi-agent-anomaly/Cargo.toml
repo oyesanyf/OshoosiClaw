@@ -42,7 +42,7 @@ parking_lot = { workspace = true }
 rand = { workspace = true }
 url = "2"
 sysinfo = { workspace = true }
-rusqlite = { workspace = true }
+rusqlite = { workspace = true, features = ["hooks"] }
 hostname = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]

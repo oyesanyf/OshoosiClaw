@@ -145,6 +145,7 @@ impl SiqueryEngine {
         &[
             "agent_containment_rings",
             "agent_drift_traces",
+            "agent_interceptions",
             "agent_mercury_physics",
             "agent_octopus_arms",
             "api_endpoints",
@@ -157,10 +158,12 @@ impl SiqueryEngine {
             "browser_history",
             "business_policy_violations",
             "certificates",
+            "circumvention_events",
             "coding_tools",
             "cpu_info",
             "defender_status",
             "disk_encryption",
+            "dlp_semantic_events",
             "dns_cache",
             "dns_resolvers",
             "drivers",
@@ -178,6 +181,7 @@ impl SiqueryEngine {
             "etc_hosts",
             "etc_protocols",
             "etc_services",
+            "exec_events",
             "file_events",
             "firewall_rules",
             "groups",
@@ -397,6 +401,13 @@ impl SiqueryEngine {
             !is_pragma && (is_metadata || lower.contains("kernel_object_conservation"));
         let need_vcdb_incidents = !is_pragma && (is_metadata || lower.contains("vcdb_incidents"));
         let need_drift_traces = !is_pragma && (is_metadata || lower.contains("agent_drift_traces"));
+        let need_agent_interceptions =
+            !is_pragma && (is_metadata || lower.contains("agent_interceptions"));
+        let need_exec_events = !is_pragma && (is_metadata || lower.contains("exec_events"));
+        let need_circumvention_events =
+            !is_pragma && (is_metadata || lower.contains("circumvention_events"));
+        let need_dlp_semantic_events =
+            !is_pragma && (is_metadata || lower.contains("dlp_semantic_events"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -479,7 +490,11 @@ impl SiqueryEngine {
             || need_merkle_anchors
             || need_kernel_conservation
             || need_vcdb_incidents
-            || need_drift_traces;
+            || need_drift_traces
+            || need_agent_interceptions
+            || need_exec_events
+            || need_circumvention_events
+            || need_dlp_semantic_events;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -758,16 +773,44 @@ impl SiqueryEngine {
             if need_drift_traces {
                 Self::populate_agent_drift_traces(&tx)?;
             }
+            if need_agent_interceptions {
+                Self::populate_agent_interceptions(&tx)?;
+            }
+            if need_exec_events {
+                Self::populate_exec_events(&tx)?;
+            }
+            if need_circumvention_events {
+                Self::populate_circumvention_events(&tx)?;
+            }
+            if need_dlp_semantic_events {
+                Self::populate_dlp_semantic_events(&tx)?;
+            }
 
             tx.commit()
                 .map_err(|e| format!("SQLite commit error: {}", e))?;
         }
 
-        // Enforce engine-level read-only mode for user queries
+        // Guard 2: SQLite Authorizer Callback (enforce read-only at bytecode generation, permitting recursive CTEs)
+        conn.authorizer(Some(|ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
+            rusqlite::hooks::AuthAction::Select
+            | rusqlite::hooks::AuthAction::Read { .. }
+            | rusqlite::hooks::AuthAction::Function { .. }
+            | rusqlite::hooks::AuthAction::Pragma { .. }
+            | rusqlite::hooks::AuthAction::Recursive => rusqlite::hooks::Authorization::Allow,
+            _ => rusqlite::hooks::Authorization::Deny,
+        }));
+
+        // Guard 3: Enforce engine-level read-only mode for user queries
         conn.execute_batch("PRAGMA query_only = ON;")
             .map_err(|e| format!("Failed to set PRAGMA query_only: {}", e))?;
 
-        // Execute query
+        // 15-second execution timeout guard via progress_handler
+        let start_time = std::time::Instant::now();
+        conn.progress_handler(1000, Some(move || {
+            start_time.elapsed().as_secs() >= 15
+        }));
+
+        // Execute query (Guard 4: VDBE Readonly Verification)
         let mut stmt = conn
             .prepare(trimmed)
             .map_err(|e| format!("SQLite prepare error: {}", e))?;
@@ -1751,6 +1794,23 @@ impl SiqueryEngine {
             timestamp TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS agent_interceptions (
+            event_id TEXT, timestamp_utc TEXT, agent_kind TEXT, tool_name TEXT, command_line TEXT, verdict TEXT, rationale TEXT, pid INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS exec_events (
+            event_id TEXT, timestamp_ns INTEGER, pid INTEGER, ppid INTEGER, image_path TEXT, cmdline TEXT, uid INTEGER, euid INTEGER, exit_code INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS circumvention_events (
+            signal_id TEXT, session_id TEXT, pid INTEGER, parent_pid INTEGER, command_line TEXT, executable TEXT,
+            privilege_class TEXT, exit_code INTEGER, is_permission_denied INTEGER, pattern_kind TEXT, timestamp_utc TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS dlp_semantic_events (
+            event_id TEXT, timestamp_utc TEXT, kind TEXT, classification TEXT, policy TEXT, snippet TEXT, confidence REAL, source_label TEXT
+        );
+
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
         CREATE VIEW IF NOT EXISTS kernel_modules AS SELECT name, display_name, path, state FROM drivers;
         CREATE VIEW IF NOT EXISTS listening_ports AS SELECT pid, local_port AS port, protocol, family, local_address AS address FROM process_open_sockets WHERE remote_port = 0 OR state = 'LISTEN';
@@ -1765,6 +1825,121 @@ impl SiqueryEngine {
 
         conn.execute_batch(DDL)
             .map_err(|e| format!("Failed to create siquery relational schemas: {}", e))
+    }
+
+    fn populate_agent_interceptions(tx: &rusqlite::Transaction) -> Result<(), String> {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO agent_interceptions (event_id, timestamp_utc, agent_kind, tool_name, \
+                 command_line, verdict, rationale, pid) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let interceptions = crate::agent_hooks::snapshot_interceptions();
+        for item in interceptions {
+            let verdict_str = if item.allowed { "ALLOW" } else { "DENY" };
+
+            stmt.execute(rusqlite::params![
+                item.event_id,
+                item.timestamp_utc,
+                item.agent,
+                item.tool_name,
+                item.command,
+                verdict_str,
+                item.rationale,
+                0i64,
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn populate_exec_events(tx: &rusqlite::Transaction) -> Result<(), String> {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO exec_events (event_id, timestamp_ns, pid, ppid, image_path, \
+                 cmdline, uid, euid, exit_code) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let events = osoosi_telemetry::exec_sensor::EXEC_SENSOR_BUFFER.snapshot();
+        for ev in events {
+            stmt.execute(rusqlite::params![
+                format!("exec-{}", ev.pid),
+                ev.timestamp_ns as i64,
+                ev.pid as i64,
+                ev.ppid as i64,
+                ev.image_path,
+                ev.cmdline,
+                ev.uid.map(|u| u as i64).unwrap_or(0),
+                ev.euid.map(|u| u as i64).unwrap_or(0),
+                ev.exit_code.map(|c| c as i64),
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn populate_circumvention_events(tx: &rusqlite::Transaction) -> Result<(), String> {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO circumvention_events (signal_id, session_id, pid, parent_pid, \
+                 command_line, executable, privilege_class, exit_code, is_permission_denied, \
+                 pattern_kind, timestamp_utc) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let denials = crate::agent_hooks::GLOBAL_CORRELATOR.snapshot_denials();
+        for d in denials {
+            let ppid_val = d.parent_pid.map(|p| p as i64).unwrap_or(0);
+            let code_val = d.exit_code.map(|c| c as i64).unwrap_or(1);
+            let pattern_str = format!("{:?}", d.pattern_kind);
+
+            stmt.execute(rusqlite::params![
+                d.signal_id,
+                d.session_id,
+                d.pid as i64,
+                ppid_val,
+                d.command_line,
+                d.executable,
+                format!("{:?}", d.privilege_class),
+                code_val,
+                if d.is_permission_denied { 1i64 } else { 0i64 },
+                pattern_str,
+                d.timestamp_utc,
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn populate_dlp_semantic_events(tx: &rusqlite::Transaction) -> Result<(), String> {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO dlp_semantic_events (event_id, timestamp_utc, kind, classification, \
+                 policy, snippet, confidence, source_label) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let events = osoosi_dp::semantic_dlp::query_recent_semantic_events(1000);
+        for ev in events {
+            stmt.execute(rusqlite::params![
+                ev.event_id,
+                ev.timestamp_utc,
+                format!("{:?}", ev.kind),
+                format!("{:?}", ev.classification),
+                format!("{:?}", ev.policy),
+                ev.snippet,
+                ev.confidence as f64,
+                ev.source_label,
+            ])
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -9597,8 +9772,8 @@ mod tests {
         let tables = SiqueryEngine::list_tables();
         assert_eq!(
             tables.len(),
-            104,
-            "Must contain exactly 104 tables and views for comprehensive siquery host discovery"
+            108,
+            "Must contain exactly 108 tables and views for comprehensive siquery host discovery"
         );
 
         for table in tables {

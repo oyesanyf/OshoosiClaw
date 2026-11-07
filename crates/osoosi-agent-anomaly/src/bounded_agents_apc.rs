@@ -72,6 +72,64 @@ impl ActionClass {
     }
 }
 
+/// Maps a concrete tool/action name to its canonical APC action class for composition checking.
+pub fn classify_action_class(action: &str) -> &'static str {
+    let lower = action.trim().to_ascii_lowercase();
+    if lower == "privileged_execution" || lower.starts_with("privileged_execution") {
+        return "PRIVILEGED_EXECUTION";
+    }
+
+    // 1. Structural semantic command evaluation for privilege escalation
+    let sem = crate::semantic_command::parse_semantic_command(action);
+    if sem.privilege_class.is_privileged_execution() {
+        return "PRIVILEGED_EXECUTION";
+    }
+    if sem.privilege_class
+        == crate::semantic_command::PrivilegeEquivalenceClass::PrivilegeQueryOrBenign
+    {
+        return "READ_PUBLIC";
+    }
+
+    // Direct sensitive credential store check
+    if osoosi_dp::sensitive_paths::scan_for_sensitive_system_path(action).is_some() {
+        return "PRIVILEGED_EXECUTION";
+    }
+
+    // 2. Tool name and action keyword classification
+    if lower.contains("read_confidential")
+        || lower.contains("secret")
+        || lower.contains("credential")
+        || lower.contains("financial")
+        || lower.contains("pii")
+    {
+        "READ_CONFIDENTIAL"
+    } else if lower.contains("send")
+        || lower.contains("email")
+        || lower.contains("webhook")
+        || lower.contains("post")
+        || lower.contains("upload")
+        || lower.contains("egress")
+        || lower.contains("transmit")
+    {
+        "EXTERNAL_TRANSMIT"
+    } else if lower.contains("exec")
+        || lower.contains("shell")
+        || lower.contains("spawn")
+        || lower.contains("eval")
+    {
+        "EXECUTE_CODE"
+    } else if lower.contains("delete")
+        || lower.contains("drop")
+        || lower.contains("write")
+        || lower.contains("modify")
+        || lower.contains("update")
+    {
+        "MUTATE_STATE"
+    } else {
+        "READ_PUBLIC"
+    }
+}
+
 /// Pairwise unordered composition restriction ($k = 2$, Paper Def. 4.1).
 /// Prohibits executing both `class_a` and `class_b` within the same session or lineage.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -535,6 +593,10 @@ impl CompositionChecker {
         {
             out.insert("EXTERNAL_TRANSMIT".to_string());
         }
+        let dynamic_class = classify_action_class(action);
+        if dynamic_class == "PRIVILEGED_EXECUTION" {
+            out.insert("PRIVILEGED_EXECUTION".to_string());
+        }
         out
     }
 
@@ -995,6 +1057,23 @@ impl ApcPolicyDecisionPoint {
             );
         }
         satisfied.push("C1_IDENTITY".to_string());
+
+        // PRIVILEGED_EXECUTION gating per Requirement R3:
+        let action_class = classify_action_class(&req.action);
+        if action_class == "PRIVILEGED_EXECUTION"
+            && (!req.requires_approval && req.approval_token.is_none())
+        {
+            return self.deny(
+                envelope,
+                req,
+                satisfied,
+                "C1_PRIVILEGED_EXECUTION_BLOCKED",
+                &format!(
+                    "PRIVILEGED_EXECUTION action '{}' blocked without signed approval token envelope",
+                    req.action
+                ),
+            );
+        }
 
         // C2: Scope + Stateful Composition + 6D Monotonic Budget
         if !envelope.effective_scope.allows_action(&req.action) {
