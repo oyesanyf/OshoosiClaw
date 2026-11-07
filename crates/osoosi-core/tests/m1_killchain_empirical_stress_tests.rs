@@ -323,17 +323,44 @@ fn test_protected_process_and_developer_toolchain_immunity_under_load() {
         let simulated_pid = 1000 + (round as u32 % 500);
 
         for (name, path) in &protected_binaries {
-            // 1. Process freeze immunity check
-            assert!(
-                is_critical_system_pid(simulated_pid, name),
-                "Binary '{}' MUST be immune in is_critical_system_pid",
-                name
+            // M4 Invariant: Developer runtimes, hypervisors, and containers must NOT receive critical system PID immunity
+            let is_runtime_or_container = matches!(
+                *name,
+                "python.exe"
+                    | "python3.exe"
+                    | "python"
+                    | "python3"
+                    | "node.exe"
+                    | "node"
+                    | "code.exe"
+                    | "wsl.exe"
+                    | "docker.exe"
             );
-            assert!(
-                is_critical_system_pid(simulated_pid, path),
-                "Path '{}' MUST be immune in is_critical_system_pid",
-                path
-            );
+
+            if is_runtime_or_container {
+                assert!(
+                    !is_critical_system_pid(simulated_pid, name),
+                    "Runtime '{}' must NOT be immune in is_critical_system_pid",
+                    name
+                );
+                assert!(
+                    !is_critical_system_pid(simulated_pid, path),
+                    "Runtime path '{}' must NOT be immune in is_critical_system_pid",
+                    path
+                );
+            } else {
+                // 1. Process freeze immunity check for core OS and build tools
+                assert!(
+                    is_critical_system_pid(simulated_pid, name),
+                    "Binary '{}' MUST be immune in is_critical_system_pid",
+                    name
+                );
+                assert!(
+                    is_critical_system_pid(simulated_pid, path),
+                    "Path '{}' MUST be immune in is_critical_system_pid",
+                    path
+                );
+            }
 
             // 2. Runtime tarpit check
             assert!(

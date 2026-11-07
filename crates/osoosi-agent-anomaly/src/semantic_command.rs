@@ -179,6 +179,7 @@ impl DynamicBinaryMetadataProbe {
         Ok(probe)
     }
 
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     pub fn probe_bytes(bytes: &[u8]) -> Self {
         let mut probe = Self::default();
         if bytes.is_empty() {

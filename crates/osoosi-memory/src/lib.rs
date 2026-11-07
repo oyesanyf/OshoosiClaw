@@ -2836,6 +2836,7 @@ impl MemoryStore {
     // =========================================================================
 
     /// Persist a compiled CAGE governance policy and its barrier parameters into SQLite.
+    #[allow(clippy::too_many_arguments)]
     pub fn store_cage_policy(
         &self,
         policy_version_id: &str,
@@ -3014,6 +3015,7 @@ impl MemoryStore {
     }
 
     /// Append a CAGE governance trace event to the cryptographically linked trace log.
+    #[allow(clippy::too_many_arguments)]
     pub fn append_cage_governance_trace(
         &self,
         trace_id: &str,

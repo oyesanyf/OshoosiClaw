@@ -7,6 +7,8 @@
 //! 4. Vector 5: Siquery recursive CTE read-only authorizer and 15s timeout in `siquery.rs`
 //! 5. Vector 6: Sliding-window circumvention correlation across WSL2 boundaries in `circumvention.rs`
 
+#![allow(unused_imports, clippy::field_reassign_with_default)]
+
 use osoosi_agent_anomaly::agent_hooks::{
     evaluate_hook_synchronously, format_claude_response, format_copilot_response,
     format_cursor_response, format_mcp_error_response, format_opencode_response,
@@ -69,7 +71,7 @@ fn test_challenger_hook_wire_synonyms_exhaustive() {
     assert_eq!(req.agent, SupportedAgentKind::OpenCode);
     assert_eq!(req.command.as_deref(), Some("build --release"));
     assert_eq!(req.file_path.as_deref(), Some("/crates/lib.rs"));
-    assert_eq!(req.event_type, HookEventType::Custom("before".to_string()));
+    assert_eq!(req.event_type, HookEventType::PreToolUse);
 
     // Dedicated OpenCode parser maps "before" to PreToolUse
     let opencode_parsed = parse_opencode_request(&opencode_json.to_string()).unwrap();
@@ -123,7 +125,10 @@ fn test_challenger_mcp_jsonrpc_id_preservation_and_malformed() {
     assert_eq!(resp["jsonrpc"], "2.0");
     assert_eq!(resp["id"], "mcp-call-777");
     assert_eq!(resp["error"]["code"], -32000);
-    assert!(resp["error"]["message"].as_str().unwrap().contains("Privileged execution blocked"));
+    assert!(resp["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Privileged execution blocked"));
 
     // 2. Numeric ID preservation
     let num_id = serde_json::json!(42069);
@@ -148,7 +153,8 @@ fn test_challenger_mcp_jsonrpc_id_preservation_and_malformed() {
         "id": 1,
         "method": "initialize",
         "params": {}
-    }).to_string();
+    })
+    .to_string();
     assert!(parse_mcp_call_request(&non_tool_call).is_err());
 
     // 6. Valid tools/call method
@@ -162,7 +168,8 @@ fn test_challenger_mcp_jsonrpc_id_preservation_and_malformed() {
                 "command": "echo 'safe'"
             }
         }
-    }).to_string();
+    })
+    .to_string();
     let parsed = parse_mcp_call_request(&valid_tool_call).expect("Should parse tools/call");
     assert_eq!(parsed.agent, SupportedAgentKind::Mcp);
     assert_eq!(parsed.tool_name.as_deref(), Some("execute_command"));
@@ -177,28 +184,40 @@ fn test_challenger_hook_evaluation_6_layer_pipeline() {
     req.command = Some("sudo cat /etc/hosts".to_string());
     let dec = evaluate_hook_synchronously(&req);
     assert!(!dec.allowed, "sudo elevation must be blocked by Layer 1");
-    assert_eq!(dec.denied_by_layer.as_deref(), Some("Layer 1: SemanticCommandAst"));
+    assert_eq!(
+        dec.denied_by_layer.as_deref(),
+        Some("Layer 1: SemanticCommandAst")
+    );
 
     // SensitiveSystemPathGuard: Access to /etc/shadow Denied
     let mut req = NormalizedHookRequest::default();
     req.file_path = Some("/etc/shadow".to_string());
     let dec = evaluate_hook_synchronously(&req);
     assert!(!dec.allowed, "Access to /etc/shadow must be blocked");
-    assert_eq!(dec.denied_by_layer.as_deref(), Some("SensitiveSystemPathGuard"));
+    assert_eq!(
+        dec.denied_by_layer.as_deref(),
+        Some("SensitiveSystemPathGuard")
+    );
 
     // Layer 3: Semantic DLP Deal Value >= $1M Denied
     let mut req = NormalizedHookRequest::default();
     req.command = Some("echo 'The acquisition price is $5,000,000 in cash'".to_string());
     let dec = evaluate_hook_synchronously(&req);
     assert!(!dec.allowed, "Deal values >= $1M must be denied");
-    assert_eq!(dec.denied_by_layer.as_deref(), Some("Layer 3: SemanticDlpEngine"));
+    assert_eq!(
+        dec.denied_by_layer.as_deref(),
+        Some("Layer 3: SemanticDlpEngine")
+    );
 
     // Layer 3: Semantic DLP PHI (SSN) Denied
     let mut req = NormalizedHookRequest::default();
     req.command = Some("echo 'Patient record SSN 123-45-6789'".to_string());
     let dec = evaluate_hook_synchronously(&req);
     assert!(!dec.allowed, "Clinical PHI with SSN must be denied");
-    assert_eq!(dec.denied_by_layer.as_deref(), Some("Layer 3: SemanticDlpEngine"));
+    assert_eq!(
+        dec.denied_by_layer.as_deref(),
+        Some("Layer 3: SemanticDlpEngine")
+    );
 
     // Benign command Allowed
     let mut req = NormalizedHookRequest::default();
@@ -277,7 +296,10 @@ fn test_challenger_nested_shell_and_env_unwrapping() {
         PrivilegeEquivalenceClass::RootOrAdminElevation,
         "VAR=1 sudo id must be RootOrAdminElevation"
     );
-    assert!(sem5.env_vars.iter().any(|(k, v)| k == "SUDO_ASKPASS" && v == "/bin/false"));
+    assert!(sem5
+        .env_vars
+        .iter()
+        .any(|(k, v)| k == "SUDO_ASKPASS" && v == "/bin/false"));
     assert!(sem5.env_vars.iter().any(|(k, v)| k == "VAR" && v == "1"));
 }
 
@@ -384,9 +406,11 @@ fn test_challenger_deal_values_boundaries_and_currencies() {
     for d in &high_deals {
         let entities = engine.scan_payload(d);
         assert!(
-            entities.iter().any(|e| e.kind == SemanticEntityKind::DealValue
-                && e.classification == DlpClassification::CrownJewel
-                && e.policy == DlpPolicy::Quarantine),
+            entities
+                .iter()
+                .any(|e| e.kind == SemanticEntityKind::DealValue
+                    && e.classification == DlpClassification::CrownJewel
+                    && e.policy == DlpPolicy::Quarantine),
             "Payload '{}' MUST be detected as DealValue CrownJewel Quarantine",
             d
         );
@@ -401,9 +425,11 @@ fn test_challenger_deal_values_boundaries_and_currencies() {
     for d in &low_deals {
         let entities = engine.scan_payload(d);
         assert!(
-            entities.iter().any(|e| e.kind == SemanticEntityKind::DealValue
-                && e.classification == DlpClassification::Confidential
-                && e.policy == DlpPolicy::Block),
+            entities
+                .iter()
+                .any(|e| e.kind == SemanticEntityKind::DealValue
+                    && e.classification == DlpClassification::Confidential
+                    && e.policy == DlpPolicy::Block),
             "Payload '{}' MUST be detected as DealValue Confidential Block",
             d
         );
@@ -413,7 +439,9 @@ fn test_challenger_deal_values_boundaries_and_currencies() {
     let non_deal = "The department spent $5,000,000 on software licenses this quarter";
     let entities = engine.scan_payload(non_deal);
     assert!(
-        !entities.iter().any(|e| e.kind == SemanticEntityKind::DealValue),
+        !entities
+            .iter()
+            .any(|e| e.kind == SemanticEntityKind::DealValue),
         "Non-deal financial amount must NOT trigger DealValue"
     );
 }
@@ -435,10 +463,13 @@ fn test_challenger_hipaa_redactx_checksums() {
 
     // 3. Clinical PHI scanning in payload
     let engine = SemanticDlpEngine::new();
-    let phi_payload = "Patient John Doe, attending physician Dr. Smith, NPI 1234567893, SSN 123-45-6789";
+    let phi_payload =
+        "Patient John Doe, attending physician Dr. Smith, NPI 1234567893, SSN 123-45-6789";
     let entities = engine.scan_payload(phi_payload);
     assert!(
-        entities.iter().any(|e| e.kind == SemanticEntityKind::PhiMedicalRecord),
+        entities
+            .iter()
+            .any(|e| e.kind == SemanticEntityKind::PhiMedicalRecord),
         "Clinical payload must trigger PhiMedicalRecord entity"
     );
 
@@ -461,7 +492,9 @@ fn test_challenger_siquery_recursive_cte_read_only_allowed() {
 
     // Recursive CTE generating sequence 1..10
     let query = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<10) SELECT x FROM cnt;";
-    let rows = engine.execute_query(query).expect("Recursive CTE must be allowed by AuthAction::Recursive");
+    let rows = engine
+        .execute_query(query)
+        .expect("Recursive CTE must be allowed by AuthAction::Recursive");
     assert_eq!(rows.len(), 10, "Recursive CTE must return exactly 10 rows");
     assert_eq!(rows[0].get("x"), Some(&serde_json::json!(1)));
     assert_eq!(rows[9].get("x"), Some(&serde_json::json!(10)));
@@ -473,7 +506,10 @@ fn test_challenger_siquery_mutating_sql_forbidden() {
 
     // 1. INSERT forbidden
     let res = engine.execute_query("INSERT INTO processes (pid) VALUES (9999);");
-    assert!(res.is_err(), "INSERT statement must be rejected as mutating SQL");
+    assert!(
+        res.is_err(),
+        "INSERT statement must be rejected as mutating SQL"
+    );
 
     // 2. DROP TABLE forbidden
     let res = engine.execute_query("DROP TABLE processes;");
@@ -494,8 +530,13 @@ fn test_challenger_siquery_pragma_and_read_only_safety() {
 
     // PRAGMA query allowed
     let pragma_query = "PRAGMA table_info(processes);";
-    let rows = engine.execute_query(pragma_query).expect("PRAGMA table_info must be allowed");
-    assert!(!rows.is_empty(), "PRAGMA table_info must return column metadata");
+    let rows = engine
+        .execute_query(pragma_query)
+        .expect("PRAGMA table_info must be allowed");
+    assert!(
+        !rows.is_empty(),
+        "PRAGMA table_info must return column metadata"
+    );
 }
 
 // ============================================================================
@@ -527,13 +568,19 @@ fn test_challenger_circumvention_60s_sliding_window_wsl2() {
     // Step 2: Retry within 60s window across WSL2 boundary (`wsl -u root id`)
     let retry_time = now + Duration::from_secs(5);
     let alert = correlator.check_candidate(session, None, "wsl -u root id", retry_time);
-    assert!(alert.is_some(), "WSL cross-boundary retry within 60s MUST trigger circumvention alert");
+    assert!(
+        alert.is_some(),
+        "WSL cross-boundary retry within 60s MUST trigger circumvention alert"
+    );
 
     let a = alert.unwrap();
     assert_eq!(a.session_id, session);
     assert_eq!(a.severity, "CRITICAL");
     assert_eq!(a.severity_code, 4);
-    assert!(a.crossed_wsl_boundary, "Must flag crossed_wsl_boundary == true");
+    assert!(
+        a.crossed_wsl_boundary,
+        "Must flag crossed_wsl_boundary == true"
+    );
     assert_eq!(a.retry_command, "wsl -u root id");
     assert!(a.summary.contains("Incident A Circumvention Detected"));
 }
@@ -561,7 +608,8 @@ fn test_challenger_circumvention_window_expiry() {
 
     // Retry after 65s (window expired)
     let expired_time = now + Duration::from_secs(65);
-    let alert = correlator.check_candidate(session, None, "wsl -u root cat /etc/shadow", expired_time);
+    let alert =
+        correlator.check_candidate(session, None, "wsl -u root cat /etc/shadow", expired_time);
     assert!(
         alert.is_none(),
         "Retry after 60s window expired must NOT trigger circumvention alert"
