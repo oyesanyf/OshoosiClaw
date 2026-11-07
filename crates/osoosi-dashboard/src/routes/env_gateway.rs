@@ -788,6 +788,13 @@ pub async fn post_env_gateway_revert(Json(req): Json<RevertRequest>) -> (StatusC
                 Path::new(&fp),
             )
             .map_err(|e| format!("Revert failed: {}", e))?;
+            let norm_target = ProtectedEnvBackupVault::normalize_file_key(Path::new(&fp));
+            if !cfg.excluded_files.iter().any(|existing| {
+                ProtectedEnvBackupVault::normalize_file_key(Path::new(existing)) == norm_target
+            }) {
+                cfg.excluded_files.push(fp.clone());
+                let _ = cfg.save(None);
+            }
             push_watcher_event(WatcherEventRecord {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 file_path: fp.clone(),
@@ -854,7 +861,7 @@ pub async fn post_env_gateway_unseal_file(
     Json(req): Json<UnsealFileRequest>,
 ) -> (StatusCode, Json<Value>) {
     let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
-        let cfg = EnvSealConfig::load_or_default();
+        let mut cfg = EnvSealConfig::load_or_default();
         let v_path = ProtectedEnvBackupVault::locate_active_vault_path(
             req.vault_path
                 .as_deref()
@@ -867,6 +874,14 @@ pub async fn post_env_gateway_unseal_file(
             Path::new(&req.file_path),
         )
         .map_err(|e| format!("Revert failed: {}", e))?;
+
+        let norm_target = ProtectedEnvBackupVault::normalize_file_key(Path::new(&req.file_path));
+        if !cfg.excluded_files.iter().any(|existing| {
+            ProtectedEnvBackupVault::normalize_file_key(Path::new(existing)) == norm_target
+        }) {
+            cfg.excluded_files.push(req.file_path.clone());
+            let _ = cfg.save(None);
+        }
 
         push_watcher_event(WatcherEventRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),

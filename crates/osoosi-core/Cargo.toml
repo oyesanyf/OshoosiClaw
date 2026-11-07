@@ -34,6 +34,9 @@ zero-algebraic-kernel = { workspace = true }
 zero-vacuum-lensing = { workspace = true }
 zero-divine-equilibrium = { workspace = true }
 ed25519-dalek = { workspace = true }
+p256 = { workspace = true }
+ml-kem = { workspace = true }
+ml-dsa = { workspace = true }
 # hayabusa = { workspace = true }
 dotscope = { workspace = true }
 wasmtime = { workspace = true }

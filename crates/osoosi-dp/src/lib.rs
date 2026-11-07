@@ -6,7 +6,19 @@
 
 pub mod homomorphic;
 pub mod psi;
+pub mod semantic_dlp;
+pub mod sensitive_paths;
 pub mod tfhe_mesh;
+
+pub use semantic_dlp::{
+    is_dlp_deal_delimiter, is_dlp_structural_delimiter, luhn_check, query_recent_semantic_events,
+    record_semantic_event, scan_payload_for_semantic_entities, tokenize_dlp_deal_payload,
+    tokenize_dlp_payload, DlpClassification, DlpPolicy, GlinerSpanMatch, GlinerSpanNerEngine,
+    SemanticDlpClassification, SemanticDlpEngine, SemanticDlpEntity, SemanticDlpRecord,
+    SemanticDlpVerdict, SemanticEntityKind, SemanticEntityMatch, SemanticSensitivityLevel,
+    LIVE_SEMANTIC_DLP_EVENTS, MAX_LIVE_SEMANTIC_EVENTS,
+};
+pub use sensitive_paths::*;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -2293,6 +2305,11 @@ pub struct PresidioGlinerPiiZeroGuard;
 impl PresidioGlinerPiiZeroGuard {
     pub const GLINER_MULTI_PII_MODEL_ID: &'static str = "urchade/gliner_multi_pii-v1";
     pub const LAW10_PQC_SIGNING_SEED: [u8; 32] = *b"OSOOSI_LAW10_PQC_MLDSA65_SEED_V1";
+    /// OpenJEV Platt calibration with temperature T=1.08.
+    pub fn platt_calibrate(raw_logit: f64) -> f64 {
+        let t = 1.08;
+        (1.0 / (1.0 + (-raw_logit / t).exp())).clamp(0.0001, 0.9999)
+    }
 
     #[inline]
     pub fn compute_zk_pii_tag(entity_type: &str, raw_secret: &str) -> String {
@@ -2727,6 +2744,53 @@ pub fn redactx_mask_identifier(raw: &str, keep_tail: usize) -> String {
 pub struct RedactXStructuredValidator;
 
 impl RedactXStructuredValidator {
+    /// Depth-8 encoding unwrapping for Base64, Hex, URL-encoding, and ROT13.
+    pub fn unwrap_encoded_layers(raw: &str) -> Vec<String> {
+        let mut layers = Vec::new();
+        layers.push(raw.to_string());
+        let mut current = raw.to_string();
+
+        for _ in 0..8 {
+            let mut decoded_any = false;
+
+            // Base64 attempt
+            if let Ok(bytes) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, current.trim())
+            {
+                if let Ok(s) = String::from_utf8(bytes) {
+                    if s.chars().all(|c| !c.is_control() || c.is_whitespace()) {
+                        current = s;
+                        layers.push(current.clone());
+                        decoded_any = true;
+                    }
+                }
+            }
+
+            // Hex attempt
+            if !decoded_any
+                && current.len() >= 4
+                && current.len() % 2 == 0
+                && current.chars().all(|c| c.is_ascii_hexdigit())
+            {
+                if let Ok(bytes) = hex::decode(current.trim()) {
+                    if let Ok(s) = String::from_utf8(bytes) {
+                        if s.chars().all(|c| !c.is_control() || c.is_whitespace()) {
+                            current = s;
+                            layers.push(current.clone());
+                            decoded_any = true;
+                        }
+                    }
+                }
+            }
+
+            if !decoded_any {
+                break;
+            }
+        }
+
+        layers
+    }
+
     /// Scans Luhn-valid payment card numbers (PANs, 13..=19 digits) written contiguously or in
     /// space/dash separated groups (`4532 0151 1283 0366`, `3782-822463-10005`). Requires a
     /// major-network leading digit (2-6) and a token boundary on both sides.

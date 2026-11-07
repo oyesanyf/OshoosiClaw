@@ -7,6 +7,7 @@ use osoosi_policy::ThreatFeedFetcher;
 use osoosi_types::extract_zip;
 use osoosi_types::SecuredExecutor;
 
+pub mod hook_cli;
 pub mod service;
 
 use hf_hub::api::tokio::ApiBuilder;
@@ -496,6 +497,45 @@ enum Commands {
         /// Output summary report as JSON
         #[arg(long, default_value_t = false)]
         json: bool,
+    },
+    /// Manage and evaluate synchronous AI coding agent pre/post-execution hooks
+    Hook {
+        #[command(subcommand)]
+        subcommand: HookSubcommands,
+    },
+    /// Run an inline MCP stdio proxy intercepting tools/call
+    #[command(name = "mcp-proxy")]
+    McpProxy {
+        /// Target command to spawn as child MCP server
+        command: String,
+        /// Arguments to pass to the child command
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum HookSubcommands {
+    /// Install agent hook configurations into workspace
+    Install {
+        /// Target workspace directory (default: current directory)
+        #[arg(short, long)]
+        workspace: Option<PathBuf>,
+        /// Comma-separated list of agents to configure (claude, cursor, copilot, opencode)
+        #[arg(short, long)]
+        agents: Option<String>,
+    },
+    /// Synchronously evaluate an incoming agent tool execution request on stdin
+    Evaluate {
+        /// Target agent kind (claude, cursor, copilot, opencode, mcp)
+        #[arg(short, long)]
+        agent: String,
+        /// Event name (e.g. beforeShellExecution, preToolUse, etc.)
+        #[arg(short, long)]
+        event: Option<String>,
+        /// Flag indicating post-tool execution outcome evaluation
+        #[arg(long)]
+        post: bool,
     },
 }
 
@@ -3920,6 +3960,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 );
                 std::process::exit(1);
             }
+        }
+        Some(Commands::Hook { subcommand }) => match subcommand {
+            HookSubcommands::Install { workspace, agents } => {
+                crate::hook_cli::handle_hook_install(workspace, agents)?;
+            }
+            HookSubcommands::Evaluate { agent, event, post } => {
+                crate::hook_cli::handle_hook_evaluate(&agent, event.as_deref(), post)?;
+            }
+        },
+        Some(Commands::McpProxy { command, args }) => {
+            crate::hook_cli::handle_mcp_proxy(command, args)?;
         }
         None => {
             if !cli.grant_access {
@@ -10632,4 +10683,41 @@ mod tests {
         let st = status.unwrap();
         assert!(st.confidence_score > 0.0);
     }
+
+    #[test]
+    fn test_hook_cli_subcommands_parse_correctly() {
+        use clap::Parser;
+
+        // 1. hook install
+        let cli1 = Cli::try_parse_from(["osoosi", "hook", "install", "--workspace", ".", "--agents", "claude,cursor"]).unwrap();
+        match cli1.command {
+            Some(Commands::Hook { subcommand: HookSubcommands::Install { workspace, agents } }) => {
+                assert_eq!(workspace, Some(PathBuf::from(".")));
+                assert_eq!(agents, Some("claude,cursor".to_string()));
+            }
+            _ => panic!("Expected Hook Install subcommand"),
+        }
+
+        // 2. hook evaluate
+        let cli2 = Cli::try_parse_from(["osoosi", "hook", "evaluate", "--agent", "claude", "--event", "preToolUse"]).unwrap();
+        match cli2.command {
+            Some(Commands::Hook { subcommand: HookSubcommands::Evaluate { agent, event, post } }) => {
+                assert_eq!(agent, "claude");
+                assert_eq!(event, Some("preToolUse".to_string()));
+                assert!(!post);
+            }
+            _ => panic!("Expected Hook Evaluate subcommand"),
+        }
+
+        // 3. mcp-proxy
+        let cli3 = Cli::try_parse_from(["osoosi", "mcp-proxy", "npx", "-y", "@modelcontextprotocol/server-filesystem"]).unwrap();
+        match cli3.command {
+            Some(Commands::McpProxy { command, args }) => {
+                assert_eq!(command, "npx");
+                assert_eq!(args, vec!["-y", "@modelcontextprotocol/server-filesystem"]);
+            }
+            _ => panic!("Expected McpProxy subcommand"),
+        }
+    }
 }
+

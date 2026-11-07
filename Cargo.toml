@@ -73,6 +73,9 @@ hmac = "0.12"
 hex = "0.4"
 subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+ml-kem = { version = "0.3.2", features = ["getrandom"] }
+ml-dsa = "0.1.1"
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 # nexus-shield = { version = "0.4.4", default-features = false }
 dotscope = "0.1"
