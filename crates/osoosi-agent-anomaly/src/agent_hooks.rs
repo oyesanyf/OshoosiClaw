@@ -954,7 +954,8 @@ pub fn evaluate_hook_synchronously(req: &NormalizedHookRequest) -> HookEvaluatio
     if let Some(path) = &req.file_path {
         if let Some(kind) = osoosi_dp::sensitive_paths::classify_sensitive_system_path(path) {
             detected_sensitive_store = Some((kind, path.clone()));
-        } else if let Some(found) = osoosi_dp::sensitive_paths::scan_for_sensitive_system_path(path) {
+        } else if let Some(found) = osoosi_dp::sensitive_paths::scan_for_sensitive_system_path(path)
+        {
             detected_sensitive_store = Some(found);
         }
     }
@@ -1363,28 +1364,40 @@ mod tests {
     #[test]
     fn test_mcp_error_formatting_preserves_id() {
         let id = serde_json::json!("req-999");
-        let decision = HookEvaluationDecision::deny("Root access denied", Some("Layer 1"), None, 100);
+        let decision =
+            HookEvaluationDecision::deny("Root access denied", Some("Layer 1"), None, 100);
         let resp_str = format_mcp_error_response(&id, &decision);
         let resp_json: serde_json::Value = serde_json::from_str(&resp_str).unwrap();
 
         assert_eq!(resp_json["id"], "req-999");
         assert_eq!(resp_json["jsonrpc"], "2.0");
-        assert!(resp_json["error"]["message"].as_str().unwrap().contains("Root access denied"));
+        assert!(resp_json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Root access denied"));
     }
 
     #[test]
     fn test_pipeline_blocks_sensitive_path() {
-        let mut req = NormalizedHookRequest::default();
-        req.command = Some("cat /etc/shadow".to_string());
+        let req = NormalizedHookRequest {
+            command: Some("cat /etc/shadow".to_string()),
+            ..Default::default()
+        };
         let decision = evaluate_hook_synchronously(&req);
         assert!(!decision.allowed);
-        assert!(decision.denied_by_layer.as_deref().unwrap().contains("SensitiveSystemPathGuard"));
+        assert!(decision
+            .denied_by_layer
+            .as_deref()
+            .unwrap()
+            .contains("SensitiveSystemPathGuard"));
     }
 
     #[test]
     fn test_pipeline_blocks_sudo_elevation() {
-        let mut req = NormalizedHookRequest::default();
-        req.command = Some("sudo id".to_string());
+        let req = NormalizedHookRequest {
+            command: Some("sudo id".to_string()),
+            ..Default::default()
+        };
         let decision = evaluate_hook_synchronously(&req);
         assert!(!decision.allowed);
     }

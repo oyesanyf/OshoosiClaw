@@ -11,6 +11,7 @@
     clippy::manual_is_multiple_of
 )]
 
+pub mod agent_hooks;
 pub mod agentjacking_guard;
 pub mod alignment_scanner;
 pub mod atlas_arm;
@@ -18,6 +19,7 @@ pub mod bounded_agents_apc;
 pub mod breakout_defense;
 pub mod breakout_prevention;
 pub mod cedar_engine;
+pub mod circumvention;
 pub mod classifier;
 pub mod cognitive_redteam;
 pub mod command_line;
@@ -32,8 +34,6 @@ pub mod rasp;
 pub mod reasoner;
 pub mod rl_controller;
 pub mod screener;
-pub mod agent_hooks;
-pub mod circumvention;
 pub mod semantic_command;
 pub mod siquery;
 pub mod spider_physics;

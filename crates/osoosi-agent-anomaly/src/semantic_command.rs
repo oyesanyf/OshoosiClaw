@@ -239,7 +239,9 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 /// Structural AST representation of a parsed command line.
@@ -460,8 +462,6 @@ pub fn unwrap_env_invocation(tokens: &[String]) -> Option<EnvUnwrapResult> {
             } else {
                 None
             };
-        } else if tok == "-S" || tok == "--split-string" {
-            i += 1;
         } else if tok.starts_with('-') {
             i += 1;
         } else if is_env_var_assignment(tok) {

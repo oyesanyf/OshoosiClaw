@@ -45,7 +45,10 @@ pub fn constant_time_token_match(candidate: &str, expected: &str) -> bool {
 pub fn extract_token_from_headers(headers: &HeaderMap) -> Option<String> {
     if let Some(auth) = headers.get("authorization").and_then(|h| h.to_str().ok()) {
         let trimmed = auth.trim();
-        if let Some(bearer) = trimmed.strip_prefix("Bearer ").or_else(|| trimmed.strip_prefix("bearer ")) {
+        if let Some(bearer) = trimmed
+            .strip_prefix("Bearer ")
+            .or_else(|| trimmed.strip_prefix("bearer "))
+        {
             let t = bearer.trim();
             if !t.is_empty() {
                 return Some(t.to_string());
@@ -171,8 +174,10 @@ pub fn verify_control_plane_auth(
     let expected_token = get_or_init_dashboard_api_token();
     let token_valid = constant_time_token_match(token_to_verify, &expected_token)
         || constant_time_token_match(token_to_verify, TEST_MASTER_TOKEN)
-        || (endpoint_name.contains("isolate") && constant_time_token_match(token_to_verify, "CONFIRM ISOLATE"))
-        || (endpoint_name.contains("disarm") && constant_time_token_match(token_to_verify, "CONFIRM RESTORE"));
+        || (endpoint_name.contains("isolate")
+            && constant_time_token_match(token_to_verify, "CONFIRM ISOLATE"))
+        || (endpoint_name.contains("disarm")
+            && constant_time_token_match(token_to_verify, "CONFIRM RESTORE"));
 
     if !token_valid {
         return Err(api_error(
@@ -199,7 +204,9 @@ pub fn verify_control_plane_auth(
                     return Err(api_error(
                         StatusCode::UNAUTHORIZED,
                         "PEER_PID_VERIFICATION_FAILED",
-                        format!("Failed to authenticate loopback peer PID in OS kernel TCP table: {e}"),
+                        format!(
+                            "Failed to authenticate loopback peer PID in OS kernel TCP table: {e}"
+                        ),
                         "Ensure request originates from a live local loopback TCP socket.",
                     ));
                 }
@@ -262,11 +269,17 @@ mod tests {
         assert_eq!(extract_token_from_headers(&headers), None);
 
         headers.insert("authorization", "Bearer my-secret-token".parse().unwrap());
-        assert_eq!(extract_token_from_headers(&headers), Some("my-secret-token".to_string()));
+        assert_eq!(
+            extract_token_from_headers(&headers),
+            Some("my-secret-token".to_string())
+        );
 
         let mut headers2 = HeaderMap::new();
         headers2.insert("x-killswitch-token", "ks-token-42".parse().unwrap());
-        assert_eq!(extract_token_from_headers(&headers2), Some("ks-token-42".to_string()));
+        assert_eq!(
+            extract_token_from_headers(&headers2),
+            Some("ks-token-42".to_string())
+        );
     }
 
     #[test]
@@ -276,33 +289,67 @@ mod tests {
 
         // Missing token -> 401
         assert_eq!(
-            verify_control_plane_request_with_token(None, None, Some(100), 100, &frozen_pids, expected),
+            verify_control_plane_request_with_token(
+                None,
+                None,
+                Some(100),
+                100,
+                &frozen_pids,
+                expected
+            ),
             AuthVerdict::Unauthorized401
         );
 
         // Invalid token -> 401
         assert_eq!(
-            verify_control_plane_request_with_token(Some("wrong-token"), None, Some(100), 100, &frozen_pids, expected),
+            verify_control_plane_request_with_token(
+                Some("wrong-token"),
+                None,
+                Some(100),
+                100,
+                &frozen_pids,
+                expected
+            ),
             AuthVerdict::Unauthorized401
         );
 
         // PID Spoofing -> 403 Pid Spoofing
         assert_eq!(
-            verify_control_plane_request_with_token(Some(expected), None, Some(999), 100, &frozen_pids, expected),
+            verify_control_plane_request_with_token(
+                Some(expected),
+                None,
+                Some(999),
+                100,
+                &frozen_pids,
+                expected
+            ),
             AuthVerdict::Forbidden403PidSpoofing
         );
 
         // Quarantined Caller -> 403 Caller Quarantined
         assert_eq!(
-            verify_control_plane_request_with_token(Some(expected), None, Some(400), 400, &frozen_pids, expected),
+            verify_control_plane_request_with_token(
+                Some(expected),
+                None,
+                Some(400),
+                400,
+                &frozen_pids,
+                expected
+            ),
             AuthVerdict::Forbidden403CallerQuarantined
         );
 
         // Valid Authenticated Request -> Authorized
         assert_eq!(
-            verify_control_plane_request_with_token(Some(expected), None, Some(100), 100, &frozen_pids, expected),
+            verify_control_plane_request_with_token(
+                Some(expected),
+                None,
+                Some(100),
+                100,
+                &frozen_pids,
+                expected
+            ),
             AuthVerdict::Authorized
         );
     }
 }
-

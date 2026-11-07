@@ -2769,7 +2769,7 @@ impl RedactXStructuredValidator {
             // Hex attempt
             if !decoded_any
                 && current.len() >= 4
-                && current.len() % 2 == 0
+                && current.len().is_multiple_of(2)
                 && current.chars().all(|c| c.is_ascii_hexdigit())
             {
                 if let Ok(bytes) = hex::decode(current.trim()) {
