@@ -11,6 +11,7 @@ permissions: read-all
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ── Clippy: zero warnings policy ─────────────────────────────────────────────
@@ -20,7 +21,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
@@ -46,7 +47,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -65,7 +66,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
@@ -92,7 +93,7 @@ jobs:
           OSOOSI_NO_AI: "1"
 
       - name: Upload Fault-Injection Benchmark Report
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@v7
         with:
           name: mesh-fault-injection-report
           path: logs/multi_node_mesh_benchmark_report.json
@@ -181,7 +182,7 @@ jobs:
           exit $suiteExit
 
       - name: Upload Adversarial Proof Artifacts
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: adversarial-proof-report
@@ -196,7 +197,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
@@ -231,7 +232,7 @@ jobs:
         run: python -u scripts/run_live_multi_trial_suite.py --port 3030 --trials 3 --suite all --daemon-timeout 300
 
       - name: Upload Live Multi-Trial Verification Artifacts
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: live-multi-trial-report
@@ -246,7 +247,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -265,7 +266,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           fetch-depth: 0   # full history for secret detection

@@ -307,7 +307,7 @@ impl RedactXStructuredValidator {
             // Hex attempt
             if !decoded_any
                 && current.len() >= 4
-                && current.len() % 2 == 0
+                && current.len().is_multiple_of(2)
                 && current.chars().all(|c| c.is_ascii_hexdigit())
             {
                 if let Ok(bytes) = hex::decode(current.trim()) {
@@ -406,7 +406,7 @@ impl GlinerSpanNerEngine {
                 }
             }
             "person_name" => {
-                if clean.chars().next().map_or(false, |c| c.is_uppercase()) && clean.len() >= 2 {
+                if clean.chars().next().is_some_and(|c| c.is_uppercase()) && clean.len() >= 2 {
                     0.85
                 } else {
                     0.30
@@ -454,8 +454,8 @@ impl GlinerSpanNerEngine {
             if i + 1 < words.len() {
                 let w1 = words[i].trim_matches([',', ';', '.', ':']);
                 let w2 = words[i + 1].trim_matches([',', ';', '.', ':']);
-                if w1.chars().next().map_or(false, |c| c.is_uppercase())
-                    && w2.chars().next().map_or(false, |c| c.is_uppercase())
+                if w1.chars().next().is_some_and(|c| c.is_uppercase())
+                    && w2.chars().next().is_some_and(|c| c.is_uppercase())
                     && w1.chars().all(|c| c.is_alphabetic())
                     && w2.chars().all(|c| c.is_alphabetic())
                 {
@@ -754,11 +754,7 @@ impl SemanticDlpEngine {
                 let num_part = rest.trim_start_matches([':', '=', '-', ' ']);
                 if num_part.is_empty() {
                     currency_match = Some(CurrencyMatch::Separated);
-                } else if num_part
-                    .chars()
-                    .next()
-                    .map_or(false, |c| c.is_ascii_digit())
-                {
+                } else if num_part.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                     currency_match = Some(CurrencyMatch::Attached(num_part));
                 }
             }
@@ -774,11 +770,7 @@ impl SemanticDlpEngine {
                         let num_part = rest.trim_start_matches([':', '=', '-', ' ']);
                         if num_part.is_empty() {
                             currency_match = Some(CurrencyMatch::Separated);
-                        } else if num_part
-                            .chars()
-                            .next()
-                            .map_or(false, |c| c.is_ascii_digit())
-                        {
+                        } else if num_part.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                             currency_match = Some(CurrencyMatch::Attached(num_part));
                         }
                     }
@@ -787,7 +779,7 @@ impl SemanticDlpEngine {
 
             // Check digit-first amounts
             if currency_match.is_none()
-                && trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
+                && trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
             {
                 let has_currency_suffix = if i + 1 < tokens.len() {
                     let next_clean = tokens[i + 1].trim_matches([
@@ -818,11 +810,7 @@ impl SemanticDlpEngine {
                         ',', ';', ':', '(', ')', '[', ']', '{', '}', '"', '\'', '\\', '=', '&',
                     ]);
                     let num_clean = next_trimmed.trim_start_matches(['$', '€', '£', '¥']);
-                    if num_clean
-                        .chars()
-                        .next()
-                        .map_or(false, |c| c.is_ascii_digit())
-                    {
+                    if num_clean.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                         (num_clean, 2, i + 2)
                     } else {
                         i += 1;

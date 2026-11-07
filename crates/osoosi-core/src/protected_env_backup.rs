@@ -422,7 +422,10 @@ impl ProtectedEnvBackupVault {
                 "in_place_disk_seal": false,
                 "excluded_files": [canon_str],
             });
-            let _ = std::fs::write(&default_path, serde_json::to_vec_pretty(&initial).unwrap_or_default());
+            let _ = std::fs::write(
+                &default_path,
+                serde_json::to_vec_pretty(&initial).unwrap_or_default(),
+            );
         }
     }
 
@@ -448,7 +451,8 @@ impl ProtectedEnvBackupVault {
 
     /// Loads the persistent cross-vault stand-in recovery ledger as a dictionary mapping:
     /// `standin_token -> (key_name, plaintext_secret)`
-    pub fn load_standin_recovery_ledger() -> Result<std::collections::HashMap<String, (String, String)>, VaultError> {
+    pub fn load_standin_recovery_ledger(
+    ) -> Result<std::collections::HashMap<String, (String, String)>, VaultError> {
         let p = Self::recovery_ledger_path();
         if !p.exists() {
             return Ok(std::collections::HashMap::new());
@@ -456,7 +460,11 @@ impl ProtectedEnvBackupVault {
         let (payload, _) = Self::read_vault_payload(&p)?;
         let mut map = std::collections::HashMap::new();
         for (k, standin) in payload.standin_mappings {
-            if let Some((_, orig_v)) = payload.original_env_vars.iter().find(|(ok, _)| ok.eq_ignore_ascii_case(&k)) {
+            if let Some((_, orig_v)) = payload
+                .original_env_vars
+                .iter()
+                .find(|(ok, _)| ok.eq_ignore_ascii_case(&k))
+            {
                 if !orig_v.starts_with("OSHOOSI_STANDIN_") && !orig_v.is_empty() {
                     map.insert(standin, (k, orig_v.clone()));
                 }
@@ -475,8 +483,10 @@ impl ProtectedEnvBackupVault {
             return;
         }
         let p = Self::recovery_ledger_path();
-        let mut existing_payload = Self::read_vault_payload(&p).ok().map(|(payload, _)| payload).unwrap_or_else(|| {
-            VaultPayload {
+        let mut existing_payload = Self::read_vault_payload(&p)
+            .ok()
+            .map(|(payload, _)| payload)
+            .unwrap_or_else(|| VaultPayload {
                 target_path: "standin_recovery".to_string(),
                 epoch: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -492,13 +502,18 @@ impl ProtectedEnvBackupVault {
                 files: Vec::new(),
                 user_sid_env: std::collections::HashMap::new(),
                 dpapi_wrapped_key: None,
-            }
-        });
+            });
 
         let mut changed = false;
         for (k, standin) in new_mappings {
-            if !existing_payload.standin_mappings.iter().any(|(_, s)| s == standin) {
-                existing_payload.standin_mappings.push((k.clone(), standin.clone()));
+            if !existing_payload
+                .standin_mappings
+                .iter()
+                .any(|(_, s)| s == standin)
+            {
+                existing_payload
+                    .standin_mappings
+                    .push((k.clone(), standin.clone()));
                 if !existing_payload.sealed_variables.contains(k) {
                     existing_payload.sealed_variables.push(k.clone());
                 }
@@ -507,13 +522,19 @@ impl ProtectedEnvBackupVault {
         }
         for (k, sec) in new_secrets {
             if !sec.starts_with("OSHOOSI_STANDIN_") && !sec.is_empty() {
-                if let Some(entry) = existing_payload.original_env_vars.iter_mut().find(|(ek, _)| ek.eq_ignore_ascii_case(k)) {
+                if let Some(entry) = existing_payload
+                    .original_env_vars
+                    .iter_mut()
+                    .find(|(ek, _)| ek.eq_ignore_ascii_case(k))
+                {
                     if entry.1.is_empty() || entry.1.starts_with("OSHOOSI_STANDIN_") {
                         entry.1 = sec.clone();
                         changed = true;
                     }
                 } else {
-                    existing_payload.original_env_vars.push((k.clone(), sec.clone()));
+                    existing_payload
+                        .original_env_vars
+                        .push((k.clone(), sec.clone()));
                     changed = true;
                 }
             }
@@ -962,9 +983,13 @@ impl ProtectedEnvBackupVault {
                         }
                         if replaced_line.is_none() {
                             if let Ok(ledger) = Self::load_standin_recovery_ledger() {
-                                for (_s_tok, (k_name, sec_val)) in &ledger {
-                                    if !sec_val.starts_with("OSHOOSI_STANDIN_") && !sec_val.is_empty() {
-                                        if let Some(rep) = Self::replace_env_var_in_line(line, k_name, sec_val) {
+                                for (k_name, sec_val) in ledger.values() {
+                                    if !sec_val.starts_with("OSHOOSI_STANDIN_")
+                                        && !sec_val.is_empty()
+                                    {
+                                        if let Some(rep) =
+                                            Self::replace_env_var_in_line(line, k_name, sec_val)
+                                        {
                                             replaced_line = Some(rep);
                                             break;
                                         }
@@ -1852,7 +1877,10 @@ impl ProtectedEnvBackupVault {
         };
 
         Self::write_vault_payload(vault_path, &payload)?;
-        Self::record_in_standin_recovery_ledger(&payload.standin_mappings, &payload.original_env_vars);
+        Self::record_in_standin_recovery_ledger(
+            &payload.standin_mappings,
+            &payload.original_env_vars,
+        );
 
         // Update active process memory for each grant
         for grant in grants {
@@ -2103,7 +2131,7 @@ impl ProtectedEnvBackupVault {
                 }
             }
         }
-// Unlock and shred companion .dpapi file if present
+        // Unlock and shred companion .dpapi file if present
         let dpapi_path = Self::companion_dpapi_path(vault_path);
         if dpapi_path.exists() {
             let _ = unlock_protected_ntfs_dacl(&dpapi_path);
@@ -2448,7 +2476,9 @@ impl ProtectedEnvBackupVault {
                         if let Ok(ledger) = Self::load_standin_recovery_ledger() {
                             if let Some((_, sec)) = ledger.get(&v) {
                                 v = sec.clone();
-                            } else if let Some((_, sec)) = ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k)) {
+                            } else if let Some((_, sec)) =
+                                ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k))
+                            {
                                 v = sec.clone();
                             }
                         }
@@ -4385,7 +4415,9 @@ fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result
                         let _ = env_key.set_value(&k, sec);
                         std::env::set_var(&k, sec);
                         any_restored = true;
-                    } else if let Some((_, sec)) = ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k)) {
+                    } else if let Some((_, sec)) =
+                        ledger.values().find(|(lk, _)| lk.eq_ignore_ascii_case(&k))
+                    {
                         let _ = env_key.set_value(&k, sec);
                         std::env::set_var(&k, sec);
                         any_restored = true;

@@ -10689,9 +10689,20 @@ mod tests {
         use clap::Parser;
 
         // 1. hook install
-        let cli1 = Cli::try_parse_from(["osoosi", "hook", "install", "--workspace", ".", "--agents", "claude,cursor"]).unwrap();
+        let cli1 = Cli::try_parse_from([
+            "osoosi",
+            "hook",
+            "install",
+            "--workspace",
+            ".",
+            "--agents",
+            "claude,cursor",
+        ])
+        .unwrap();
         match cli1.command {
-            Some(Commands::Hook { subcommand: HookSubcommands::Install { workspace, agents } }) => {
+            Some(Commands::Hook {
+                subcommand: HookSubcommands::Install { workspace, agents },
+            }) => {
                 assert_eq!(workspace, Some(PathBuf::from(".")));
                 assert_eq!(agents, Some("claude,cursor".to_string()));
             }
@@ -10699,9 +10710,20 @@ mod tests {
         }
 
         // 2. hook evaluate
-        let cli2 = Cli::try_parse_from(["osoosi", "hook", "evaluate", "--agent", "claude", "--event", "preToolUse"]).unwrap();
+        let cli2 = Cli::try_parse_from([
+            "osoosi",
+            "hook",
+            "evaluate",
+            "--agent",
+            "claude",
+            "--event",
+            "preToolUse",
+        ])
+        .unwrap();
         match cli2.command {
-            Some(Commands::Hook { subcommand: HookSubcommands::Evaluate { agent, event, post } }) => {
+            Some(Commands::Hook {
+                subcommand: HookSubcommands::Evaluate { agent, event, post },
+            }) => {
                 assert_eq!(agent, "claude");
                 assert_eq!(event, Some("preToolUse".to_string()));
                 assert!(!post);
@@ -10710,7 +10732,14 @@ mod tests {
         }
 
         // 3. mcp-proxy
-        let cli3 = Cli::try_parse_from(["osoosi", "mcp-proxy", "npx", "-y", "@modelcontextprotocol/server-filesystem"]).unwrap();
+        let cli3 = Cli::try_parse_from([
+            "osoosi",
+            "mcp-proxy",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-filesystem",
+        ])
+        .unwrap();
         match cli3.command {
             Some(Commands::McpProxy { command, args }) => {
                 assert_eq!(command, "npx");
@@ -10720,4 +10749,3 @@ mod tests {
         }
     }
 }
-

@@ -316,17 +316,17 @@ fn query_windows_token_security_context(pid: u32) -> Result<ProcessSecurityConte
             if !label.label.sid.is_null() {
                 let sub_auth_count = *GetSidSubAuthorityCount(label.label.sid);
                 if sub_auth_count > 0 {
-                    let sub_auth_ptr = GetSidSubAuthority(
-                        label.label.sid,
-                        (sub_auth_count - 1) as u32,
-                    );
+                    let sub_auth_ptr =
+                        GetSidSubAuthority(label.label.sid, (sub_auth_count - 1) as u32);
                     integrity_rid = *sub_auth_ptr;
                 }
             }
         }
 
         // 2. Query TokenElevation
-        let mut elev = TOKEN_ELEVATION { token_is_elevated: 0 };
+        let mut elev = TOKEN_ELEVATION {
+            token_is_elevated: 0,
+        };
         let mut elev_len = 0u32;
         if GetTokenInformation(
             h_token,

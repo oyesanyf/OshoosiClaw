@@ -791,13 +791,15 @@ impl SiqueryEngine {
         }
 
         // Guard 2: SQLite Authorizer Callback (enforce read-only at bytecode generation, permitting recursive CTEs)
-        conn.authorizer(Some(|ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
-            rusqlite::hooks::AuthAction::Select
-            | rusqlite::hooks::AuthAction::Read { .. }
-            | rusqlite::hooks::AuthAction::Function { .. }
-            | rusqlite::hooks::AuthAction::Pragma { .. }
-            | rusqlite::hooks::AuthAction::Recursive => rusqlite::hooks::Authorization::Allow,
-            _ => rusqlite::hooks::Authorization::Deny,
+        conn.authorizer(Some(|ctx: rusqlite::hooks::AuthContext<'_>| {
+            match ctx.action {
+                rusqlite::hooks::AuthAction::Select
+                | rusqlite::hooks::AuthAction::Read { .. }
+                | rusqlite::hooks::AuthAction::Function { .. }
+                | rusqlite::hooks::AuthAction::Pragma { .. }
+                | rusqlite::hooks::AuthAction::Recursive => rusqlite::hooks::Authorization::Allow,
+                _ => rusqlite::hooks::Authorization::Deny,
+            }
         }));
 
         // Guard 3: Enforce engine-level read-only mode for user queries
@@ -806,9 +808,7 @@ impl SiqueryEngine {
 
         // 15-second execution timeout guard via progress_handler
         let start_time = std::time::Instant::now();
-        conn.progress_handler(1000, Some(move || {
-            start_time.elapsed().as_secs() >= 15
-        }));
+        conn.progress_handler(1000, Some(move || start_time.elapsed().as_secs() >= 15));
 
         // Execute query (Guard 4: VDBE Readonly Verification)
         let mut stmt = conn

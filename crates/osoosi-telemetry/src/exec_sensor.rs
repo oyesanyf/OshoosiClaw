@@ -247,7 +247,10 @@ impl WindowsProcessSensor {
 
         #[link(name = "kernel32")]
         extern "system" {
-            fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut std::ffi::c_void;
+            fn CreateToolhelp32Snapshot(
+                dw_flags: u32,
+                th32_process_id: u32,
+            ) -> *mut std::ffi::c_void;
             fn Process32First(h_snapshot: *mut std::ffi::c_void, lppe: *mut ProcessEntry32) -> i32;
             fn Process32Next(h_snapshot: *mut std::ffi::c_void, lppe: *mut ProcessEntry32) -> i32;
             fn CloseHandle(h_object: *mut std::ffi::c_void) -> i32;
@@ -269,7 +272,8 @@ impl WindowsProcessSensor {
                             .iter()
                             .position(|&c| c == 0)
                             .unwrap_or(entry.sz_exe_file.len());
-                        let name = String::from_utf8_lossy(&entry.sz_exe_file[..name_len]).to_string();
+                        let name =
+                            String::from_utf8_lossy(&entry.sz_exe_file[..name_len]).to_string();
 
                         known.insert(entry.th32_process_id, (entry.th32_parent_process_id, name));
 
@@ -305,7 +309,8 @@ impl WindowsProcessSensor {
                             .iter()
                             .position(|&c| c == 0)
                             .unwrap_or(entry.sz_exe_file.len());
-                        let name = String::from_utf8_lossy(&entry.sz_exe_file[..name_len]).to_string();
+                        let name =
+                            String::from_utf8_lossy(&entry.sz_exe_file[..name_len]).to_string();
 
                         current.insert(entry.th32_process_id, (entry.th32_parent_process_id, name));
 
@@ -462,8 +467,21 @@ mod tests {
             seen_clone.write().push(event.pid);
         }));
 
-        buffer.push(ExecEvent::new_start(1001, 1000, "test".into(), "test".into(), None, None));
-        buffer.push(ExecEvent::new_exit(1001, 1000, "test".into(), "test".into(), 0));
+        buffer.push(ExecEvent::new_start(
+            1001,
+            1000,
+            "test".into(),
+            "test".into(),
+            None,
+            None,
+        ));
+        buffer.push(ExecEvent::new_exit(
+            1001,
+            1000,
+            "test".into(),
+            "test".into(),
+            0,
+        ));
 
         let guard = seen.read();
         assert_eq!(*guard, vec![1001, 1001]);
