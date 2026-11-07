@@ -984,6 +984,9 @@ pub fn is_developer_or_agent_runtime(name: &str) -> bool {
             | "cmd.exe"
             | "sudo"
             | "su"
+            | "doas"
+            | "pkexec"
+            | "runas"
             | "bash"
             | "sh"
             | "zsh"
@@ -1012,6 +1015,43 @@ pub fn is_developer_or_agent_runtime(name: &str) -> bool {
 pub fn is_critical_system_pid(pid: u32, name: &str) -> bool {
     if pid <= 4 || pid == std::process::id() {
         return true;
+    }
+
+    // Developer runtimes, shells, hypervisors, containers, and elevation tools must NEVER receive critical system PID immunity
+    let stem = crate::immunity::extract_proc_stem(name);
+    let name_lc = name.to_ascii_lowercase();
+    if name_lc.contains("docker")
+        || matches!(
+            stem.as_str(),
+            "wsl"
+                | "wslservice"
+                | "wslhost"
+                | "vmmem"
+                | "vmmemwsl"
+                | "docker"
+                | "dockerd"
+                | "com.docker.backend"
+                | "sudo"
+                | "su"
+                | "doas"
+                | "pkexec"
+                | "runas"
+                | "bash"
+                | "sh"
+                | "zsh"
+                | "fish"
+                | "powershell"
+                | "pwsh"
+                | "cmd"
+                | "python"
+                | "python3"
+                | "node"
+                | "cursor"
+                | "code"
+                | "windsurf"
+        )
+    {
+        return false;
     }
 
     // Delegate to universal OS shell/desktop/systray protection and runtime tarpit immunity
@@ -1635,9 +1675,6 @@ mod tests {
             "conhost.exe",
             "openconsole.exe",
             "windowsterminal.exe",
-            "powershell.exe",
-            "pwsh.exe",
-            "cmd.exe",
             "rundll32.exe",
             "dllhost.exe",
             "msiexec.exe",
@@ -1652,12 +1689,12 @@ mod tests {
         for bin in protected_windows {
             assert!(
                 is_critical_system_pid(2048, bin),
-                "Windows OS/shell binary '{}' MUST be immune to KillChain freeze",
+                "Windows OS/core binary '{}' MUST be immune to KillChain freeze",
                 bin
             );
         }
 
-        // Linux & macOS init, session, desktop, display, network, and shell daemons
+        // Linux & macOS init, session, desktop, display, network, and system daemons
         let protected_unix = [
             "systemd",
             "systemd-logind",
@@ -1677,40 +1714,59 @@ mod tests {
             "WindowServer",
             "loginwindow",
             "launchd",
-            "bash",
-            "zsh",
-            "sh",
-            "sudo",
             "/lib/systemd/systemd-resolved",
             "/usr/sbin/sshd",
         ];
         for bin in protected_unix {
             assert!(
                 is_critical_system_pid(2048, bin),
-                "Unix OS/shell daemon '{}' MUST be immune to KillChain freeze",
+                "Unix OS/core daemon '{}' MUST be immune to KillChain freeze",
                 bin
             );
         }
 
-        // Developer & build toolchains
-        let protected_toolchains = [
-            "cargo.exe",
-            "rustc.exe",
-            "rustup.exe",
+        // M4 Invariant: Shells and runtimes must NEVER receive critical system PID immunity for PID > 4
+        let unprivileged_shells = [
+            "powershell.exe",
+            "pwsh.exe",
+            "cmd.exe",
+            "bash",
+            "zsh",
+            "sh",
+            "sudo",
+        ];
+        for sh in unprivileged_shells {
+            assert!(
+                !is_critical_system_pid(2048, sh),
+                "Shell '{}' must NOT receive critical system PID immunity",
+                sh
+            );
+        }
+
+        // Build toolchains (cargo, rustc, git) are preserved for build systems
+        let preserved_build_tools = ["cargo.exe", "rustc.exe", "rustup.exe", "git.exe", "git"];
+        for bin in preserved_build_tools {
+            assert!(
+                is_critical_system_pid(2048, bin),
+                "Build toolchain binary '{}' preserved in critical system catalog",
+                bin
+            );
+        }
+
+        // Developer runtimes, shells, and containers MUST NOT be immune
+        let unprivileged_runtimes = [
             "python.exe",
             "python3",
             "node.exe",
             "node",
-            "git.exe",
-            "git",
             "code.exe",
             "wsl.exe",
             "docker.exe",
         ];
-        for bin in protected_toolchains {
+        for bin in unprivileged_runtimes {
             assert!(
-                is_critical_system_pid(2048, bin),
-                "Developer toolchain binary '{}' MUST be immune to KillChain freeze",
+                !is_critical_system_pid(2048, bin),
+                "Runtime binary '{}' must NOT receive critical system PID immunity",
                 bin
             );
         }
@@ -1960,38 +2016,18 @@ mod tests {
             "smartscreen.exe",
             "tiworker.exe",
             "trustedinstaller.exe",
-            // Developer Toolchains & Container Infrastructure
-            "python.exe",
-            "python3.exe",
-            "python",
-            "python3",
+            // Build toolchains preserved for host compilation
             "cargo.exe",
             "cargo",
             "rustc.exe",
             "rustc",
             "rustup.exe",
             "rustup",
-            "node.exe",
-            "node",
             "git.exe",
             "git",
             "git-remote-https.exe",
             "ssh.exe",
-            "code.exe",
-            "code",
-            "antigravity.exe",
-            "wsl.exe",
-            "wsl",
-            "wslhost.exe",
-            "wslservice.exe",
-            "vmmem",
-            "vmmemwsl",
-            "docker.exe",
-            "docker",
-            "dockerd.exe",
-            "dockerd",
-            "com.docker.backend.exe",
-            // Linux Daemons & Shells
+            // Linux Daemons & Core Subsystems
             "init",
             "systemd",
             "systemd-logind",
@@ -2044,7 +2080,38 @@ mod tests {
         for bin in protected_catalog {
             assert!(
                 is_critical_system_pid(2048, bin),
-                "Binary '{}' MUST return true from is_critical_system_pid",
+                "Core OS binary '{}' MUST return true from is_critical_system_pid",
+                bin
+            );
+        }
+
+        // M4 Invariant: Developer runtimes, hypervisors, and containers must NOT return true from is_critical_system_pid for PID > 4
+        let dev_and_container_catalog = [
+            "python.exe",
+            "python3.exe",
+            "python",
+            "python3",
+            "node.exe",
+            "node",
+            "code.exe",
+            "code",
+            "wsl.exe",
+            "wsl",
+            "wslhost.exe",
+            "wslservice.exe",
+            "vmmem",
+            "vmmemwsl",
+            "docker.exe",
+            "docker",
+            "dockerd.exe",
+            "dockerd",
+            "com.docker.backend.exe",
+        ];
+
+        for bin in dev_and_container_catalog {
+            assert!(
+                !is_critical_system_pid(2048, bin),
+                "Developer/container binary '{}' must NOT return true from is_critical_system_pid",
                 bin
             );
         }

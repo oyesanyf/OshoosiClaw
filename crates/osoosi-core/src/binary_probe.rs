@@ -230,6 +230,7 @@ fn parse_pe_manifest_and_imports(bytes: &[u8], pe_offset: usize, meta: &mut Dyna
 }
 
 /// Scans raw bytes for manifest XML requestedExecutionLevel attributes in both UTF-8 and UTF-16 LE.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn scan_manifest_xml_for_elevation(bytes: &[u8]) -> Option<ElevationRequirement> {
     // 1. ASCII / UTF-8 search
     if let Ok(text) = std::str::from_utf8(bytes) {

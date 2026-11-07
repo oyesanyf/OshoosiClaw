@@ -122,8 +122,47 @@ fn assert_loopback_socket_functional() {
 fn test_stage_1_initial_access_dev_toolchain_immunity() {
     let _guard = HostImmunityTestGuard::new();
 
-    // Developer toolchains executing builds, tests, and scripts
-    let dev_binaries = [
+    // Build toolchains (cargo, rustc, git) preserved for host compilation
+    let build_binaries = [
+        "cargo.exe",
+        "cargo",
+        "rustc.exe",
+        "rustc",
+        "rustup.exe",
+        "git.exe",
+        "git",
+    ];
+
+    for b in build_binaries {
+        assert!(
+            is_critical_system_pid(2048, b),
+            "Build toolchain binary '{}' preserved in critical system catalog",
+            b
+        );
+    }
+
+    // M4 Invariant: Developer runtimes, hypervisors, and containers must NOT receive critical system PID immunity
+    let unprivileged_runtimes = [
+        "python.exe",
+        "python3.exe",
+        "python",
+        "python3",
+        "node.exe",
+        "node",
+        "code.exe",
+        "wsl.exe",
+        "docker.exe",
+    ];
+
+    for dev_bin in unprivileged_runtimes {
+        assert!(
+            !is_critical_system_pid(2048, dev_bin),
+            "Runtime/container binary '{}' must NOT receive critical system PID immunity",
+            dev_bin
+        );
+    }
+
+    let all_dev_binaries = [
         "python.exe",
         "python3.exe",
         "python",
@@ -142,14 +181,7 @@ fn test_stage_1_initial_access_dev_toolchain_immunity() {
         "docker.exe",
     ];
 
-    for dev_bin in dev_binaries {
-        // 1. Process freeze immunity
-        assert!(
-            is_critical_system_pid(2048, dev_bin),
-            "Developer binary '{}' MUST be immune to Stage 1 killchain freeze",
-            dev_bin
-        );
-
+    for dev_bin in all_dev_binaries {
         // 2. Tarpit & QoS immunity
         assert!(
             is_protected_system_or_security_process(2048, dev_bin),

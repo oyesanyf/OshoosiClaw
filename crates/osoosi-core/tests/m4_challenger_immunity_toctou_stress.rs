@@ -64,13 +64,7 @@ fn test_challenger_kernel_anchor_immunity() {
 #[test]
 fn test_challenger_elevation_tools_immunity_denied() {
     // Only binaries in is_blanket_immunity_denied are actually blocked from target immunity
-    let denied_elevation_tools = [
-        "wsl.exe",
-        "wslservice.exe",
-        "wslhost.exe",
-        "sudo",
-        "su",
-    ];
+    let denied_elevation_tools = ["wsl.exe", "wslservice.exe", "wslhost.exe", "sudo", "su"];
 
     for bin in &denied_elevation_tools {
         // Lineage inspection for direct target must NEVER return ImmuneTarget
@@ -113,18 +107,18 @@ fn test_challenger_shell_and_runtime_blanket_immunity_leak_empirical_proof() {
             bin
         );
 
-        // 2. However, is_critical_system_pid returns TRUE
+        // 2. Hardened invariant: is_critical_system_pid returns FALSE for non-kernel PIDs
         assert!(
-            is_critical_system_pid(5000, bin),
-            "Binary '{}' is treated as critical system PID by killchain.rs",
+            !is_critical_system_pid(5000, bin),
+            "Binary '{}' must NOT be treated as critical system PID",
             bin
         );
 
-        // 3. And inspect_process_lineage erroneously grants ImmuneTarget
+        // 3. And inspect_process_lineage does not grant ImmuneTarget
         let verdict = inspect_process_lineage(5000, Some(bin));
         assert!(
-            matches!(verdict, LineageImmunityVerdict::ImmuneTarget { .. }),
-            "Empirical finding: '{}' leaks blanket target immunity (expected NotImmune, got ImmuneTarget)",
+            !matches!(verdict, LineageImmunityVerdict::ImmuneTarget { .. }),
+            "Hardened invariant: '{}' must NOT receive blanket target immunity",
             bin
         );
     }
@@ -192,19 +186,35 @@ fn test_challenger_synthetic_pid_allocation_boundary() {
 fn test_challenger_stem_extraction_quoted_space_truncation_empirical_proof() {
     // Unquoted or single-word paths extract stem correctly
     assert_eq!(extract_proc_stem("'/usr/bin/sudo'"), "sudo");
-    assert_eq!(extract_proc_stem("  powershell.exe -NoProfile  "), "powershell");
+    assert_eq!(
+        extract_proc_stem("  powershell.exe -NoProfile  "),
+        "powershell"
+    );
     assert_eq!(extract_proc_stem("CSRSS.EXE"), "csrss");
     assert_eq!(extract_proc_stem("C:\\Windows\\System32\\SMSS.EXE"), "smss");
     assert_eq!(extract_proc_stem(""), "");
-    assert_eq!(extract_proc_stem("   "), "");
-
-    // EMPIRICAL OBSERVATION: Windows executable paths with spaces inside quotes (e.g. Program Files)
-    // are split at the space, yielding "program" rather than the executable base "wsl".
-    let truncated_stem = extract_proc_stem("\"C:\\Program Files\\app\\wsl.exe\"");
+    // Remediated: Windows executable paths with spaces inside quotes (e.g. Program Files)
+    // are tokenized cleanly to the executable stem "wsl".
+    let clean_stem = extract_proc_stem("\"C:\\Program Files\\app\\wsl.exe\"");
     assert_eq!(
-        truncated_stem, "program",
-        "Empirical finding: extract_proc_stem truncates 'C:\\Program Files\\app\\wsl.exe' to 'program'"
+        clean_stem, "wsl",
+        "Hardened extract_proc_stem resolves 'C:\\Program Files\\app\\wsl.exe' to 'wsl'"
     );
+
+    // Also check single-quoted commands and arguments
+    assert_eq!(extract_proc_stem("'cmd.exe' /c dir"), "cmd");
+    assert_eq!(extract_proc_stem(r#""cmd.exe" /c dir"#), "cmd");
+    assert_eq!(
+        extract_proc_stem(r#""D:\Program Files\Python310\python.exe" -m http.server"#),
+        "python"
+    );
+}
+
+#[test]
+fn test_challenger_elevation_binaries_taxonomy_harmonization() {
+    assert!(is_developer_or_agent_runtime("doas"));
+    assert!(is_developer_or_agent_runtime("pkexec"));
+    assert!(is_developer_or_agent_runtime("runas"));
 }
 
 #[test]

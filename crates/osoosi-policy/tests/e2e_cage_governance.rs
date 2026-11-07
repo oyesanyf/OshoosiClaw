@@ -276,8 +276,8 @@ fn test_tier1_f11_merkle_root_computation() {
     let h2 = Sha256::digest(b"trace_2");
 
     let mut combined_hasher = Sha256::new();
-    combined_hasher.update(&h1);
-    combined_hasher.update(&h2);
+    combined_hasher.update(h1);
+    combined_hasher.update(h2);
     let root = hex::encode(combined_hasher.finalize());
 
     assert_eq!(root.len(), 64);

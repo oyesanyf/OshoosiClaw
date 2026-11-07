@@ -79,16 +79,43 @@ impl LineageImmunityVerdict {
 /// Extracts the lowercase binary stem: strips quotes, takes first whitespace token,
 /// strips directory path components, converts to ASCII lowercase, and strips trailing `.exe`.
 pub fn extract_proc_stem(name: &str) -> String {
-    let trimmed = name.trim().trim_matches('"').trim_matches('\'');
+    let trimmed = name.trim();
     if trimmed.is_empty() {
         return String::new();
     }
-    let first_token = trimmed.split_whitespace().next().unwrap_or(trimmed);
-    let base = first_token
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(first_token);
-    let name_lc = base.to_ascii_lowercase();
+
+    let exec_token = if trimmed.starts_with('"') {
+        if let Some(end_idx) = trimmed[1..].find('"') {
+            &trimmed[..=end_idx + 1]
+        } else {
+            trimmed
+        }
+    } else if trimmed.starts_with('\'') {
+        if let Some(end_idx) = trimmed[1..].find('\'') {
+            &trimmed[..=end_idx + 1]
+        } else {
+            trimmed
+        }
+    } else if let Some(exe_idx) = trimmed.to_ascii_lowercase().find(".exe") {
+        let after_exe = &trimmed[exe_idx + 4..];
+        if after_exe.is_empty()
+            || after_exe.starts_with(' ')
+            || after_exe.starts_with('\t')
+            || after_exe.starts_with('"')
+            || after_exe.starts_with('\'')
+        {
+            &trimmed[..exe_idx + 4]
+        } else {
+            trimmed.split_whitespace().next().unwrap_or(trimmed)
+        }
+    } else {
+        trimmed.split_whitespace().next().unwrap_or(trimmed)
+    };
+
+    let base = exec_token.rsplit(['\\', '/']).next().unwrap_or(exec_token);
+
+    let cleaned = base.trim().trim_matches('"').trim_matches('\'');
+    let name_lc = cleaned.to_ascii_lowercase();
     name_lc.trim_end_matches(".exe").to_string()
 }
 
@@ -101,8 +128,33 @@ fn is_blanket_immunity_denied(name: &str) -> bool {
 
     if matches!(
         name_no_exe.as_str(),
-        "wsl" | "wslservice" | "wslhost" | "sudo" | "su" | "doas" | "pkexec" | "runas"
-    ) {
+        "wsl"
+            | "wslservice"
+            | "wslhost"
+            | "vmmem"
+            | "vmmemwsl"
+            | "docker"
+            | "dockerd"
+            | "sudo"
+            | "su"
+            | "doas"
+            | "pkexec"
+            | "runas"
+            | "bash"
+            | "sh"
+            | "zsh"
+            | "fish"
+            | "powershell"
+            | "pwsh"
+            | "cmd"
+            | "python"
+            | "python3"
+            | "node"
+            | "cursor"
+            | "code"
+            | "windsurf"
+    ) || crate::killchain::is_developer_or_agent_runtime(&name_no_exe)
+    {
         return true;
     }
 

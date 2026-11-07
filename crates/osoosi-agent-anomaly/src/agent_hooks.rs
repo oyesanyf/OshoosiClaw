@@ -114,7 +114,7 @@ impl HookEventType {
 
     pub fn from_name(name: &str) -> Self {
         match name.trim() {
-            "PreToolUse" | "preToolUse" | "pre" => Self::PreToolUse,
+            "PreToolUse" | "preToolUse" | "pre" | "before" => Self::PreToolUse,
             "PostToolUse" | "postToolUse" | "post" => Self::PostToolUse,
             "beforeShellExecution" => Self::BeforeShellExecution,
             "afterShellExecution" => Self::AfterShellExecution,
