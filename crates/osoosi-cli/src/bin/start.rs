@@ -93,16 +93,29 @@ fn resolve_osoosi_binary() -> PathBuf {
 }
 
 fn run_subsystem_verification() {
-    println!("🛡️  OPENỌ̀ṢỌ́Ọ̀SÌ SUBSYSTEM SELF-DIAGNOSTIC SUITE (--verify / --check)");
-    println!("  [PASS] Phase 1: Core Containment & BLAKE3 State Ledger Integrity");
-    println!("  [PASS] Phase 2: Adjudication, WinTrust & Depth-5 Ancestry Immunity");
-    println!("  [PASS] Phase 3: Telemetry, EDR PhaseLock & DLP Lineage Fan-In");
-    println!("  [PASS] Phase 4: Behavioral Cortex & P2P Defense Mesh");
-    println!("  [PASS] Phase 5: Axum HTTP Control Router & Loopback Binding");
-    println!("  [PASS] Phase 6: Native OS Service Lifecycle & Zero-Subprocess Compliance");
-    println!("  [PASS] Phase 7: Multi-Source Conformal Sequential Jailbreak Verification");
-    println!("✅ ALL 7 SUBSYSTEM PHASES PASSED - Self-check exit 0");
-    std::process::exit(0);
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!(
+                "❌ Failed to initialize async runtime for verification: {}",
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+    match rt.block_on(osoosi_cli::verify::SubsystemVerifier::run_all()) {
+        Ok(report) => {
+            report.print_summary();
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("❌ Subsystem verification failed: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {

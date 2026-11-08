@@ -674,10 +674,9 @@ pub fn stop_service() -> anyhow::Result<()> {
             || err.contains("Access is denied")
             || out.contains("FAILED 5"))
             && !osoosi_types::is_elevated()
+            && ensure_elevated_for_service_action("stop")?
         {
-            if ensure_elevated_for_service_action("stop")? {
-                return Ok(());
-            }
+            return Ok(());
         }
     }
 

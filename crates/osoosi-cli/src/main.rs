@@ -7,8 +7,7 @@ use osoosi_policy::ThreatFeedFetcher;
 use osoosi_types::extract_zip;
 use osoosi_types::SecuredExecutor;
 
-pub mod hook_cli;
-pub mod service;
+pub use osoosi_cli::{hook_cli, service, verify};
 
 use hf_hub::api::tokio::ApiBuilder;
 pub use osoosi_core::console_defense as console_hardening;
@@ -1020,16 +1019,19 @@ pub enum ReaAction {
 
 /// Execute in-memory 7-phase self-diagnostics and exit 0
 pub fn run_subsystem_verification() -> anyhow::Result<()> {
-    println!("🛡️  OPENỌ̀ṢỌ́Ọ̀SÌ SUBSYSTEM SELF-DIAGNOSTIC SUITE (--verify / --check)");
-    println!("  [PASS] Phase 1: Core Containment & BLAKE3 State Ledger Integrity");
-    println!("  [PASS] Phase 2: Adjudication, WinTrust & Depth-5 Ancestry Immunity");
-    println!("  [PASS] Phase 3: Telemetry, EDR PhaseLock & DLP Lineage Fan-In");
-    println!("  [PASS] Phase 4: Behavioral Cortex & P2P Defense Mesh");
-    println!("  [PASS] Phase 5: Axum HTTP Control Router & Loopback Binding");
-    println!("  [PASS] Phase 6: Native OS Service Lifecycle & Zero-Subprocess Compliance");
-    println!("  [PASS] Phase 7: Multi-Source Conformal Sequential Jailbreak Verification");
-    println!("✅ ALL 7 SUBSYSTEM PHASES PASSED - Self-check exit 0");
-    std::process::exit(0);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    match rt.block_on(verify::SubsystemVerifier::run_all()) {
+        Ok(report) => {
+            report.print_summary();
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("❌ Subsystem verification failed: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
