@@ -133,7 +133,7 @@ managed = "0.8"
 ndarray = "0.16"
 parking_lot = "0.12"
 wmi = "0.13"
-tokenizers = "0.19"
+tokenizers = "0.23"
 tempfile = "3"
 # Legacy tools replaced by Zero-Process Stack
 # Windows-only crates — kept in workspace for version pinning;
