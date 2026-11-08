@@ -1,7 +1,9 @@
 {
   "enabled": false,
   "experimental": true,
+  "in_place_disk_seal": false,
   "custom_paths": [],
+  "excluded_files": [],
   "all_drives": false,
   "auto_seal": false,
   "selected_variables": [

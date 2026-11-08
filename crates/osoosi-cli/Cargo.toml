@@ -9,6 +9,11 @@ description = "CLI for OpenỌ̀ṣọ́ọ̀sì Agentic EDR"
 name = "osoosi"
 path = "src/main.rs"
 
+[[bin]]
+name = "start"
+path = "src/bin/start.rs"
+
+
 [dependencies]
 osoosi-core = { path = "../osoosi-core" }
 osoosi-memory = { path = "../osoosi-memory" }

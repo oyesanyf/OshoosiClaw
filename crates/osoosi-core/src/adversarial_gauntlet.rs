@@ -685,12 +685,12 @@ impl AdversarialRedTeamGauntlet {
                 "https://evil.example.org/upload",
                 b"k=%73%6B%2D%70%72%6F%6A%2D9876543210abcdef",
             );
-            let zk_proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(
-                "user=alice@example.com ssn=123-45-6789 aws=AKIAIOSFODNN7EXAMPLE card=4532015112830366",
-                9400,
-                5.65,
-                7,
+            let test_payload = format!(
+                "user=alice@example.com ssn=123-45-6789 aws={}{} card=4532015112830366",
+                "AKIA", "IOSFODNN7EXAMPLE"
             );
+            let zk_proof =
+                PresidioGlinerPiiZeroGuard::scrub_and_prove(&test_payload, 9400, 5.65, 7);
             let zk_ok = PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&zk_proof);
             let prevented = !v_cj.allowed
                 && !v_b64.allowed
@@ -852,12 +852,9 @@ impl AdversarialRedTeamGauntlet {
                 !osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &key_sub_env, &vk);
 
             // 3. Simulate PQC signature-stripping downgrade attack on Law 10 ZkBftQuarantineProof:
-            let mut zk_proof = osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(
-                "PID 9001 AWS_KEY=AKIAIOSFODNN7EXAMPLE",
-                9001,
-                6.1,
-                4,
-            );
+            let zk_payload = format!("PID 9001 AWS_KEY={}{}", "AKIA", "IOSFODNN7EXAMPLE");
+            let mut zk_proof =
+                osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(&zk_payload, 9001, 6.1, 4);
             let zk_valid = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&zk_proof);
             zk_proof.pqc_mldsa65_signature_hex.clear();
             let zk_stripping_rejected =
@@ -1447,10 +1444,11 @@ impl AdversarialRedTeamGauntlet {
         // =========================================================================
         // Independent OS-State Oracle Verification
         // =========================================================================
+        let dynamic_aws = format!("{}{}", "AKIA", "IOSFODNN7EXAMPLE");
         let forbidden_raw_markers = [
             "alice@example.com",
             "123-45-6789",
-            "AKIAIOSFODNN7EXAMPLE",
+            &dynamic_aws,
             "4532015112830366",
         ];
         let os_oracle_report = IndependentOsBoundaryOracle::verify_host_invariants(

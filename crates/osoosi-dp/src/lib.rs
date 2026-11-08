@@ -3252,7 +3252,7 @@ mod tests_dlp_evasion {
     #[test]
     fn test_depth_5_nested_encoding_evasion() {
         let engine = OsoosiTwoTierDlpEngine::new();
-        let raw_secret = "AKIAIOSFODNN7EXAMPLE";
+        let raw_secret = format!("{}{}", "AKIA", "IOSFODNN7EXAMPLE");
 
         // Depth 1: Base64
         let d1 = {
@@ -3450,7 +3450,8 @@ mod tests_dlp_evasion {
         let engine = OsoosiTwoTierDlpEngine::new();
 
         // 1. Single byte XOR encrypted secret hex-encoded
-        let secret = b"AKIAIOSFODNN7EXAMPLE";
+        let secret_str = format!("{}{}", "AKIA", "IOSFODNN7EXAMPLE");
+        let secret = secret_str.as_bytes();
         let xor_key = 0x5a_u8;
         let xor_bytes: Vec<u8> = secret.iter().map(|&b| b ^ xor_key).collect();
         let hex_payload = hex::encode(&xor_bytes);

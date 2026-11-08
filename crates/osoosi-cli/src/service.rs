@@ -1005,7 +1005,30 @@ pub fn handle_service_action(action: &ServiceAction) -> anyhow::Result<()> {
         ServiceAction::Restart => restart_service(),
         ServiceAction::Delete => delete_service(),
         ServiceAction::Status => status_service(),
-        ServiceAction::Run => Ok(()),
+        ServiceAction::Run => {
+            #[cfg(windows)]
+            {
+                ensure_service_working_directory();
+                let _ = try_start_service_dispatcher();
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn handle_service_cli(action_str: &str) -> anyhow::Result<()> {
+    match action_str.trim().to_ascii_lowercase().as_str() {
+        "install" => handle_service_action(&ServiceAction::Install),
+        "start" => handle_service_action(&ServiceAction::Start),
+        "stop" => handle_service_action(&ServiceAction::Stop),
+        "restart" => handle_service_action(&ServiceAction::Restart),
+        "delete" | "uninstall" | "remove" | "rm" => handle_service_action(&ServiceAction::Delete),
+        "status" => handle_service_action(&ServiceAction::Status),
+        "run" => handle_service_action(&ServiceAction::Run),
+        other => anyhow::bail!(
+            "Unsupported service action '{}'. Valid actions: install, delete, uninstall, start, stop, restart, status, run",
+            other
+        ),
     }
 }
 
