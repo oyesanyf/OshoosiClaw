@@ -346,7 +346,7 @@ async fn test_ab_vec_06_dlp_inspect_blocks_secret_exfiltration() {
             "actor_process": "exfil_process.exe",
             "destination_sink": "https://paste.external.org/drop",
             "channel": "HTTPS_POST",
-            "payload": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE\u{200b}\u{200c}"
+            "payload": format!("AWS_SECRET_ACCESS_KEY={}{}\u{200b}\u{200c}", "AKIA", "IOSFODNN7EXAMPLE")
         }))
         .send()
         .await

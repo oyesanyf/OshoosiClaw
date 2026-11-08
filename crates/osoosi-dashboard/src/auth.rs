@@ -177,7 +177,8 @@ pub fn verify_control_plane_auth(
         || (endpoint_name.contains("isolate")
             && constant_time_token_match(token_to_verify, "CONFIRM ISOLATE"))
         || (endpoint_name.contains("disarm")
-            && constant_time_token_match(token_to_verify, "CONFIRM RESTORE"));
+            && (constant_time_token_match(token_to_verify, "CONFIRM RESTORE")
+                || constant_time_token_match(token_to_verify, "RESTORE HOST")));
 
     if !token_valid {
         return Err(api_error(

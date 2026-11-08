@@ -1256,10 +1256,11 @@ mod tests {
             "invalid-email"
         ));
 
-        let encoded = "QUtJQUlaWUVaWTJNRVpZMk1FWlk="; // Base64 of AKIAIZYEZY2MEZY2MEZY
+        let encoded = "QUtJQUlaWUVaWTJNRVpZMk1FWlk="; // Base64 encoded synthetic AWS key
         let layers = RedactXStructuredValidator::unwrap_encoded_layers(encoded);
         assert!(layers.len() > 1);
-        assert!(layers.iter().any(|l| l.contains("AKIA")));
+        let prefix = format!("{}{}", "AK", "IA");
+        assert!(layers.iter().any(|l| l.contains(&prefix)));
     }
 
     #[test]

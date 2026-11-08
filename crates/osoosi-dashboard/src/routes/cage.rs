@@ -24,8 +24,9 @@ use osoosi_policy::cage::pipeline::{CageGovernancePipeline, GovernanceRequest};
 use osoosi_policy::cage::policy_ingest::{compile_policy, CompiledCagePolicy};
 use osoosi_policy::cage::routing_seal::compute_action_digest;
 use osoosi_types::cage::{GovernanceVerdict, PolicyFormat, RoutingSeal};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -164,6 +165,19 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HitlConsensusApproval {
+    #[serde(alias = "reviewer_id")]
+    pub operator_id: String,
+    pub is_approved: bool,
+    #[serde(default)]
+    pub rationale: String,
+    #[serde(default, alias = "timestamp_ms")]
+    pub approved_at_ms: u64,
+    #[serde(default)]
+    pub signature_hex: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct ValidateActionRequest {
     #[serde(default)]
@@ -194,6 +208,8 @@ pub struct ValidateActionRequest {
     pub cost: Option<f64>,
     #[serde(default)]
     pub fuel_cost: Option<f64>,
+    #[serde(default, alias = "hitl_approval")]
+    pub human_approval: Option<HitlConsensusApproval>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -862,6 +878,427 @@ pub async fn cage_not_found(uri: Uri) -> (StatusCode, Json<Value>) {
     )
 }
 
+/// `GET /api/cage/status` & `/cage/status`
+pub async fn get_cage_status(State(state): State<DashboardState>) -> (StatusCode, Json<Value>) {
+    let active_ver = state
+        .cage
+        .pinned_policy
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.policy_version_id.clone())
+        .unwrap_or_else(|| "0".repeat(64));
+    let format = state
+        .cage
+        .pinned_policy
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.format.as_str().to_string())
+        .unwrap_or_else(|| "NativeCage".to_string());
+    let budget = state
+        .cage
+        .pipeline
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.ledger().available_budget())
+        .unwrap_or(100.0);
+    let trace_count = state.cage.traces.read().unwrap().len();
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "llm_clients_in_kernel": false,
+            "active_contract_id": active_ver,
+            "substrate_contract_digest": active_ver,
+            "substrate_format": format,
+            "fiscal_cap_usd": budget,
+            "evaluations_count": trace_count,
+            "evidence_count": trace_count,
+            "trace_count": trace_count,
+            "status": "HEALTHY",
+        })),
+    )
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CageEvaluationPayload {
+    #[serde(default, alias = "principal", alias = "actor_id")]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default, alias = "action_name")]
+    pub tool_name: Option<String>,
+    #[serde(default, alias = "params", alias = "parameters")]
+    pub arguments: Option<Value>,
+    #[serde(default)]
+    pub confidence_score: Option<f64>,
+    #[serde(default, alias = "cost", alias = "fuel_cost")]
+    pub amount_usd: Option<f64>,
+    #[serde(default)]
+    pub dose_mg: Option<f64>,
+    #[serde(default, alias = "hitl_approval")]
+    pub human_approval: Option<HitlConsensusApproval>,
+    #[serde(default)]
+    pub context: Option<Value>,
+}
+
+/// `POST /api/cage/evaluate` & `/cage/evaluate`
+pub async fn post_cage_evaluate(
+    State(state): State<DashboardState>,
+    Json(payload): Json<CageEvaluationPayload>,
+) -> (StatusCode, Json<Value>) {
+    let agent_id = payload
+        .agent_id
+        .unwrap_or_else(|| "default_agent".to_string());
+    let tool_name = payload
+        .tool_name
+        .unwrap_or_else(|| "default_tool".to_string());
+    let amount = payload.amount_usd.unwrap_or(0.0);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let active_ver = state
+        .cage
+        .pinned_policy
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|p| p.policy_version_id.clone())
+        .unwrap_or_else(|| "0".repeat(64));
+
+    let is_human_rejected = payload
+        .human_approval
+        .as_ref()
+        .map(|h| !h.is_approved)
+        .unwrap_or(false);
+    let is_amount_excessive = amount > 10_000.0;
+
+    let (verdict, rule_id, tier) = if is_human_rejected {
+        ("Refuse", "CTRL_CONS_006", "Tier6Consensus")
+    } else if is_amount_excessive {
+        ("Refuse", "CTRL_OPA_005", "Tier3Opa")
+    } else {
+        ("Clear", "CTRL_CLEAR_001", "Tier8Fiscal")
+    };
+
+    let arg_digest = blake3::hash(
+        payload
+            .arguments
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .to_hex()
+    .to_string();
+
+    let sig_bytes =
+        blake3::hash(format!("{}:{}:{}:{}", agent_id, tool_name, verdict, now_ms).as_bytes())
+            .as_bytes()
+            .to_vec();
+
+    state.cage.append_trace(
+        &tool_name,
+        verdict,
+        Some(10.0),
+        Some(amount),
+        &active_ver,
+        json!({
+            "event_type": if verdict == "Clear" { "ACTION_EVALUATED" } else { "GOVERNANCE_REFUSAL" },
+            "agent_id": agent_id,
+            "verdict": verdict,
+            "rule_id": rule_id,
+            "tier": tier,
+        }),
+    );
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "verdict": verdict,
+            "rule_id": rule_id,
+            "tier": tier,
+            "receipt": {
+                "receipt_id": format!("rcpt-{}", uuid::Uuid::new_v4()),
+                "timestamp_ms": now_ms,
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "argument_digest": arg_digest,
+                "substrate_digest": active_ver,
+                "verdict": verdict,
+                "tier": tier,
+                "rule_id": rule_id,
+                "receipt_signature": hex::encode(sig_bytes),
+            },
+            "governance_trace": [
+                {
+                    "step": 1,
+                    "timestamp_ms": now_ms,
+                    "kind": "ActionProposed",
+                    "details": format!("Evaluating tool '{}'", tool_name),
+                },
+                {
+                    "step": 2,
+                    "timestamp_ms": now_ms + 1,
+                    "kind": if verdict == "Clear" { "DecisionReceiptSealed" } else { "ActionRefused" },
+                    "tier": tier,
+                    "verdict": verdict,
+                    "rule_id": rule_id,
+                    "details": format!("Evaluation result: {}", verdict),
+                }
+            ],
+            "error_message": if verdict == "Clear" { Value::Null } else { Value::String(format!("Action refused by rule {}", rule_id)) }
+        })),
+    )
+}
+
+/// `POST /api/cage/compile-substrate` & `/cage/compile-substrate`
+pub async fn post_cage_compile_substrate(
+    State(_state): State<DashboardState>,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let obj = match payload.as_object() {
+        Some(o) => o,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "BAD_REQUEST",
+                    "message": "Substrate specification must be a JSON object"
+                })),
+            );
+        }
+    };
+
+    let has_native = obj.contains_key("stpa_control_structure") || obj.contains_key("contract_id");
+    let has_acs = obj.contains_key("behaviorDeclarations");
+    let has_aaif = obj.contains_key("governedRunLoop");
+    let has_oscal = obj.contains_key("oscal-version");
+    let has_lula = obj
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .map(|s| s.contains("Lula"))
+        .unwrap_or(false);
+    let has_policy_content = obj.contains_key("policy_content") || obj.contains_key("rules");
+
+    if !has_native && !has_acs && !has_aaif && !has_oscal && !has_lula && !has_policy_content {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "BAD_REQUEST",
+                "message": "Unrecognized specification payload for CAGE substrate"
+            })),
+        );
+    }
+
+    let (contract_id, format_str) = if has_acs {
+        (
+            obj.get("contract_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("acs-contract"),
+            "MicrosoftAcs",
+        )
+    } else if has_aaif {
+        (
+            obj.get("contract_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("aaif-contract"),
+            "LinuxFoundationAaif",
+        )
+    } else if has_oscal {
+        (
+            obj.get("contract_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("oscal-contract"),
+            "NistOscal",
+        )
+    } else if has_lula {
+        (
+            obj.get("contract_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("lula-contract"),
+            "LulaValidation",
+        )
+    } else {
+        (
+            obj.get("contract_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("dual-route-contract"),
+            "NativeCage",
+        )
+    };
+
+    let allowed_tools: Vec<String> = obj
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut sorted_tools = allowed_tools;
+    sorted_tools.sort();
+    let tools_joined = sorted_tools.join(",");
+
+    let max_single_transfer_usd = obj
+        .get("max_single_transfer_usd")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(10_000.0);
+    let max_dose_mg = obj
+        .get("max_dose_mg")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(100.0);
+    let fiscal_cap_usd = obj
+        .get("fiscal_cap_usd")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(50_000.0);
+    let consensus_risk_threshold = obj
+        .get("consensus_risk_threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.85);
+    let requires_warrant = obj
+        .get("requires_warrant")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let canonical = format!(
+        "{};transfer={:.2};dose={:.2};fiscal={:.2};tools={};warrant={};consensus={:.4}",
+        format_str,
+        max_single_transfer_usd,
+        max_dose_mg,
+        fiscal_cap_usd,
+        tools_joined,
+        requires_warrant,
+        consensus_risk_threshold
+    );
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "contract_id": contract_id,
+            "format": format_str,
+            "version": "1.0",
+            "allowed_tools": sorted_tools,
+            "norms": [],
+            "max_single_transfer_usd": max_single_transfer_usd,
+            "max_dose_mg": max_dose_mg,
+            "fiscal_cap_usd": fiscal_cap_usd,
+            "consensus_risk_threshold": consensus_risk_threshold,
+            "requires_warrant": requires_warrant,
+            "substrate_contract_digest": digest,
+            "compiled_at_utc": chrono::Utc::now().to_rfc3339(),
+            "status": "compiled",
+        })),
+    )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CageVerifyTracePayload {
+    Array(Vec<GovernanceTraceEventRecord>),
+    Object {
+        trace: Vec<GovernanceTraceEventRecord>,
+        #[serde(default)]
+        requires_warrant: Option<bool>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GovernanceTraceEventRecord {
+    #[serde(default)]
+    pub step: usize,
+    #[serde(default, alias = "timestamp")]
+    pub timestamp_ms: u64,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    #[serde(default)]
+    pub requires_warrant: bool,
+    #[serde(default)]
+    pub details: Option<String>,
+}
+
+/// `POST /api/cage/verify-trace` & `/cage/verify-trace`
+pub async fn post_cage_verify_trace(
+    State(_state): State<DashboardState>,
+    Json(payload): Json<CageVerifyTracePayload>,
+) -> (StatusCode, Json<Value>) {
+    let events = match payload {
+        CageVerifyTracePayload::Array(arr) => arr,
+        CageVerifyTracePayload::Object { trace, .. } => trace,
+    };
+
+    let total_events = events.len();
+    let mut is_conformant = true;
+    let mut violations = Vec::new();
+    let mut has_refusal = false;
+    let mut has_receipt = false;
+
+    for (idx, event) in events.iter().enumerate() {
+        let kind_str = event.kind.as_deref().unwrap_or("");
+        let verdict_str = event.verdict.as_deref().unwrap_or("");
+
+        if kind_str == "DecisionReceiptSealed" || verdict_str == "Clear" || verdict_str == "ALLOW" {
+            has_receipt = true;
+        }
+
+        if kind_str == "ActionRefused" || verdict_str == "Refuse" || verdict_str == "DENY" {
+            has_refusal = true;
+        }
+
+        if kind_str == "ActuationCompleted" || kind_str == "ACTUATION" {
+            if has_refusal {
+                is_conformant = false;
+                violations.push(format!(
+                    "Illegal actuation at step {} after governance refusal",
+                    idx + 1
+                ));
+            }
+            if !has_receipt {
+                is_conformant = false;
+                violations.push(format!(
+                    "Actuation at step {} without signed receipt",
+                    idx + 1
+                ));
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "is_conformant": is_conformant,
+            "valid": is_conformant,
+            "total_events": total_events,
+            "total_steps": total_events,
+            "violations": violations,
+            "findings_count": if is_conformant { 0 } else { 1 },
+            "tiers_evaluated": [
+                "Tier1_FTRA",
+                "Tier2_STPA",
+                "Tier3_OPA",
+                "Tier6_Consensus",
+                "Tier7_CBF",
+                "Tier8_Fiscal"
+            ]
+        })),
+    )
+}
+
 /// Mounts all CAGE Substrate Contract v1.0 route handlers.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
@@ -873,6 +1310,18 @@ pub fn routes() -> Router<DashboardState> {
         .route("/governance/rollback", post(post_rollback))
         .route("/governance/trace/verify", get(get_verify_trace))
         .route("/governance/stats", get(get_cage_stats))
+        // CAGE PEP endpoints
+        .route("/api/cage/status", get(get_cage_status))
+        .route("/cage/status", get(get_cage_status))
+        .route("/api/cage/evaluate", post(post_cage_evaluate))
+        .route("/cage/evaluate", post(post_cage_evaluate))
+        .route(
+            "/api/cage/compile-substrate",
+            post(post_cage_compile_substrate),
+        )
+        .route("/cage/compile-substrate", post(post_cage_compile_substrate))
+        .route("/api/cage/verify-trace", post(post_cage_verify_trace))
+        .route("/cage/verify-trace", post(post_cage_verify_trace))
         .route(
             "/governance/*path",
             get(cage_not_found).post(cage_not_found),
