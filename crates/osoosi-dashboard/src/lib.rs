@@ -641,7 +641,7 @@ async fn get_openapi_spec() -> Json<Value> {
     }))
 }
 
-fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
+pub fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     ensure_continuous_har_collector_started();
     // Autonomous HAR→DLP pipeline: every new HAR entry (files, imports, browser sensor) is
     // inspected in the background, including request bodies.
