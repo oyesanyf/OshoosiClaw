@@ -152,7 +152,7 @@ windows = { version = "0.58", features = [
     "Win32_System_JobObjects",
 ] }
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
-winreg = "0.52"
+winreg = "0.56"
 pelite = "0.10"
 rhai = { version = "1.26.1", features = ["sync"] }
 
