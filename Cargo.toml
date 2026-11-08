@@ -115,7 +115,7 @@ tracing-opentelemetry = "0.34"
 rayon = "1.10"
 tfhe = { version = "0.6", features = ["integer", "boolean", "shortint"] }
 bincode = "1"
-zip = "2"
+zip = "8"
 sevenz-rust = { version = "0.6", features = ["aes256"] }
 candle-core = "0.9.1"
 candle-nn = "0.9.1"
