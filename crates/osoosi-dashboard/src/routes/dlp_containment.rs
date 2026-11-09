@@ -1311,14 +1311,27 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         pid: Option<u32>,
         ips: &[IpAddr],
     ) -> anyhow::Result<()> {
-        if cfg!(windows) {
+        #[cfg(target_os = "windows")]
+        {
             osoosi_core::wfp::block_destination_native(rule, program, pid, ips).map(|_| ())
-        } else {
+        }
+        #[cfg(target_os = "linux")]
+        {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
                 run_hidden("iptables", &linux_rule_args("-I", rule, ip, uid))?;
             }
             let _ = program;
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (rule, program, pid, ips);
+            osoosi_core::wfp::engage_host_hermetic_quarantine().map(|_| ())
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (rule, program, pid, ips);
             Ok(())
         }
     }
@@ -1330,13 +1343,26 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         pid: Option<u32>,
         ips: &[IpAddr],
     ) -> anyhow::Result<()> {
-        if cfg!(windows) {
+        #[cfg(target_os = "windows")]
+        {
             osoosi_core::wfp::unblock_destination_native(rule, program, pid, ips)
-        } else {
+        }
+        #[cfg(target_os = "linux")]
+        {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
                 run_hidden("iptables", &linux_rule_args("-D", rule, ip, uid))?;
             }
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (rule, program, pid, ips);
+            osoosi_core::wfp::disarm_host_hermetic_quarantine()
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (rule, program, pid, ips);
             Ok(())
         }
     }
@@ -1369,6 +1395,7 @@ impl ContainmentPlatform for SystemContainmentPlatform {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn linux_rule_args(op: &str, rule: &str, ip: &IpAddr, uid: Option<u32>) -> Vec<String> {
     let mut args = vec![
         op.to_string(),
@@ -1395,6 +1422,7 @@ fn linux_rule_args(op: &str, rule: &str, ip: &IpAddr, uid: Option<u32>) -> Vec<S
     args
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn linux_uid_of(pid: u32) -> Option<u32> {
     let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
     status
