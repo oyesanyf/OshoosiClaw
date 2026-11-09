@@ -218,47 +218,48 @@ pub fn normalize_for_scan(text: &str) -> Cow<'_, str> {
         normalized.truncate(normalized.len() - 1);
     }
 
-    // Step 4: Canonicalize relative path parent references (`/1/../1/` -> `/1/`)
-    let mut loop_count = 0;
-    while let Some(pos) = normalized.find("/../") {
-        if loop_count >= 32 {
-            break;
+    // Step 4: Canonicalize relative path parent references (`/seg/../` -> `/`)
+    if normalized.contains("/../") {
+        let parts: Vec<&str> = normalized.split('/').collect();
+        let mut result = String::with_capacity(normalized.len());
+        let mut stack: Vec<(usize, bool)> = Vec::with_capacity(parts.len());
+
+        for (idx, part) in parts.iter().enumerate() {
+            if idx == 0 {
+                result.push_str(part);
+                continue;
+            }
+
+            if *part == ".." {
+                if let Some((start_pos, cancellable)) = stack.pop() {
+                    if cancellable {
+                        result.truncate(start_pos);
+                        continue;
+                    } else {
+                        stack.push((start_pos, cancellable));
+                    }
+                }
+            }
+
+            let start_pos = result.len();
+            result.push('/');
+            result.push_str(part);
+
+            let cancellable = !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && !part
+                    .chars()
+                    .any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == ':');
+
+            stack.push((start_pos, cancellable));
         }
-        loop_count += 1;
 
-        let (replace_start, replace_with) = if let Some(prev_slash) = normalized[..pos].rfind('/') {
-            let dir = &normalized[prev_slash + 1..pos];
-            if !dir.is_empty()
-                && dir != "."
-                && dir != ".."
-                && !dir
-                    .chars()
-                    .any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == ':')
-            {
-                (prev_slash, "/")
-            } else {
-                break;
-            }
-        } else {
-            let start = normalized[..pos]
-                .rfind(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '=')
-                .map(|idx| idx + 1)
-                .unwrap_or(0);
-            let dir = &normalized[start..pos];
-            if !dir.is_empty()
-                && dir != "."
-                && dir != ".."
-                && !dir
-                    .chars()
-                    .any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == ':')
-            {
-                (start, "")
-            } else {
-                break;
-            }
-        };
+        if normalized.ends_with('/') && !result.ends_with('/') {
+            result.push('/');
+        }
 
-        normalized.replace_range(replace_start..pos + 4, replace_with);
+        normalized = result;
     }
 
     Cow::Owned(normalized)
@@ -362,7 +363,7 @@ impl NativeAtifScanner {
 
         let patterns = vec![
             // 0: /proc/<pid>/environ
-            r#"(?i)(?:/|\\)+proc(?:/|\\)+(?:(?:\.)(?:/|\\)+)*(?P<pid>[a-zA-Z0-9_\-\$\{\}]+)(?:/|\\)+(?:(?:\.)(?:/|\\)+)*environ\b"#,
+            r#"(?i)(?:/|\\)+proc(?:/|\\)+(?:(?:\.)(?:/|\\)+)*(?:(?P<pid>[a-zA-Z0-9_\-\$\{\}]+)(?:/|\\)+(?:(?:\.)(?:/|\\)+)*)?environ\b"#,
             // 1: Proxy bypass
             r#"(?i)(?:--noproxy(?:\s+|=)['"]?[^\s'"]+['"]?|\bno_proxy\s*=\s*['"]?[^\s'"]*['"]?|\benv\s+(?:-u\s*=?|--unset(?:\s+|=))['"]?(?:HTTPS?_PROXY|ALL_PROXY)\b['"]?|\bhttps?_proxy\s*=\s*['"]?[^'\s"]*['"]?|\b-c\s+https?\.proxy\s*=\s*['"][^'"]*['"])"#,
             // 2: Namespace escape
@@ -474,6 +475,15 @@ impl NativeAtifScanner {
                                 severity,
                                 title,
                                 details: format!("Targeted process environ: {}", &caps[0]),
+                                pattern_matched: caps[0].to_string(),
+                            });
+                        } else {
+                            signals.push(AtifSignal {
+                                id: rule.id.to_string(),
+                                severity,
+                                title: "Kernel/Process environment access (/proc/environ)"
+                                    .to_string(),
+                                details: format!("Raw process environ access: {}", &caps[0]),
                                 pattern_matched: caps[0].to_string(),
                             });
                         }
