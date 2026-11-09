@@ -14,17 +14,46 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Clippy: zero warnings policy ─────────────────────────────────────────────
-  clippy:
-    name: Clippy (zero warnings)
-    runs-on: windows-latest
+  # ── 1. Format Check (rustfmt) ────────────────────────────────────────────────
+  fmt:
+    name: Format Check (rustfmt)
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Install Rust stable + rustfmt
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ── 2. Clippy: Zero Warnings Policy Across Matrix ───────────────────────────
+  clippy:
+    name: Clippy (zero warnings) (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
           submodules: recursive
+
+      - name: Install Linux System Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libelf-dev pkg-config libssl-dev linux-libc-dev
 
       - name: Install Rust stable + clippy
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -34,42 +63,38 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
-          key: clippy-windows
+          key: clippy-${{ matrix.os }}
           cache-on-failure: true
 
       - name: Run Clippy
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
         run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value -A clippy::useless_format -A clippy::manual_repeat_n -A clippy::doc_overindented_list_items -A clippy::cmp_owned -A clippy::manual_range_contains -A clippy::double_ended_iterator_last -A clippy::chunks_exact_to_as_chunks -A clippy::new_without_default -A clippy::needless_borrows_for_generic_args -A clippy::too_many_arguments -A clippy::type_complexity -A clippy::bool_assert_comparison -A clippy::await_holding_lock
 
-  # ── cargo-audit: dependency vulnerability scan ────────────────────────────────
-  audit:
-    name: Dependency Audit (cargo-audit)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.49.45
-        with:
-          tool: cargo-audit
-
-      - name: Run audit
-        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402 --ignore RUSTSEC-2026-0424 --ignore RUSTSEC-2026-0429
-
-  # ── Tests ────────────────────────────────────────────────────────────────────
+  # ── 3. Cross-Platform Tests Matrix (Linux, Windows, macOS) ──────────────────
   test:
-    name: Tests
-    runs-on: windows-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           submodules: recursive
+
+      - name: Install Linux System Dependencies & eBPF Prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libelf-dev pkg-config libssl-dev linux-libc-dev rpm dpkg-dev
+          mkdir -p ebpf
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu -c ebpf/src/osoosi_probe.bpf.c -o ebpf/osoosi_probe.bpf.o || true
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -77,28 +102,44 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
-          key: test-windows
+          key: test-${{ matrix.os }}
           cache-on-failure: true
 
-      - name: Run tests
+      - name: Run workspace tests
         env:
-          OSOOSI_NO_ORT: "1"   # skip ORT download in CI
+          OSOOSI_NO_ORT: "1"
           OSOOSI_NO_AI: "1"
         run: cargo test --workspace --lib --tests
 
-      - name: Run Multi-Node GossipSub Fault-Injection Benchmark
+      - name: Run SafeAgents Native 3-Stage Pipeline Tests
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo test -p osoosi-sandbox --test safeagents_native_pipeline_tests
+
+      - name: Run SafeAgents 562-Case Misuse Simulation Suite
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo test -p osoosi-sandbox --test safeagents_562_misuse_suite
+
+      # ── Windows-Specific Integration & Daemon Proof Steps ─────────────────
+      - name: Run Multi-Node GossipSub Fault-Injection Benchmark (Windows)
+        if: runner.os == 'Windows'
         run: python scripts/run_multi_node_mesh_benchmark.py --fast
         env:
           OSOOSI_NO_ORT: "1"
           OSOOSI_NO_AI: "1"
 
       - name: Upload Fault-Injection Benchmark Report
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: mesh-fault-injection-report
           path: logs/multi_node_mesh_benchmark_report.json
 
-      - name: Launch live daemon and run 43-vector proof suite
+      - name: Launch live daemon and run 43-vector proof suite (Windows)
+        if: runner.os == 'Windows'
         shell: powershell
         run: |
           $env:OSOOSI_DASHBOARD_PORT = "3030"
@@ -141,7 +182,6 @@ jobs:
                 break
               }
             } catch {
-              # If server responds with 200 or 401, Axum daemon is responsive
               if ($_.Exception.Response -and $_.Exception.Response.StatusCode.value__ -in @(200, 401)) {
                 Write-Host "Live dashboard daemon responsive on port 3030 (HTTP $($_.Exception.Response.StatusCode.value__))"
                 $ready = $true
@@ -182,15 +222,85 @@ jobs:
           exit $suiteExit
 
       - name: Upload Adversarial Proof Artifacts
+        if: runner.os == 'Windows' && always()
         uses: actions/upload-artifact@v7
-        if: always()
         with:
           name: adversarial-proof-report
           path: |
             logs/adversarial_proof_report.json
             logs/adversarial_proof_report.md
 
-  # ── Live Multi-Trial CI Verification on Port 3030 (R5) ───────────────────────
+  # ── 4. Cross-Architecture Target Verification (aarch64 Linux) ───────────────
+  cross-arch-linux:
+    name: Cross-Arch Target (Linux aarch64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install aarch64 Cross-Compiler & Toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config libssl-dev libelf-dev
+
+      - name: Setup Rust Toolchain (aarch64-unknown-linux-gnu)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: osoosi-cross-linux-aarch64
+          cache-on-failure: true
+
+      - name: Verify aarch64 Compilation
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo check --target aarch64-unknown-linux-gnu -p osoosi-cli -p osoosi-sandbox -p osoosi-policy
+
+  # ── 5. macOS Universal Target Verification ──────────────────────────────────
+  cross-arch-macos:
+    name: macOS Dual-Architecture Targets
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Setup Rust Toolchain (Universal Darwin)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: osoosi-macos-universal
+          cache-on-failure: true
+
+      - name: Check Apple Silicon Target (aarch64-apple-darwin)
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo check --target aarch64-apple-darwin -p osoosi-cli -p osoosi-sandbox -p osoosi-policy
+
+      - name: Check Intel macOS Target (x86_64-apple-darwin)
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo check --target x86_64-apple-darwin -p osoosi-cli -p osoosi-sandbox -p osoosi-policy
+
+  # ── 6. Live Multi-Trial CI Verification on Port 3030 (Windows) ───────────────
   live-verification:
     name: Live Multi-Trial Port 3030 Verification
     runs-on: windows-latest
@@ -240,9 +350,9 @@ jobs:
             logs/live_multi_trial_report.json
             logs/live_multi_trial_report.md
 
-  # ── Format check ─────────────────────────────────────────────────────────────
-  fmt:
-    name: Format Check (rustfmt)
+  # ── 7. cargo-audit: Dependency Vulnerability Scan ─────────────────────────────
+  audit:
+    name: Dependency Audit (cargo-audit)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -251,15 +361,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust stable + rustfmt
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.49.45
         with:
-          components: rustfmt
+          tool: cargo-audit
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Run audit
+        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402 --ignore RUSTSEC-2026-0424 --ignore RUSTSEC-2026-0429 --ignore RUSTSEC-2026-0459
 
-  # ── Secret scan ───────────────────────────────────────────────────────────────
+  # ── 8. Secret Scan ────────────────────────────────────────────────────────────
   secrets:
     name: Secret Scan (gitleaks)
     runs-on: ubuntu-latest
@@ -269,7 +379,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          fetch-depth: 0   # full history for secret detection
+          fetch-depth: 0
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0

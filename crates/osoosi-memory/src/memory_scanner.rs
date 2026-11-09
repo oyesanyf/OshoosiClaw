@@ -156,7 +156,7 @@ impl MemoryScanner {
         Ok(results)
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     pub async fn scan_process_memory(&self, pid: u32) -> anyhow::Result<Vec<String>> {
         use std::io::{Read, Seek, SeekFrom};
 
@@ -245,6 +245,11 @@ impl MemoryScanner {
         std::mem::drop(maps_content);
         results.shrink_to_fit();
         Ok(results)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    pub async fn scan_process_memory(&self, _pid: u32) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     /// Scans a process's threads for unbacked execution (threads starting in MEM_PRIVATE/MEM_MAPPED)
@@ -470,7 +475,7 @@ impl MemoryScanner {
         Ok(findings)
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     pub fn scan_unbacked_threads(&self, pid: u32) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
         let maps_path = format!("/proc/{}/maps", pid);
         let maps_content = match std::fs::read_to_string(&maps_path) {
@@ -534,6 +539,14 @@ impl MemoryScanner {
         }
 
         Ok(findings)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    pub fn scan_unbacked_threads(
+        &self,
+        _pid: u32,
+    ) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
+        Ok(Vec::new())
     }
 }
 

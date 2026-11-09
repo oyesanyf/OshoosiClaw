@@ -2204,7 +2204,7 @@ impl SiqueryEngine {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             // 1. Build inode -> (pid, fd) map from /proc/<pid>/fd
             let mut inode_to_pid_fd: std::collections::HashMap<u64, (i64, i64)> =
@@ -2395,6 +2395,10 @@ impl SiqueryEngine {
                 }
             }
         }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = &mut stmt;
+        }
 
         // 2. On Windows, enumerate loaded modules via CreateToolhelp32Snapshot
         #[cfg(target_os = "windows")]
@@ -2435,7 +2439,7 @@ impl SiqueryEngine {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             let target_pid = extract_pid_hint(query_hint);
             let current_pid = std::process::id();
@@ -2497,6 +2501,10 @@ impl SiqueryEngine {
                 }
             }
         }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = &mut stmt;
+        }
 
         Ok(())
     }
@@ -2543,7 +2551,7 @@ impl SiqueryEngine {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(content) = std::fs::read_to_string("/proc/net/unix") {
                 for line in content.lines().skip(1) {
@@ -4460,7 +4468,7 @@ impl SiqueryEngine {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
                 for line in content.lines().skip(1) {
@@ -4478,6 +4486,10 @@ impl SiqueryEngine {
                     }
                 }
             }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = &mut stmt;
         }
 
         Ok(())
@@ -7972,7 +7984,7 @@ impl SiqueryEngine {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(content) = std::fs::read_to_string("/proc/net/route") {
                 for line in content.lines().skip(1) {
@@ -8000,6 +8012,10 @@ impl SiqueryEngine {
                     }
                 }
             }
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = &mut stmt;
         }
 
         Ok(())
@@ -9055,7 +9071,7 @@ impl KernelObjectConservationAuditor {
             }
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(proc_dir) = std::fs::read_dir("/proc") {
                 for entry in proc_dir.flatten() {
