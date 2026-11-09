@@ -133,8 +133,32 @@ impl RequestValidator {
 
         // 3. Verbatim appearance in user prompt turns (assistant turns excluded)
         for turn in user_prompt_turns {
-            if turn.to_ascii_lowercase().contains(&host_lower) {
-                return true;
+            let candidates = extract_hosts_from_text(turn);
+            for candidate in candidates {
+                let candidate_lower = candidate.to_ascii_lowercase();
+                if host_lower == candidate_lower
+                    || host_lower.ends_with(&format!(".{}", candidate_lower))
+                {
+                    return true;
+                }
+            }
+            for word in turn.split_whitespace() {
+                let clean =
+                    word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-');
+                if clean.contains('.')
+                    && !clean.starts_with('.')
+                    && !clean.ends_with('.')
+                    && !clean.contains("..")
+                    && clean
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+                {
+                    let cand_lower = clean.to_ascii_lowercase();
+                    if host_lower == cand_lower || host_lower.ends_with(&format!(".{}", cand_lower))
+                    {
+                        return true;
+                    }
+                }
             }
         }
 
