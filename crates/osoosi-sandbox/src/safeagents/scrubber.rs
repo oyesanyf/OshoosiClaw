@@ -88,7 +88,7 @@ impl OshoosiScrubber {
                     Regex::new(r"\bhf_[a-zA-Z0-9]{20,}\b").expect("hf regex valid"),
                     Regex::new(r"\bgh[pousr]_[a-zA-Z0-9]{20,}\b").expect("github regex valid"),
                     Regex::new(r"\bxox[abprs]-[a-zA-Z0-9-]{10,}\b").expect("slack regex valid"),
-                    Regex::new(r"\bAKIA[0-9A-Z]{16}\b").expect("aws key regex valid"),
+                    Regex::new(r"\bA[KS]IA[0-9A-Z]{16}\b").expect("aws key regex valid"),
                     Regex::new(r"\bAIza[0-9A-Za-z-_]{35}\b").expect("google key regex valid"),
                 ]
             });
@@ -110,9 +110,10 @@ impl OshoosiScrubber {
         if config.mask_credentials {
             static URL_PW_RE: OnceLock<Regex> = OnceLock::new();
             let re = URL_PW_RE.get_or_init(|| {
-                Regex::new(r"(://[^/\s:@]+):[^/\s@]+@").expect("url password regex valid")
+                Regex::new(r"(://[^/\s:@]*):([^/\s]*)@([^/\s@]+)")
+                    .expect("url password regex valid")
             });
-            s = re.replace_all(&s, "$1:***@").to_string();
+            s = re.replace_all(&s, "$1:***@$3").to_string();
         }
 
         // 5. Environment Variables ($VAR, ${VAR})
