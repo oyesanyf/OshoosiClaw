@@ -227,6 +227,7 @@ fn test_tiered_dispatcher_routes_tier1_wasm_and_tier2_win32() {
         native_command: None,
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let receipt_t1 = dispatcher.dispatch(&req_t1).expect("Tier 1 dispatch");
     assert_eq!(receipt_t1.selected_tier, ExecutionTier::Tier1InProcessWasm);
@@ -251,6 +252,7 @@ fn test_tiered_dispatcher_routes_tier1_wasm_and_tier2_win32() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let receipt_t2 = dispatcher.dispatch(&req_t2).expect("Tier 2 dispatch");
     assert_eq!(

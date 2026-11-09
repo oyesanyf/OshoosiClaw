@@ -258,6 +258,7 @@ fn test_challenger2_dispatch_tier2_environment_sanitization_and_isolation() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
 
     let receipt_secret = dispatcher
@@ -284,6 +285,7 @@ fn test_challenger2_dispatch_tier2_environment_sanitization_and_isolation() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let receipt_conf = dispatcher.dispatch(&req_confined).expect("Tier 2 dispatch");
     assert_eq!(
@@ -325,6 +327,7 @@ fn test_challenger2_mercury_mass_accumulation_and_sulfur_passivation() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let rec1 = dispatcher
         .dispatch(&req1)
@@ -392,6 +395,7 @@ fn test_challenger2_mercury_mass_accumulation_and_sulfur_passivation() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let rec_clean = dispatcher
         .dispatch(&req_clean)
@@ -468,6 +472,7 @@ fn test_challenger2_concurrent_tier2_dispatches_resilience() {
                 )),
                 scratchpad_root: scratch,
                 allow_scratch_write: false,
+                safeagents_context: None,
             };
             let receipt = disp
                 .dispatch(&req)

@@ -467,6 +467,7 @@ fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let err1 = dispatcher
         .dispatch(&req_untrusted_doc)
@@ -486,6 +487,7 @@ fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let err2 = dispatcher
         .dispatch(&req_ledger)
@@ -505,6 +507,7 @@ fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
         )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
+        safeagents_context: None,
     };
     let err3 = dispatcher
         .dispatch(&req_ctrl_char)

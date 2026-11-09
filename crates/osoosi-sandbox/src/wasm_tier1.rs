@@ -39,7 +39,7 @@ pub const WASI_ERR_FAULT: i32 = -14;
 pub const WASI_ERR_IO: i32 = -29;
 
 /// Deterministic Zero-Mutual-Information output projection receipt (`I(S; O_projected) = 0`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ZeroMiProjectionResult {
     pub raw_length_bytes: usize,
     pub projected_schema_json: String,
