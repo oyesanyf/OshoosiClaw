@@ -37,12 +37,20 @@ pub mod kill_switch;
 pub mod memory_limiter;
 pub mod native_host;
 pub mod open_confined;
+pub mod safeagents;
 pub mod security;
 pub mod tiered_executor;
 pub mod token_posture;
 pub mod wasm_supervisor;
 pub mod wasm_tier1;
 pub mod windows;
+
+pub use safeagents::{
+    CallsJournal, CallsJournalRecord, IsolatedJudge, JudgeConfig, JudgeFallbackPolicy,
+    JudgeVerdict, NativeAtifScanner, OshoosiScrubber, RequestValidator, RequestValidatorConfig,
+    SafeAgentsBlockAction, SafeAgentsConcurrencyController, SafeAgentsContext,
+    SafeAgentsGovernanceBridge, SafeAgentsPipeline, ToolInspectionRequest, ToolInspectionVerdict,
+};
 
 pub use command_line::{build_windows_command_line, quote_windows_argv_arg};
 pub use executable_identity::{
@@ -1122,6 +1130,7 @@ mod tests {
             )),
             scratchpad_root: temp_dir.clone(),
             allow_scratch_write: false,
+            safeagents_context: None,
         };
         assert!(
             dispatcher.dispatch(&bad_req).is_err(),
@@ -1140,6 +1149,7 @@ mod tests {
             )),
             scratchpad_root: temp_dir.clone(),
             allow_scratch_write: false,
+            safeagents_context: None,
         };
         assert!(
             dispatcher.dispatch(&mismatch_req).is_err(),

@@ -59,6 +59,35 @@ pub struct TieredToolRequest {
     pub scratchpad_root: PathBuf,
     /// Whether scratchpad writes are permitted for this call.
     pub allow_scratch_write: bool,
+    /// Optional SafeAgents conversational security context and block action policy.
+    pub safeagents_context: Option<crate::safeagents::SafeAgentsContext>,
+}
+
+impl TieredToolRequest {
+    pub fn new(
+        agent_id: String,
+        role: ArmRole,
+        tool_name: String,
+        payload: Vec<u8>,
+        scratchpad_root: PathBuf,
+    ) -> Self {
+        Self {
+            agent_id,
+            role,
+            tool_name,
+            payload,
+            custom_wat: None,
+            native_command: None,
+            scratchpad_root,
+            allow_scratch_write: false,
+            safeagents_context: None,
+        }
+    }
+
+    pub fn with_safeagents_context(mut self, ctx: crate::safeagents::SafeAgentsContext) -> Self {
+        self.safeagents_context = Some(ctx);
+        self
+    }
 }
 
 /// Kernel-verified AppContainer + Job Object token posture for a suspended Tier 2 child process.
@@ -402,6 +431,10 @@ pub struct TieredExecutionReceipt {
     pub job_io_sample: Option<MeasuredActuationSample>,
     pub mercury_evaluation: Option<MercuryEvaluationResult>,
     pub zero_mi_output: ZeroMiProjectionResult,
+    /// SafeAgents inspection verdict.
+    pub safeagents_verdict: Option<crate::safeagents::ToolInspectionVerdict>,
+    /// Synthetic notice replacing a blocked tool call in stream mode.
+    pub synthetic_text_notice: Option<String>,
 }
 
 /// Pure-Rust Hybrid Execution Dispatcher routing agent/EDR tools between Tier 1 (Wasmtime)
@@ -411,6 +444,7 @@ pub struct TieredExecutionDispatcher {
     wasm_tier1: WasmTier1Executor,
     executable_verifier: ExecutableIdentityVerifier,
     mercury: Arc<MercuryContainmentEngine>,
+    safeagents_pipeline: Option<Arc<crate::safeagents::SafeAgentsPipeline>>,
 }
 
 impl TieredExecutionDispatcher {
@@ -419,12 +453,27 @@ impl TieredExecutionDispatcher {
             wasm_tier1: WasmTier1Executor::try_new()?,
             executable_verifier: ExecutableIdentityVerifier::new(),
             mercury: Arc::new(MercuryContainmentEngine::new()),
+            safeagents_pipeline: crate::safeagents::SafeAgentsPipeline::new()
+                .ok()
+                .map(Arc::new),
         })
     }
 
     pub fn with_mercury(mut self, mercury: Arc<MercuryContainmentEngine>) -> Self {
         self.mercury = mercury;
         self
+    }
+
+    pub fn with_safeagents_pipeline(
+        mut self,
+        pipeline: Arc<crate::safeagents::SafeAgentsPipeline>,
+    ) -> Self {
+        self.safeagents_pipeline = Some(pipeline);
+        self
+    }
+
+    pub fn safeagents_pipeline(&self) -> Option<&Arc<crate::safeagents::SafeAgentsPipeline>> {
+        self.safeagents_pipeline.as_ref()
     }
 
     pub fn wasm_tier1(&self) -> &WasmTier1Executor {
@@ -452,15 +501,95 @@ impl TieredExecutionDispatcher {
         }
     }
 
-    /// Dispatches a tool request into Tier 1 or Tier 2.
+    /// Dispatches a tool request into Tier 1 or Tier 2 after SafeAgents inspection.
     pub fn dispatch(
         &self,
         req: &TieredToolRequest,
     ) -> Result<TieredExecutionReceipt, OctopusSecurityError> {
-        match Self::classify_tier(req) {
-            ExecutionTier::Tier1InProcessWasm => self.dispatch_tier1_wasm(req),
-            ExecutionTier::Tier2NativeWin32Confinement => self.dispatch_tier2_win32(req),
+        let start = Instant::now();
+
+        // -------------------------------------------------------------
+        // PRE-EXECUTION HOOK: SafeAgents 3-Stage Inspection Middleware
+        // -------------------------------------------------------------
+        let mut evaluated_verdict: Option<crate::safeagents::ToolInspectionVerdict> = None;
+        if let Some(ref pipeline) = self.safeagents_pipeline {
+            if let Some(ref sa_ctx) = req.safeagents_context {
+                // Synthesize argument JSON string from explicit context, payload, or native_command
+                let synth_args = sa_ctx.raw_arguments_json.clone().unwrap_or_else(|| {
+                    if let Some((ref prog, ref args)) = req.native_command {
+                        let full_cmd = crate::command_line::build_windows_command_line(prog, args);
+                        serde_json::json!({ "command": full_cmd }).to_string()
+                    } else if !req.payload.is_empty() {
+                        std::str::from_utf8(&req.payload)
+                            .unwrap_or("{}")
+                            .to_string()
+                    } else {
+                        "{}".to_string()
+                    }
+                });
+
+                let inspect_req = crate::safeagents::ToolInspectionRequest {
+                    agent_id: &req.agent_id,
+                    tool_name: &req.tool_name,
+                    arguments_json: &synth_args,
+                    declared_tools: &sa_ctx.declared_tools,
+                    user_prompt_turns: &sa_ctx.user_prompt_turns,
+                    assistant_turns: &sa_ctx.assistant_turns,
+                    allowed_hosts: &sa_ctx.allowed_hosts,
+                };
+
+                let verdict = pipeline.inspect_sync(&inspect_req)?;
+                evaluated_verdict = Some(verdict.clone());
+
+                if let crate::safeagents::ToolInspectionVerdict::Blocked {
+                    ref reason,
+                    ref notice,
+                    ..
+                } = verdict
+                {
+                    match sa_ctx.block_action {
+                        crate::safeagents::SafeAgentsBlockAction::FailClosedError => {
+                            return Err(OctopusSecurityError::BreakoutDetected(format!(
+                                "SAFEAGENTS_BLOCKED [{}]: {}",
+                                req.tool_name, reason
+                            )));
+                        }
+                        crate::safeagents::SafeAgentsBlockAction::SyntheticReceipt => {
+                            return Ok(TieredExecutionReceipt {
+                                agent_id: req.agent_id.clone(),
+                                tool_name: req.tool_name.clone(),
+                                selected_tier: Self::classify_tier(req),
+                                exit_code: 0,
+                                total_elapsed_us: start.elapsed().as_micros() as u64,
+                                wasm_receipt: None,
+                                win32_child_token_posture: None,
+                                win32_is_in_job: false,
+                                win32_appcontainer_verification: None,
+                                verified_executable_metadata: None,
+                                job_accounting: None,
+                                job_io_sample: None,
+                                mercury_evaluation: None,
+                                zero_mi_output: crate::wasm_tier1::ZeroMiProjectionResult::default(
+                                ),
+                                safeagents_verdict: Some(verdict.clone()),
+                                synthetic_text_notice: Some(notice.clone()),
+                            });
+                        }
+                    }
+                }
+            }
         }
+
+        let mut receipt = match Self::classify_tier(req) {
+            ExecutionTier::Tier1InProcessWasm => self.dispatch_tier1_wasm(req)?,
+            ExecutionTier::Tier2NativeWin32Confinement => self.dispatch_tier2_win32(req)?,
+        };
+
+        if evaluated_verdict.is_some() {
+            receipt.safeagents_verdict = evaluated_verdict;
+        }
+
+        Ok(receipt)
     }
 
     fn dispatch_tier1_wasm(
@@ -505,6 +634,8 @@ impl TieredExecutionDispatcher {
             job_io_sample: None,
             mercury_evaluation: None,
             zero_mi_output: zero_mi,
+            safeagents_verdict: None,
+            synthetic_text_notice: None,
         })
     }
 
@@ -631,6 +762,8 @@ impl TieredExecutionDispatcher {
             job_io_sample: Some(job_sample),
             mercury_evaluation: Some(mercury_eval),
             zero_mi_output: zero_mi,
+            safeagents_verdict: None,
+            synthetic_text_notice: None,
         })
     }
 }
