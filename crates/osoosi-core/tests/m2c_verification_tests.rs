@@ -131,17 +131,11 @@ async fn test_hardware_tpm2_detection_and_pcr_read() {
         }
     }
 
-    let pcr0 = osoosi_audit::tpm::read_pcr(0);
-    assert!(pcr0.is_some(), "PCR 0 read should succeed");
-    assert_eq!(pcr0.unwrap().len(), 64, "PCR 0 should be 64 hex characters");
+    let (pcr0, _) = osoosi_audit::tpm::get_pcr_value(0);
+    assert_eq!(pcr0.len(), 64, "PCR 0 should be 64 hex characters");
 
-    let pcr16 = osoosi_audit::tpm::read_pcr(16);
-    assert!(pcr16.is_some(), "PCR 16 read should succeed");
-    assert_eq!(
-        pcr16.unwrap().len(),
-        64,
-        "PCR 16 should be 64 hex characters"
-    );
+    let (pcr16, _) = osoosi_audit::tpm::get_pcr_value(16);
+    assert_eq!(pcr16.len(), 64, "PCR 16 should be 64 hex characters");
 }
 
 #[tokio::test]
