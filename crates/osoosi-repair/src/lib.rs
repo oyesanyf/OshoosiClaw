@@ -1214,9 +1214,9 @@ impl PatchEngine {
             }
             #[cfg(target_os = "macos")]
             {
-                return Err(anyhow!(
+                Err(anyhow!(
                     "macOS rollback requires manual recovery snapshot restore"
-                ));
+                ))
             }
 
             #[cfg(not(target_os = "macos"))]
