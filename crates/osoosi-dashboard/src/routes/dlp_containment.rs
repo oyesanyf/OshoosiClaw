@@ -1339,13 +1339,13 @@ impl ContainmentPlatform for SystemContainmentPlatform {
     fn unblock_destination(
         &self,
         rule: &str,
-        program: Option<&str>,
+        _program: Option<&str>,
         pid: Option<u32>,
         ips: &[IpAddr],
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            osoosi_core::wfp::unblock_destination_native(rule, program, pid, ips)
+            osoosi_core::wfp::unblock_destination_native(rule, _program, pid, ips)
         }
         #[cfg(target_os = "linux")]
         {

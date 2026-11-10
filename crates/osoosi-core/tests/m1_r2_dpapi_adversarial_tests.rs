@@ -5,6 +5,8 @@
 //! Author: challenger_m1_r2_1 (Empirical Challenger)
 //! Roles: critic, specialist
 
+#![allow(unused_imports, unused_variables)]
+
 use osoosi_core::protected_env_backup::{
     dpapi_protect_bytes, dpapi_unprotect_bytes, ProtectedEnvBackupVault, VaultError,
 };

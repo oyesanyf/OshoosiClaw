@@ -755,14 +755,8 @@ pub fn is_suspicious_lineage(parent: &str, child: &str, cmdline: &str) -> (bool,
     let c_lower = child.to_ascii_lowercase();
     let cmd_lower = cmdline.to_ascii_lowercase();
 
-    let p_base = std::path::Path::new(&p_lower)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or(&p_lower);
-    let c_base = std::path::Path::new(&c_lower)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or(&c_lower);
+    let p_base = p_lower.rsplit(['/', '\\']).next().unwrap_or(&p_lower);
+    let c_base = c_lower.rsplit(['/', '\\']).next().unwrap_or(&c_lower);
 
     // 1. Office applications spawning command shells / script interpreters (T1204 / T1059)
     let office_apps = [
