@@ -5,6 +5,8 @@
 //! 3. Fail-closed behavior on tampered or uninitialized AppContainer & Job Object configurations.
 //! 4. Role/tool gating and control character injection defenses.
 
+#![allow(unused_imports, dead_code)]
+
 #[cfg(windows)]
 use osoosi_sandbox::tiered_executor::{
     create_or_open_appcontainer_profile, verify_process_appcontainer_token,
