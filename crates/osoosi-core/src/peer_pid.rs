@@ -303,25 +303,37 @@ mod tests {
 
     #[test]
     fn test_resolve_loopback_peer_pid_self() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind v4 loopback");
-        let bound_port = listener.local_addr().expect("local_addr").port();
-        let client =
-            std::net::TcpStream::connect(("127.0.0.1", bound_port)).expect("connect v4 loopback");
-        let client_addr = client.local_addr().expect("client local_addr");
-        let (_accepted, peer_addr) = listener.accept().expect("accept");
-        assert_eq!(client_addr, peer_addr);
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            // On unsupported platforms (e.g. macOS), verify fail-closed bail.
+            let res = resolve_loopback_peer_pid("127.0.0.1:8080".parse().unwrap(), 8080);
+            assert!(res.is_err(), "unsupported platform must fail closed");
+            return;
+        }
 
-        let resolved_pid =
-            resolve_loopback_peer_pid(peer_addr, bound_port).expect("resolve v4 peer pid");
-        assert_eq!(resolved_pid, std::process::id());
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind v4 loopback");
+            let bound_port = listener.local_addr().expect("local_addr").port();
+            let client = std::net::TcpStream::connect(("127.0.0.1", bound_port))
+                .expect("connect v4 loopback");
+            let client_addr = client.local_addr().expect("client local_addr");
+            let (_accepted, peer_addr) = listener.accept().expect("accept");
+            assert_eq!(client_addr, peer_addr);
 
-        if let Ok(listener6) = std::net::TcpListener::bind("[::1]:0") {
-            let port6 = listener6.local_addr().expect("v6 local_addr").port();
-            if let Ok(client6) = std::net::TcpStream::connect(("::1", port6)) {
-                let (_acc6, peer6) = listener6.accept().expect("accept v6");
-                let _ = client6;
-                let pid6 = resolve_loopback_peer_pid(peer6, port6).expect("resolve v6 peer pid");
-                assert_eq!(pid6, std::process::id());
+            let resolved_pid =
+                resolve_loopback_peer_pid(peer_addr, bound_port).expect("resolve v4 peer pid");
+            assert_eq!(resolved_pid, std::process::id());
+
+            if let Ok(listener6) = std::net::TcpListener::bind("[::1]:0") {
+                let port6 = listener6.local_addr().expect("v6 local_addr").port();
+                if let Ok(client6) = std::net::TcpStream::connect(("::1", port6)) {
+                    let (_acc6, peer6) = listener6.accept().expect("accept v6");
+                    let _ = client6;
+                    let pid6 =
+                        resolve_loopback_peer_pid(peer6, port6).expect("resolve v6 peer pid");
+                    assert_eq!(pid6, std::process::id());
+                }
             }
         }
     }
