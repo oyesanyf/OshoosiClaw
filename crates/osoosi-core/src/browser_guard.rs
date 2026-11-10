@@ -21,6 +21,7 @@ struct BrowserProfile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum BrowserType {
     Chrome,
     Edge,
@@ -172,6 +173,7 @@ impl BrowserGuard {
         profiles
     }
 
+    #[allow(dead_code)]
     fn find_chrome_style_profiles(
         &self,
         user_data_root: &Path,

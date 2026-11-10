@@ -799,6 +799,7 @@ fn is_blockable_ip(ip: &IpAddr) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn schedule_dns_unblock(_targets: Vec<String>, ttl_secs: u64) {
     if ttl_secs == 0 {
         return;
