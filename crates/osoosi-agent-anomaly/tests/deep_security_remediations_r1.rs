@@ -199,17 +199,36 @@ fn test_finding3_mercury_non_decaying_slow_leak_and_kernel_job_sample() {
     );
 
     // 2. Kernel-measured actuation sample from a real WindowsJobObject
-    let job = WindowsJobObject::create(
-        format!("OshoosiMercuryKernelTest_{}", std::process::id()),
-        4,
-        64 * 1024 * 1024,
-    )
-    .expect("Create WindowsJobObject for kernel I/O accounting test");
-    let sample =
-        MeasuredActuationSample::sample_from_job(&job, HostActuationPore::FilesystemWrite, 1.0)
-            .expect("QueryInformationJobObject(BasicAndIoAccounting) must succeed");
-    let eval = mercury.evaluate_measured_sample("job-measured-agent", &sample);
-    assert_eq!(eval.pore, HostActuationPore::FilesystemWrite);
+    #[cfg(windows)]
+    {
+        let job = WindowsJobObject::create(
+            format!("OshoosiMercuryKernelTest_{}", std::process::id()),
+            4,
+            64 * 1024 * 1024,
+        )
+        .expect("Create WindowsJobObject for kernel I/O accounting test");
+        let sample =
+            MeasuredActuationSample::sample_from_job(&job, HostActuationPore::FilesystemWrite, 1.0)
+                .expect("QueryInformationJobObject(BasicAndIoAccounting) must succeed");
+        let eval = mercury.evaluate_measured_sample("job-measured-agent", &sample);
+        assert_eq!(eval.pore, HostActuationPore::FilesystemWrite);
+    }
+    #[cfg(not(windows))]
+    {
+        // On non-Windows, verify that sample_from_job fails closed with IsolationViolation
+        let job = WindowsJobObject::create(
+            format!("OshoosiMercuryKernelTest_{}", std::process::id()),
+            4,
+            64 * 1024 * 1024,
+        )
+        .expect("Create WindowsJobObject stub");
+        let res =
+            MeasuredActuationSample::sample_from_job(&job, HostActuationPore::FilesystemWrite, 1.0);
+        assert!(
+            res.is_err(),
+            "Non-Windows environments must fail closed with IsolationViolation"
+        );
+    }
 }
 
 #[test]

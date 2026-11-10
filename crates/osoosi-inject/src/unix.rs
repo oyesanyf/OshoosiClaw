@@ -7,7 +7,6 @@
 #![allow(non_camel_case_types)]
 #![allow(clippy::missing_safety_doc)]
 
-use lazy_static::lazy_static;
 use libc::{c_char, c_int, c_void, size_t, ssize_t};
 use std::ffi::CStr;
 use std::sync::Once;
