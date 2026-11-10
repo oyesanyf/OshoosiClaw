@@ -2113,6 +2113,7 @@ impl SiqueryEngine {
 
     /// Populates `process_open_sockets` using native Win32 `GetExtendedTcpTable` / `GetExtendedUdpTable`.
     fn populate_process_open_sockets(conn: &Connection) -> Result<(), String> {
+        #[allow(unused_variables, unused_mut)]
         let mut stmt = conn
             .prepare_cached(
                 "INSERT INTO process_open_sockets (
@@ -2336,7 +2337,7 @@ impl SiqueryEngine {
     fn populate_process_memory_map(
         conn: &Connection,
         sys: &System,
-        query_hint: &str,
+        _query_hint: &str,
     ) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached(
@@ -2404,7 +2405,7 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             // To ensure queries execute in <5ms, check if specific PID is requested in query
-            let target_pid = extract_pid_hint(query_hint);
+            let target_pid = extract_pid_hint(_query_hint);
             let current_pid = std::process::id();
 
             let pids_to_scan: Vec<u32> = if let Some(p) = target_pid {
@@ -8985,8 +8986,10 @@ impl KernelObjectConservationAuditor {
     /// socket/handle owner tables, and page-frame mappings.
     pub fn audit_live_host(sys: &System) -> Vec<KernelObjectConservationRecord> {
         let mut visible_pids = std::collections::HashSet::new();
+        #[allow(unused_mut)]
         let mut thread_counts: std::collections::HashMap<u32, u32> =
             std::collections::HashMap::new();
+        #[allow(unused_mut)]
         let mut handle_socket_counts: std::collections::HashMap<u32, u32> =
             std::collections::HashMap::new();
         let mut page_frame_counts: std::collections::HashMap<u32, u64> =
@@ -9367,7 +9370,7 @@ fn extract_pid_from_pipename(name: &str) -> Option<u32> {
     None
 }
 
-/// Extracts a target PID filter from query text like `pid = 1234` or `pid=1234`.
+#[allow(dead_code)]
 fn extract_pid_hint(query: &str) -> Option<u32> {
     let idx = query.find("pid")?;
     let remainder = &query[idx + 3..];

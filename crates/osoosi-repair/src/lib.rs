@@ -1219,6 +1219,7 @@ impl PatchEngine {
                 ));
             }
 
+            #[cfg(not(target_os = "macos"))]
             Ok(())
         } else {
             Err(anyhow!("No snapshot available for rollback!"))

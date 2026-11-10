@@ -2,6 +2,7 @@
 //!
 //! Provides capabilities to neutralize threats: network isolation, process termination, and rollback.
 
+#[allow(unused_imports)]
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

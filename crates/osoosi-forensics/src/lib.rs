@@ -14,6 +14,6 @@ pub mod vql;
 pub use client::VelociraptorClient;
 pub use correlator::{corroborate_mft_rootkit_hiding, corroborate_process_injection};
 pub use models::{
-    ForensicInvestigationReport, MftDiscrepancyArtifact, NetworkSocketArtifact,
-    PersistenceArtifact, VadMemoryArtifact,
+    ArtemisProcessArtifact, ForensicInvestigationReport, MftDiscrepancyArtifact,
+    NetworkSocketArtifact, PersistenceArtifact, VadMemoryArtifact,
 };

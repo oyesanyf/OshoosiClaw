@@ -20,6 +20,7 @@ use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+#[allow(unused_imports)]
 use tracing::{info, warn};
 
 pub const FWPM_SESSION_FLAG_DYNAMIC: u32 = 0x0000_0001;
@@ -270,6 +271,7 @@ const FWPM_LAYER_INBOUND_MAC_FRAME_ETHERNET: WfpGuid = WfpGuid {
 };
 
 // 444543b6-9046-4246-ab81-9b06227e243d (Incident A WSL2 NAT Interception)
+#[cfg(windows)]
 pub const FWPM_LAYER_IPFORWARD_V4: WfpGuid = WfpGuid {
     data1: 0x444543b6,
     data2: 0x9046,
@@ -278,6 +280,7 @@ pub const FWPM_LAYER_IPFORWARD_V4: WfpGuid = WfpGuid {
 };
 
 // 12fe69b5-485a-40e7-912a-82b818121294 (Incident A WSL2 NAT Interception)
+#[cfg(windows)]
 pub const FWPM_LAYER_IPFORWARD_V6: WfpGuid = WfpGuid {
     data1: 0x12fe69b5,
     data2: 0x485a,
@@ -286,6 +289,7 @@ pub const FWPM_LAYER_IPFORWARD_V6: WfpGuid = WfpGuid {
 };
 
 // a82acc24-4ee1-4ee1-b465-fd1d25cb10a4 (Official Windows SDK fwpmu.h)
+#[cfg(windows)]
 pub const FWPM_LAYER_IPFORWARD_V4_SDK: WfpGuid = WfpGuid {
     data1: 0xa82acc24,
     data2: 0x4ee1,
@@ -294,6 +298,7 @@ pub const FWPM_LAYER_IPFORWARD_V4_SDK: WfpGuid = WfpGuid {
 };
 
 // 7b964818-19c7-493a-b71f-832c3684d28c (Official Windows SDK fwpmu.h)
+#[cfg(windows)]
 pub const FWPM_LAYER_IPFORWARD_V6_SDK: WfpGuid = WfpGuid {
     data1: 0x7b964818,
     data2: 0x19c7,
@@ -1661,6 +1666,7 @@ pub fn discover_preserved_management_ports() -> Vec<u16> {
             }
         }
     }
+    #[allow(unused_mut)]
     let mut candidates = vec![
         std::path::PathBuf::from("logs/active_port.txt"),
         std::path::PathBuf::from("database/active_port.txt"),

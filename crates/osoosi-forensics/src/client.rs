@@ -3,7 +3,9 @@
 
 use crate::correlator::{corroborate_mft_rootkit_hiding, corroborate_process_injection};
 use crate::mock::MockVelociraptorDriver;
-use crate::models::{ForensicInvestigationReport, MftDiscrepancyArtifact, VadMemoryArtifact};
+use crate::models::{
+    ArtemisProcessArtifact, ForensicInvestigationReport, MftDiscrepancyArtifact, VadMemoryArtifact,
+};
 use crate::stream::parse_jsonl_stream;
 use crate::vql::{build_mft_scan_query, build_process_vad_query};
 use chrono::Utc;
@@ -67,11 +69,52 @@ impl VelociraptorClient {
         self.config.enabled && self.resolve_binary_path().is_some()
     }
 
-    /// Probes the Velociraptor binary version string.
-    pub fn probe_version(&self) -> Option<String> {
-        let bin_path = self.resolve_binary_path()?;
+    /// Resolves the absolute path to the Rust `artemis` / `aramis` DFIR binary, if installed.
+    pub fn resolve_artemis_binary_path(&self) -> Option<PathBuf> {
+        let candidates: &[&str] = if cfg!(windows) {
+            &["artemis.exe", "aramis.exe"]
+        } else {
+            &["artemis", "aramis"]
+        };
+
+        // 1. Check ~/.cargo/bin (USERPROFILE or HOME)
+        for home_var in ["USERPROFILE", "HOME"] {
+            if let Ok(home) = std::env::var(home_var) {
+                let cargo_bin = Path::new(&home).join(".cargo").join("bin");
+                for name in candidates {
+                    let cand = cargo_bin.join(name);
+                    if cand.is_file() {
+                        return Some(cand);
+                    }
+                }
+            }
+        }
+
+        // 2. Check PATH
+        if let Ok(path_var) = std::env::var("PATH") {
+            for entry in std::env::split_paths(&path_var) {
+                for name in candidates {
+                    let cand = entry.join(name);
+                    if cand.is_file() {
+                        return Some(cand);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Returns true if the Rust `artemis` / `aramis` DFIR binary is installed on the host.
+    pub fn is_artemis_available(&self) -> bool {
+        self.config.enabled && self.resolve_artemis_binary_path().is_some()
+    }
+
+    /// Probes the installed `artemis` / `aramis` binary version string (e.g., `"artemis 0.20.0"`).
+    pub fn probe_artemis_version(&self) -> Option<String> {
+        let bin_path = self.resolve_artemis_binary_path()?;
         let mut cmd = std::process::Command::new(bin_path);
-        cmd.arg("version");
+        cmd.arg("--version");
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -86,6 +129,100 @@ impl VelociraptorClient {
             }
         }
         None
+    }
+
+    /// Executes a live process forensic acquisition using `artemis acquire --format jsonl processes`
+    /// and parses the resulting JSONL records.
+    pub async fn acquire_artemis_processes(
+        &self,
+    ) -> Result<Vec<ArtemisProcessArtifact>, anyhow::Error> {
+        let bin_path = self
+            .resolve_artemis_binary_path()
+            .ok_or_else(|| anyhow::anyhow!("Artemis / Aramis DFIR executable not found"))?;
+
+        let out_dir = std::env::temp_dir().join(format!("osoosi_artemis_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&out_dir)?;
+
+        let mut cmd = Command::new(&bin_path);
+        cmd.args([
+            "acquire",
+            "--format",
+            "jsonl",
+            "--output-dir",
+            &out_dir.to_string_lossy(),
+            "processes",
+        ]);
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let timeout_dur = Duration::from_secs(self.config.execution_timeout_secs.max(10));
+        let status_res = tokio::time::timeout(timeout_dur, cmd.status()).await;
+        if status_res.is_err() {
+            let _ = std::fs::remove_dir_all(&out_dir);
+            anyhow::bail!("Artemis process acquisition timed out");
+        }
+
+        let mut processes = Vec::new();
+        let collector_dir = out_dir.join("local_collector");
+        let scan_dir = if collector_dir.is_dir() {
+            collector_dir
+        } else {
+            out_dir.clone()
+        };
+
+        if let Ok(entries) = std::fs::read_dir(&scan_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let fname = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                if fname.starts_with("processes_") && fname.ends_with(".jsonl") {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        for line in content.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            if let Ok(rec) = serde_json::from_str::<ArtemisProcessArtifact>(trimmed)
+                            {
+                                processes.push(rec);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&out_dir);
+        Ok(processes)
+    }
+
+    /// Probes the Velociraptor binary version string (falling back to Artemis/Aramis if Velociraptor is absent).
+    pub fn probe_version(&self) -> Option<String> {
+        if let Some(bin_path) = self.resolve_binary_path() {
+            let mut cmd = std::process::Command::new(bin_path);
+            cmd.arg("version");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
+            if let Ok(output) = cmd.output() {
+                if output.status.success() {
+                    let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !ver.is_empty() {
+                        return Some(ver);
+                    }
+                }
+            }
+        }
+        self.probe_artemis_version()
     }
 
     /// Executes an arbitrary schema-sanitized VQL query over standard OS pipes.
@@ -402,5 +539,30 @@ mod tests {
         assert!(vads[1].is_unbacked_executable);
         assert_eq!(vads[1].protection, "PAGE_EXECUTE_READWRITE");
         assert!(vads[2].is_unbacked_executable);
+    }
+
+    #[tokio::test]
+    async fn test_artemis_binary_resolution_and_live_process_acquisition() {
+        let config = ForensicsConfig::default();
+        let client = VelociraptorClient::new(config);
+        if let Some(bin_path) = client.resolve_artemis_binary_path() {
+            assert!(bin_path.is_file(), "Resolved Artemis binary must exist");
+            let version = client
+                .probe_artemis_version()
+                .expect("probe_artemis_version");
+            assert!(
+                version.to_ascii_lowercase().contains("artemis"),
+                "Expected artemis version string, got: {}",
+                version
+            );
+            let procs = client
+                .acquire_artemis_processes()
+                .await
+                .expect("acquire_artemis_processes");
+            assert!(
+                !procs.is_empty(),
+                "Live Artemis process acquisition must return active OS processes"
+            );
+        }
     }
 }

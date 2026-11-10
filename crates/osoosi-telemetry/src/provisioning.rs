@@ -829,6 +829,7 @@ impl AgentProvisioner {
 
     /// macOS: Check for Endpoint Security
     #[cfg(target_os = "macos")]
+    #[allow(dead_code)]
     async fn provision_macos(&self) -> anyhow::Result<()> {
         info!("Provisioning macOS telemetry (Endpoint Security Framework)...");
         info!("macOS uses native ESF. Ensure the binary is granted Full Disk Access.");

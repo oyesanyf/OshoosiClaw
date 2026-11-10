@@ -2452,6 +2452,7 @@ impl ProtectedEnvBackupVault {
         // Jointly enumerate lines from HKCU\Environment (if production vault), all discovered files, AND std::env::vars()
         let mut pairs: Vec<(String, String)> = Vec::new();
         let mut seen_keys = std::collections::HashSet::new();
+        #[allow(unused_mut)]
         let mut hkcu_keys_seen: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
@@ -2747,6 +2748,7 @@ impl ProtectedEnvBackupVault {
 
         let user_sid_env = read_user_sid_environment_vars();
 
+        #[allow(unused_variables)]
         let master_key = Self::derive_vault_master_key();
         #[cfg(windows)]
         let dpapi_wrapped_key = dpapi_protect_bytes(&master_key).ok();
@@ -2770,6 +2772,7 @@ impl ProtectedEnvBackupVault {
 
         // Write encrypted DACL-protected vault FIRST and verify decryption
         Self::write_vault_payload(vault_path, &payload)?;
+        #[allow(unused_variables)]
         let (verified_payload, _) = Self::read_vault_payload(vault_path)?;
 
         #[cfg(windows)]

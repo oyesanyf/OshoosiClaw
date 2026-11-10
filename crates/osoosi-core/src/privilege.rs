@@ -9,6 +9,7 @@
 
 use serde::Serialize;
 use std::process::Command;
+#[allow(unused_imports)]
 use tracing::info;
 #[cfg(target_os = "windows")]
 use wmi::{COMLibrary, WMIConnection};

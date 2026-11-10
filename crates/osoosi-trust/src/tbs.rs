@@ -209,6 +209,7 @@ fn inspect_tpm_linux() -> Option<TpmHardwareInspection> {
     })
 }
 
+#[allow(dead_code)]
 fn map_manufacturer_to_vendor(mfg_id: u32, mfg_txt: &str) -> TpmOemVendor {
     let txt = mfg_txt.to_lowercase();
     if txt.contains("intel") || mfg_id == 0x494E5443 {

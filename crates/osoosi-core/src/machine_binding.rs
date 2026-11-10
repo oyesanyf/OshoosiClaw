@@ -187,6 +187,7 @@ pub fn discover_network_mac_inventory() -> Vec<DiscoveredNicInfo> {
         );
         let is_universally_administered = (mac_bytes[0] & 0x02) == 0;
 
+        #[allow(unused_mut)]
         let mut is_physical = !is_virtual_or_vpn_interface(iface_name);
 
         #[cfg(target_os = "linux")]
