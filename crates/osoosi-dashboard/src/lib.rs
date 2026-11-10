@@ -15572,6 +15572,7 @@ impl Default for TpmPcrBootMeasurements {
 impl TpmPcrBootMeasurements {
     /// Queries the live host platform posture for Secure Boot and BitLocker (`F27`).
     pub fn query_live() -> Self {
+        #[allow(unused_mut)]
         let mut measurements = Self::default();
 
         #[cfg(windows)]

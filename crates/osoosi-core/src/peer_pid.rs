@@ -308,7 +308,6 @@ mod tests {
             // On unsupported platforms (e.g. macOS), verify fail-closed bail.
             let res = resolve_loopback_peer_pid("127.0.0.1:8080".parse().unwrap(), 8080);
             assert!(res.is_err(), "unsupported platform must fail closed");
-            return;
         }
 
         #[cfg(any(windows, target_os = "linux"))]
