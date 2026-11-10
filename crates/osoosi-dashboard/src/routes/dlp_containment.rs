@@ -1357,12 +1357,12 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = (rule, program, pid, ips);
+            let _ = (rule, _program, pid, ips);
             osoosi_core::wfp::disarm_host_hermetic_quarantine()
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
-            let _ = (rule, program, pid, ips);
+            let _ = (rule, _program, pid, ips);
             Ok(())
         }
     }
