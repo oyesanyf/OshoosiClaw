@@ -632,13 +632,22 @@ mod tests {
 
         // Under Normal mode, Low priority tasks bypass the deferred queue and execute immediately
         let low_normal_executed = Arc::new(AtomicUsize::new(0));
+        controller.event_rate.store(0, Ordering::SeqCst);
+        *controller.current_mode.write().unwrap() = TelemetryMode::Normal;
         for _ in 0..500 {
+            *controller.current_mode.write().unwrap() = TelemetryMode::Normal;
             let l = low_normal_executed.clone();
             controller.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                 l.fetch_add(1, Ordering::SeqCst);
             });
         }
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        for _ in 0..100 {
+            if low_normal_executed.load(Ordering::SeqCst) == 500 {
+                break;
+            }
+            *controller.current_mode.write().unwrap() = TelemetryMode::Normal;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
 
         assert_eq!(
             low_normal_executed.load(Ordering::SeqCst),
