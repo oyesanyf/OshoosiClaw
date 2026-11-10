@@ -1598,6 +1598,7 @@ impl Drop for WfpDynamicSession {
 // Unified Persistent WFP Filter Ledger & Cross-Platform Hermetic Quarantine
 // =========================================================================
 
+#[allow(dead_code)]
 fn wfp_filter_ledger_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(dir) = std::env::var("OSOOSI_DATABASE_DIR") {
@@ -1622,6 +1623,7 @@ fn wfp_filter_ledger_paths() -> Vec<PathBuf> {
     paths
 }
 
+#[allow(dead_code)]
 fn save_persisted_wfp_filter_ids(ids: &[u64]) {
     if let Ok(json) = serde_json::to_string(ids) {
         for p in wfp_filter_ledger_paths() {
@@ -1633,6 +1635,7 @@ fn save_persisted_wfp_filter_ids(ids: &[u64]) {
     }
 }
 
+#[allow(dead_code)]
 fn load_persisted_wfp_filter_ids() -> Vec<u64> {
     let mut all = Vec::new();
     for p in wfp_filter_ledger_paths() {
@@ -1649,6 +1652,7 @@ fn load_persisted_wfp_filter_ids() -> Vec<u64> {
     all
 }
 
+#[allow(dead_code)]
 fn clear_persisted_wfp_filter_ids() {
     for p in wfp_filter_ledger_paths() {
         let _ = std::fs::remove_file(&p);
