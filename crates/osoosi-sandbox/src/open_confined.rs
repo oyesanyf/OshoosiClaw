@@ -501,6 +501,7 @@ mod unix_confined {
     }
 
     #[cfg(target_os = "linux")]
+    #[allow(non_upper_case_globals)]
     const SYS_openat2: libc::c_long = 437;
     #[cfg(target_os = "linux")]
     const RESOLVE_BENEATH: u64 = 0x08;
