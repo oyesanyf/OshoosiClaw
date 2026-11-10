@@ -27,12 +27,17 @@
 //!    - Parallel executions across unique AppContainer profiles.
 //!    - Kernel-verified token and job membership.
 
+#[cfg(windows)]
+use osoosi_sandbox::WindowsJobObject;
+#[allow(unused_imports)]
 use osoosi_sandbox::{
     MeasuredActuationSample, MercuryContainmentEngine, TieredExecutionDispatcher,
-    TieredToolRequest, TokenPosture, WindowsJobObject, DANGEROUS_PRIVILEGES, INTEGRITY_HIGH,
-    INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM, INTEGRITY_UNTRUSTED,
+    TieredToolRequest, TokenPosture, DANGEROUS_PRIVILEGES, INTEGRITY_HIGH, INTEGRITY_LOW,
+    INTEGRITY_MEDIUM, INTEGRITY_SYSTEM, INTEGRITY_UNTRUSTED,
 };
+#[allow(unused_imports)]
 use osoosi_types::{ArmRole, OctopusSecurityError};
+#[allow(unused_imports)]
 use std::sync::Arc;
 
 // =========================================================================
