@@ -2163,6 +2163,7 @@ pub fn build_linux_netlink_blackhole_route_msg(nlmsg_type: u16, family: u8, seq:
 }
 
 #[cfg(target_os = "linux")]
+#[allow(clippy::explicit_counter_loop)]
 fn linux_apply_netlink_blackhole(enable: bool) -> Result<()> {
     let fd = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE) };
     if fd < 0 {

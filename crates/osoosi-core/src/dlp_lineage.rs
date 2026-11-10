@@ -3315,7 +3315,7 @@ mod tests {
             f.flush().expect("Flush initial data");
         }
 
-        let key1 = ArtifactKey::from_path(&test_file).expect("Get key 1");
+        let _key1 = ArtifactKey::from_path(&test_file).expect("Get key 1");
 
         // Append data to modify file size and last write time
         {
@@ -3328,7 +3328,7 @@ mod tests {
             f.flush().expect("Flush append data");
         }
 
-        let key2 = ArtifactKey::from_path(&test_file).expect("Get key 2");
+        let _key2 = ArtifactKey::from_path(&test_file).expect("Get key 2");
 
         // Clean up
         let _ = std::fs::remove_file(&test_file);
@@ -3337,15 +3337,15 @@ mod tests {
         #[cfg(windows)]
         {
             assert_eq!(
-                key1.device_id, key2.device_id,
+                _key1.device_id, _key2.device_id,
                 "Device ID / Volume Serial Number must be invariant across writes"
             );
             assert_eq!(
-                key1.inode_or_file_id, key2.inode_or_file_id,
+                _key1.inode_or_file_id, _key2.inode_or_file_id,
                 "File Index must be invariant across writes"
             );
             assert_eq!(
-                key1, key2,
+                _key1, _key2,
                 "ArtifactKey must be invariant across file modifications"
             );
         }
