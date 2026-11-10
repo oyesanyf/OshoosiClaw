@@ -4632,7 +4632,7 @@ impl LocalMySqlTamperGuard {
         Ok(())
     }
 
-    fn set_immutable_flag(path: &str, enable: bool) -> Result<(), String> {
+    fn set_immutable_flag(path: &str, _enable: bool) -> Result<(), String> {
         if !Path::new(path).exists() {
             return Ok(());
         }
@@ -4647,7 +4647,7 @@ impl LocalMySqlTamperGuard {
             unsafe {
                 let mut flags: libc::c_long = 0;
                 if libc::ioctl(fd, FS_IOC_GETFLAGS, &mut flags) == 0 {
-                    if enable {
+                    if _enable {
                         flags |= FS_IMMUTABLE_FL;
                     } else {
                         flags &= !FS_IMMUTABLE_FL;
@@ -4660,7 +4660,7 @@ impl LocalMySqlTamperGuard {
         {
             if let Ok(meta) = std::fs::metadata(path) {
                 let mut perms = meta.permissions();
-                perms.set_readonly(enable);
+                perms.set_readonly(_enable);
                 let _ = std::fs::set_permissions(path, perms);
             }
         }

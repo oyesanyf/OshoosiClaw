@@ -13,10 +13,13 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[allow(unused_imports)]
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
 use tracing::{debug, info};
 
 /// Default maximum entries stored in the in-memory execution sensor FIFO ring buffer.

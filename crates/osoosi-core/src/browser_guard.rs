@@ -72,6 +72,7 @@ impl BrowserGuard {
     }
 
     fn detect_profiles(&self) -> Vec<BrowserProfile> {
+        #[allow(unused_mut)]
         let mut profiles = Vec::new();
 
         #[cfg(target_os = "windows")]

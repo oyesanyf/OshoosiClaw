@@ -799,7 +799,7 @@ fn is_blockable_ip(ip: &IpAddr) -> bool {
     }
 }
 
-fn schedule_dns_unblock(targets: Vec<String>, ttl_secs: u64) {
+fn schedule_dns_unblock(_targets: Vec<String>, ttl_secs: u64) {
     if ttl_secs == 0 {
         return;
     }
@@ -807,9 +807,9 @@ fn schedule_dns_unblock(targets: Vec<String>, ttl_secs: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(ttl_secs));
         #[cfg(target_os = "windows")]
-        let _ = unblock_windows_remote_ips("OpenOsoosi-DNS-Block", &targets);
+        let _ = unblock_windows_remote_ips("OpenOsoosi-DNS-Block", &_targets);
         #[cfg(target_os = "linux")]
-        let _ = unblock_linux_remote_ips(&targets);
+        let _ = unblock_linux_remote_ips(&_targets);
     });
 }
 

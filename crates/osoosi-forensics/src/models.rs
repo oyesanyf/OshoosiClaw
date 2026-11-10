@@ -71,6 +71,29 @@ pub struct NetworkSocketArtifact {
     pub status: String,
 }
 
+/// Live process artifact captured by the Rust Artemis/Aramis DFIR parser (`artemis acquire processes`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ArtemisProcessArtifact {
+    #[serde(default)]
+    pub full_path: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub ppid: u32,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub arguments: String,
+    #[serde(default)]
+    pub start_time: String,
+    #[serde(default)]
+    pub sha256: String,
+}
+
 /// Consolidated forensic investigation report enriched with telemetry corroboration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ForensicInvestigationReport {

@@ -1219,6 +1219,7 @@ fn freeze_untrusted_processes() -> Result<Vec<u32>> {
     use sysinfo::System;
     let sys = System::new_all();
 
+    #[allow(unused_mut)]
     let mut frozen = Vec::new();
     let current_pid = std::process::id();
 
@@ -1310,11 +1311,12 @@ pub fn resume_process_by_pid(pid: u32) -> bool {
     resume_frozen_processes(&[pid]) == 1
 }
 fn resume_frozen_processes(pids: &[u32]) -> usize {
+    #[allow(unused_mut)]
     let mut count = 0;
-    for &pid in pids {
+    for &_pid in pids {
         #[cfg(target_os = "windows")]
         {
-            if resume_process_win32(pid) {
+            if resume_process_win32(_pid) {
                 count += 1;
             }
         }
@@ -1322,7 +1324,7 @@ fn resume_frozen_processes(pids: &[u32]) -> usize {
         #[cfg(target_os = "linux")]
         {
             unsafe {
-                if libc::kill(pid as i32, libc::SIGCONT) == 0 {
+                if libc::kill(_pid as i32, libc::SIGCONT) == 0 {
                     count += 1;
                 }
             }

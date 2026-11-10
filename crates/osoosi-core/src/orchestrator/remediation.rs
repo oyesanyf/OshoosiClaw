@@ -1436,6 +1436,7 @@ impl EdrOrchestrator {
                 let (lock_bin, lock_args, method_name) =
                     ("usermod", vec!["-L", username.as_str()], "usermod_lock");
 
+                #[allow(unused_mut)]
                 let mut disabled = tokio::process::Command::new(lock_bin)
                     .args(&lock_args)
                     .output()

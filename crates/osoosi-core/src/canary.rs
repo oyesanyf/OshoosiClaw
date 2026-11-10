@@ -29,6 +29,7 @@ impl Default for CanaryManager {
 
 impl CanaryManager {
     pub fn new() -> Self {
+        #[allow(unused_mut)]
         let mut base_dirs = vec![std::env::temp_dir().join("osoosi-traps")];
 
         // Add common user folders if they exist

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use osoosi_types::{PatchMetadata, PatchSeverity};
 #[cfg(not(target_os = "windows"))]
 use std::process::Command;
+#[allow(unused_imports)]
 use tracing::{info, warn};
 
 pub struct PatchDiscoverer;

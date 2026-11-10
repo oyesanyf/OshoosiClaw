@@ -140,6 +140,7 @@ pub fn is_critical_telemetry_event(event: &HostSecurityEvent) -> bool {
 }
 
 pub struct NativeTelemetryEngine {
+    #[allow(dead_code)]
     tx: mpsc::Sender<HostSecurityEvent>,
     tx_critical: Option<mpsc::Sender<HostSecurityEvent>>,
 }

@@ -131,7 +131,7 @@ pub fn read_audit_pcr() -> Option<String> {
 }
 
 /// Read a specific PCR value from the hardware TPM (e.g., PCR 0 for firmware/binary, PCR 7 for Secure Boot, PCR 16 for audit).
-pub fn read_pcr(pcr_index: u32) -> Option<String> {
+pub fn read_pcr(_pcr_index: u32) -> Option<String> {
     // Skip TPM if requested
     let skip_tpm = std::env::var("OSOOSI_NO_TPM")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -144,7 +144,7 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         if let Ok(output) = std::process::Command::new("tpm2_pcrread")
-            .arg(format!("sha256:{}", pcr_index))
+            .arg(format!("sha256:{}", _pcr_index))
             .output()
         {
             if output.status.success() {
@@ -231,7 +231,7 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
 
                 let mut hasher = Sha256::new();
                 hasher.update(b"TPM2_PCR_HARDWARE_WIN:");
-                hasher.update(pcr_index.to_le_bytes());
+                hasher.update(_pcr_index.to_le_bytes());
                 hasher.update(mfg_id.to_le_bytes());
                 let fw_tag = format!("2.0 (FW {})", fw_str);
                 hasher.update(fw_tag.as_bytes());
@@ -341,12 +341,12 @@ fn compute_attestation_hash(event_type: &str, data_hash: &str) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
+fn try_tpm_extend(_hash_hex: &str) -> Option<AttestationResult> {
     #[cfg(target_os = "linux")]
     {
         // Use tpm2-tools CLI (widely available on Linux)
         let result = std::process::Command::new("tpm2_pcrextend")
-            .arg(format!("{}:sha256={}", AUDIT_PCR_INDEX, hash_hex))
+            .arg(format!("{}:sha256={}", AUDIT_PCR_INDEX, _hash_hex))
             .output();
 
         match result {
@@ -354,12 +354,12 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                 info!(
                     "TPM PCR{} extended with audit hash: {}…",
                     AUDIT_PCR_INDEX,
-                    &hash_hex[..16]
+                    &_hash_hex[..16]
                 );
                 return Some(AttestationResult {
                     hardware_backed: true,
                     pcr_index: Some(AUDIT_PCR_INDEX),
-                    attestation_hash: hash_hex.to_string(),
+                    attestation_hash: _hash_hex.to_string(),
                     timestamp: chrono::Utc::now(),
                 });
             }
@@ -405,7 +405,7 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                     PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()),
                 );
                 if let Ok(h) = handle {
-                    let msg = format!("Audit PCR extend: {}", hash_hex);
+                    let msg = format!("Audit PCR extend: {}", _hash_hex);
                     let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
                     let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
 
@@ -426,7 +426,7 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
         Some(AttestationResult {
             hardware_backed: true,
             pcr_index: Some(AUDIT_PCR_INDEX),
-            attestation_hash: hash_hex.to_string(),
+            attestation_hash: _hash_hex.to_string(),
             timestamp: chrono::Utc::now(),
         })
     }

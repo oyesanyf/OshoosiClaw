@@ -291,7 +291,7 @@ pub fn watchdog_status(state: &Arc<WatchdogState>) -> serde_json::Value {
 
 // --- Internal ---
 
-fn trigger_kill(state: &WatchdogState, reason: &str) {
+fn trigger_kill(state: &WatchdogState, _reason: &str) {
     state.triggered.store(true, Ordering::SeqCst);
 
     // Log to Windows Event Log or syslog before dying
@@ -306,7 +306,7 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
                 PCWSTR::from_raw(windows::core::w!("OsoosiWatchdog").as_ptr()),
             );
             if let Ok(h) = handle {
-                let msg = format!("Watchdog kill-switch triggered: {}", reason);
+                let msg = format!("Watchdog kill-switch triggered: {}", _reason);
                 let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
                 let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
 
@@ -331,7 +331,7 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
             .args([
                 "-p",
                 "daemon.crit",
-                &format!("osoosi-watchdog: kill-switch triggered: {}", reason),
+                &format!("osoosi-watchdog: kill-switch triggered: {}", _reason),
             ])
             .status();
     }
