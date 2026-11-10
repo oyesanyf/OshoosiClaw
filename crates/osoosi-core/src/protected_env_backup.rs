@@ -5125,15 +5125,15 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap();
 
         // 1. Direct DPAPI protect/unprotect roundtrip verification
-        let sample_key = [0x42u8; 32];
+        let _sample_key = [0x42u8; 32];
         #[cfg(windows)]
         {
-            let protected = dpapi_protect_bytes(&sample_key)
+            let protected = dpapi_protect_bytes(&_sample_key)
                 .expect("dpapi_protect_bytes must succeed on Windows");
             assert!(!protected.is_empty(), "Protected bytes must not be empty");
             assert_ne!(
                 protected,
-                sample_key.to_vec(),
+                _sample_key.to_vec(),
                 "Protected bytes must be ciphertext, not plaintext"
             );
 
@@ -5141,7 +5141,7 @@ mod tests {
                 .expect("dpapi_unprotect_bytes must succeed on Windows");
             assert_eq!(
                 unprotected,
-                sample_key.to_vec(),
+                _sample_key.to_vec(),
                 "Unprotected bytes must match original sample key bit-for-bit"
             );
 
@@ -5188,16 +5188,16 @@ mod tests {
         }
 
         // 4. Verify read_vault_payload recovers payload and dpapi_wrapped_key
-        let (payload, _) = ProtectedEnvBackupVault::read_vault_payload(&vault_file)
+        let (_payload, _) = ProtectedEnvBackupVault::read_vault_payload(&vault_file)
             .expect("read_vault_payload must succeed");
 
         #[cfg(windows)]
         {
             assert!(
-                payload.dpapi_wrapped_key.is_some(),
+                _payload.dpapi_wrapped_key.is_some(),
                 "VaultPayload must have dpapi_wrapped_key populated on Windows"
             );
-            let wrapped_in_payload = payload.dpapi_wrapped_key.as_ref().unwrap();
+            let wrapped_in_payload = _payload.dpapi_wrapped_key.as_ref().unwrap();
             let unwrapped_from_payload = dpapi_unprotect_bytes(wrapped_in_payload)
                 .expect("unwrap key from payload.dpapi_wrapped_key");
             assert_eq!(unwrapped_from_payload.len(), 32);
