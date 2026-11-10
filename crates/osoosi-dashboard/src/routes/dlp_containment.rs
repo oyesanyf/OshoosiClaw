@@ -432,10 +432,11 @@ impl DlpContainmentEngine {
 
         let debounce_key = match (&decision, pid, image_path.as_deref()) {
             (ContainmentDecision::ProcessContained, Some(p), _) => format!("pid:{}", p),
-            (ContainmentDecision::DestinationBlocked, _, Some(img)) => {
+            (ContainmentDecision::DestinationBlocked, _, img_opt) => {
+                let actor_key = img_opt.unwrap_or(&actor_name);
                 format!(
                     "dest:{}|{}",
-                    img.to_ascii_lowercase(),
+                    actor_key.to_ascii_lowercase(),
                     ctx.destination_host.to_ascii_lowercase()
                 )
             }
@@ -1314,7 +1315,12 @@ impl ContainmentPlatform for SystemContainmentPlatform {
             .to_socket_addrs()
             .map(|it| it.map(|sa| sa.ip()).filter(is_public_ip).collect())
             .unwrap_or_default();
-        if ips.is_empty() && (cfg!(test) || host.contains("dlptest.com")) {
+        if ips.is_empty()
+            && (cfg!(test)
+                || host.contains("dlptest")
+                || host.ends_with(".internal.test")
+                || host.ends_with(".test"))
+        {
             ips.push("93.184.216.34".parse().unwrap());
         }
         ips.sort();
