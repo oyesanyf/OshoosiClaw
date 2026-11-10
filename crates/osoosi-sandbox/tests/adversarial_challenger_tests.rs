@@ -5,12 +5,15 @@
 //! 3. Fail-closed behavior on tampered or uninitialized AppContainer & Job Object configurations.
 //! 4. Role/tool gating and control character injection defenses.
 
+#[cfg(windows)]
 use osoosi_sandbox::tiered_executor::{
     create_or_open_appcontainer_profile, verify_process_appcontainer_token,
 };
+#[cfg(windows)]
+use osoosi_sandbox::WindowsJobObject;
 use osoosi_sandbox::{
     detect_renamed_interpreter_marker, ExecutableIdentityVerifier, TieredExecutionDispatcher,
-    TieredToolRequest, WindowsJobObject, FORBIDDEN_TIER2_EXECUTABLE_STEMS,
+    TieredToolRequest, FORBIDDEN_TIER2_EXECUTABLE_STEMS,
 };
 use osoosi_types::{ArmRole, OctopusSecurityError};
 use sha2::Digest;

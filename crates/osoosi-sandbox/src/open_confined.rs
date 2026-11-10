@@ -490,7 +490,7 @@ mod unix_confined {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::io::{FromRawFd, RawFd};
-    use std::path::{Component, Path};
+    use std::path::{Component, Path, PathBuf};
 
     #[cfg(target_os = "linux")]
     #[repr(C)]
