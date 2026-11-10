@@ -10,6 +10,7 @@
 use osoosi_sandbox::native_host::{
     build_ssrf_safe_http_client, build_ssrf_safe_http_client_sync, is_ssrf_ip,
 };
+#[allow(unused_imports)]
 use osoosi_sandbox::open_confined::{
     create_confined_dir_all, open_confined, read_confined, write_confined,
 };

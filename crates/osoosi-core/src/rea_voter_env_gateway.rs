@@ -649,7 +649,7 @@ pub fn resolve_process_instance_key(pid: u32) -> Result<ProcessInstanceKey, &'st
         Ok(ProcessInstanceKey::new(pid, start_time_ticks))
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid))
             .map_err(|_| "Cannot read /proc/pid/stat")?;
@@ -663,7 +663,26 @@ pub fn resolve_process_instance_key(pid: u32) -> Result<ProcessInstanceKey, &'st
         Ok(ProcessInstanceKey::new(pid, start_time_ticks))
     }
 
-    #[cfg(not(any(windows, unix)))]
+    #[cfg(target_os = "macos")]
+    {
+        if pid == std::process::id() {
+            Ok(ProcessInstanceKey::new(pid, 1))
+        } else {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_process(sysinfo::Pid::from(pid as usize));
+            if let Some(proc) = sys.process(sysinfo::Pid::from(pid as usize)) {
+                let start_time = proc.start_time();
+                Ok(ProcessInstanceKey::new(
+                    pid,
+                    if start_time > 0 { start_time } else { 1 },
+                ))
+            } else {
+                Err("Cannot resolve process start_time")
+            }
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Ok(ProcessInstanceKey::new(pid, 1))
     }
@@ -703,12 +722,28 @@ pub fn resolve_pid_exe(pid: u32) -> Result<PathBuf, &'static str> {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         std::fs::read_link(format!("/proc/{}/exe", pid)).map_err(|_| "Cannot read /proc/pid/exe")
     }
 
-    #[cfg(not(any(windows, unix)))]
+    #[cfg(target_os = "macos")]
+    {
+        if pid == std::process::id() {
+            std::env::current_exe().map_err(|_| "Cannot resolve current_exe")
+        } else {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_process(sysinfo::Pid::from(pid as usize));
+            if let Some(proc) = sys.process(sysinfo::Pid::from(pid as usize)) {
+                if let Some(exe) = proc.exe() {
+                    return Ok(exe.to_path_buf());
+                }
+            }
+            std::env::current_exe().map_err(|_| "Cannot resolve current_exe")
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = pid;
         std::env::current_exe().map_err(|_| "Cannot resolve current_exe")
@@ -747,38 +782,21 @@ pub fn verify_clean_process_env(pid: u32) -> Result<(), &'static str> {
         "RUSTC_WRAPPER",
     ];
 
-    #[cfg(windows)]
-    {
-        if pid == std::process::id() {
-            for (key, val) in std::env::vars() {
-                let upper = key.to_ascii_uppercase();
-                for forbidden in FORBIDDEN_KEYS {
-                    if upper == *forbidden && !val.trim().is_empty() {
-                        return Err("Blocked: Caller environment contains interpreter/loader hijack variable");
-                    }
-                }
-            }
-            return Ok(());
-        }
-
-        // For foreign processes on Windows, query via sysinfo without PEB scraping
-        let mut sys = sysinfo::System::new();
-        sys.refresh_process(sysinfo::Pid::from(pid as usize));
-        if let Some(proc) = sys.process(sysinfo::Pid::from(pid as usize)) {
-            for env_entry in proc.environ() {
-                let upper = env_entry.to_ascii_uppercase();
-                for forbidden in FORBIDDEN_KEYS {
-                    let prefix = format!("{}=", forbidden);
-                    if upper.starts_with(&prefix) {
-                        return Err("Blocked: Caller environment contains interpreter/loader hijack variable");
-                    }
+    if pid == std::process::id() {
+        for (key, val) in std::env::vars() {
+            let upper = key.to_ascii_uppercase();
+            for forbidden in FORBIDDEN_KEYS {
+                if upper == *forbidden && !val.trim().is_empty() {
+                    return Err(
+                        "Blocked: Caller environment contains interpreter/loader hijack variable",
+                    );
                 }
             }
         }
-        Ok(())
+        return Ok(());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         let raw_env = std::fs::read(format!("/proc/{}/environ", pid))
             .map_err(|_| "Cannot read /proc/pid/environ")?;
@@ -796,9 +814,21 @@ pub fn verify_clean_process_env(pid: u32) -> Result<(), &'static str> {
         Ok(())
     }
 
-    #[cfg(not(any(windows, unix)))]
+    #[cfg(not(target_os = "linux"))]
     {
-        let _ = pid;
+        let mut sys = sysinfo::System::new();
+        sys.refresh_process(sysinfo::Pid::from(pid as usize));
+        if let Some(proc) = sys.process(sysinfo::Pid::from(pid as usize)) {
+            for env_entry in proc.environ() {
+                let upper = env_entry.to_ascii_uppercase();
+                for forbidden in FORBIDDEN_KEYS {
+                    let prefix = format!("{}=", forbidden);
+                    if upper.starts_with(&prefix) {
+                        return Err("Blocked: Caller environment contains interpreter/loader hijack variable");
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

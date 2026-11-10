@@ -2149,22 +2149,44 @@ unsafe impl Sync for ZeroCopyImmutableToolBuffer {}
 impl ZeroCopyImmutableToolBuffer {
     pub const PAGE_SIZE: usize = 4096;
 
-    /// Allocates a 4096-byte page-aligned buffer, copies `payload`, computes its BLAKE3 commitment,
+    /// Resolves the runtime OS page size dynamically (e.g. 16384 on Apple Silicon macOS, 4096 on Windows/x86_64).
+    pub fn page_size() -> usize {
+        #[cfg(target_os = "windows")]
+        {
+            4096
+        }
+        #[cfg(unix)]
+        {
+            let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+            if ps > 0 {
+                ps as usize
+            } else {
+                4096
+            }
+        }
+        #[cfg(not(any(target_os = "windows", unix)))]
+        {
+            4096
+        }
+    }
+
+    /// Allocates a page-aligned buffer, copies `payload`, computes its BLAKE3 commitment,
     /// and hardware-locks the pages `READONLY` so no concurrent thread can mutate bytes after verification.
     pub fn new_page_locked(payload: &[u8]) -> Result<Self, String> {
+        let page_size = Self::page_size();
         let len = payload.len();
         let aligned_capacity = if len == 0 {
-            Self::PAGE_SIZE
+            page_size
         } else {
-            ((len + Self::PAGE_SIZE - 1) / Self::PAGE_SIZE) * Self::PAGE_SIZE
+            ((len + page_size - 1) / page_size) * page_size
         };
 
-        let layout = std::alloc::Layout::from_size_align(aligned_capacity, Self::PAGE_SIZE)
+        let layout = std::alloc::Layout::from_size_align(aligned_capacity, page_size)
             .map_err(|e| format!("Invalid page-aligned layout: {}", e))?;
 
         let raw_ptr = unsafe { std::alloc::alloc_zeroed(layout) };
         let ptr = std::ptr::NonNull::new(raw_ptr)
-            .ok_or_else(|| "Failed to allocate 4096-byte aligned tool buffer".to_string())?;
+            .ok_or_else(|| "Failed to allocate page-aligned tool buffer".to_string())?;
 
         unsafe {
             if len > 0 {
@@ -2252,7 +2274,7 @@ impl Drop for ZeroCopyImmutableToolBuffer {
             let full_slice = std::slice::from_raw_parts_mut(raw, self.aligned_capacity);
             silicon_shield::SiliconIntegrityGuard::constant_time_scrub(full_slice);
             if let Ok(layout) =
-                std::alloc::Layout::from_size_align(self.aligned_capacity, Self::PAGE_SIZE)
+                std::alloc::Layout::from_size_align(self.aligned_capacity, Self::page_size())
             {
                 std::alloc::dealloc(raw, layout);
             }
