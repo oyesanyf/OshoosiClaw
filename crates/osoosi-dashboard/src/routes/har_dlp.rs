@@ -460,14 +460,16 @@ pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
         }
     }
 
-    // Fallback: scan for null-terminated ASCII paths starting with `[A-Za-z]:\`
+    // Fallback: scan for null-terminated ASCII paths starting with `[A-Za-z]:\` or POSIX `/`
     if resolved_out.is_none() {
         let mut i = 0usize;
         while i + 4 < buf.len() {
-            if buf[i].is_ascii_alphabetic()
+            let is_win_drive = buf[i].is_ascii_alphabetic()
                 && buf[i + 1] == b':'
-                && (buf[i + 2] == b'\\' || buf[i + 2] == b'/')
-            {
+                && (buf[i + 2] == b'\\' || buf[i + 2] == b'/');
+            let is_posix_abs = i >= 4 && buf[i] == b'/' && buf[i + 1].is_ascii_alphanumeric();
+
+            if is_win_drive || is_posix_abs {
                 if let Some(cand_str) = read_cstr(i) {
                     if cand_str.len() >= 4 && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b)) {
                         let p = PathBuf::from(&cand_str);

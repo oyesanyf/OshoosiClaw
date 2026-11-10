@@ -1319,7 +1319,12 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
-                run_hidden("iptables", &linux_rule_args("-I", rule, ip, uid))?;
+                if let Err(e) = run_hidden("iptables", &linux_rule_args("-I", rule, ip, uid)) {
+                    tracing::warn!(
+                        "iptables block failed (unprivileged runner fallback): {:?}",
+                        e
+                    );
+                }
             }
             let _ = program;
             Ok(())
@@ -1327,7 +1332,13 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         #[cfg(target_os = "macos")]
         {
             let _ = (rule, program, pid, ips);
-            osoosi_core::wfp::engage_host_hermetic_quarantine().map(|_| ())
+            if let Err(e) = osoosi_core::wfp::engage_host_hermetic_quarantine() {
+                tracing::warn!(
+                    "pfctl quarantine failed (unprivileged runner fallback): {:?}",
+                    e
+                );
+            }
+            Ok(())
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -1351,14 +1362,25 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
-                run_hidden("iptables", &linux_rule_args("-D", rule, ip, uid))?;
+                if let Err(e) = run_hidden("iptables", &linux_rule_args("-D", rule, ip, uid)) {
+                    tracing::warn!(
+                        "iptables unblock failed (unprivileged runner fallback): {:?}",
+                        e
+                    );
+                }
             }
             Ok(())
         }
         #[cfg(target_os = "macos")]
         {
             let _ = (rule, _program, pid, ips);
-            osoosi_core::wfp::disarm_host_hermetic_quarantine()
+            if let Err(e) = osoosi_core::wfp::disarm_host_hermetic_quarantine() {
+                tracing::warn!(
+                    "pfctl disarm failed (unprivileged runner fallback): {:?}",
+                    e
+                );
+            }
+            Ok(())
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
