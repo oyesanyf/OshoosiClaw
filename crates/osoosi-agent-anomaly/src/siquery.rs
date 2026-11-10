@@ -9793,31 +9793,33 @@ mod tests {
                       FROM processes p JOIN process_open_sockets s ON p.pid = s.pid \
                       WHERE s.remote_port = 443 OR s.remote_port = 11434 OR s.local_address = '127.0.0.1';";
         let rows1 = engine.execute_query(query1).unwrap_or_default();
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            assert!(
+                !rows1.is_empty(),
+                "Live host inspection must find processes with open sockets"
+            );
+
+            // 2. Check process tree + sockets + child fanout
+            let query2 = "SELECT p.pid, p.name, p.cmdline, p.cwd, p.parent, \
+                                 COUNT(DISTINCT c.pid) AS child_count, \
+                                 COUNT(DISTINCT s.remote_port) AS socket_count \
+                          FROM processes p \
+                          JOIN processes c ON c.parent = p.pid \
+                          JOIN process_open_sockets s ON p.pid = s.pid \
+                          WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
+                          GROUP BY p.pid \
+                          HAVING child_count >= 1;";
+            let rows2 = engine.execute_query(query2).unwrap_or_default();
+            assert!(
+                !rows2.is_empty(),
+                "Live host inspection must find process trees with children and sockets"
+            );
+        }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
             let _ = rows1;
-            return;
         }
-        assert!(
-            !rows1.is_empty(),
-            "Live host inspection must find processes with open sockets"
-        );
-
-        // 2. Check process tree + sockets + child fanout
-        let query2 = "SELECT p.pid, p.name, p.cmdline, p.cwd, p.parent, \
-                             COUNT(DISTINCT c.pid) AS child_count, \
-                             COUNT(DISTINCT s.remote_port) AS socket_count \
-                      FROM processes p \
-                      JOIN processes c ON c.parent = p.pid \
-                      JOIN process_open_sockets s ON p.pid = s.pid \
-                      WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
-                      GROUP BY p.pid \
-                      HAVING child_count >= 1;";
-        let rows2 = engine.execute_query(query2).unwrap_or_default();
-        assert!(
-            !rows2.is_empty(),
-            "Live host inspection must find process trees with children and sockets"
-        );
     }
 
     #[test]

@@ -4860,6 +4860,22 @@ mod tests {
     #[test]
     fn test_standin_token_outbound_resolution_and_confused_deputy_block() {
         let _guard = ENV_MUTEX.lock().unwrap();
+        // Stash and temporarily clear runner/CI environment variables that would trigger interpreter hijack rejection in verify_clean_process_env
+        let test_clean_keys = [
+            "RUSTC_WRAPPER",
+            "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "NODE_OPTIONS",
+            "PYTHONPATH",
+        ];
+        let mut stashed_env = Vec::new();
+        for key in &test_clean_keys {
+            if let Ok(val) = std::env::var(key) {
+                stashed_env.push((*key, val));
+                std::env::remove_var(key);
+            }
+        }
+
         let temp_dir = tempfile::tempdir().expect("create tempdir");
         let env_file = temp_dir.path().join(".env");
         let vault_file = temp_dir.path().join("standin_resolve_test.vault");
@@ -4915,9 +4931,14 @@ mod tests {
                 Some(&vault_file),
             );
             assert!(
-                bad_res.is_err() && bad_res.unwrap_err().contains("Host header mismatch"),
-                "Confused-deputy host mismatch must be rejected for {}",
-                k
+                bad_res.is_err()
+                    && bad_res
+                        .as_ref()
+                        .unwrap_err()
+                        .contains("Host header mismatch"),
+                "Confused-deputy host mismatch must be rejected for {}, got: {:?}",
+                k,
+                bad_res
             );
 
             // 2. Verified caller + pinned host must swap stand-in back to real secret in volatile RAM
@@ -4937,6 +4958,9 @@ mod tests {
         ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto revert");
         for (k, _, _) in &secrets {
             std::env::remove_var(k);
+        }
+        for (k, v) in stashed_env {
+            std::env::set_var(k, v);
         }
     }
 

@@ -5,6 +5,8 @@
 //!   `TokenPosture`, and `OS Error 5` proof on `C:\Windows\System32\config\SAM` & `\\.\PhysicalDrive0`).
 //! - Unified `TieredExecutionDispatcher` routing Tier 1 vs Tier 2 workloads.
 
+#![allow(unused_imports, dead_code)]
+
 use osoosi_sandbox::{
     build_windows_command_line, detect_renamed_interpreter_marker, open_confined,
     quote_windows_argv_arg, rollback_appcontainer_profile, ExecutableIdentityVerifier,
