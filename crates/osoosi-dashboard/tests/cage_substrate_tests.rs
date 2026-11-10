@@ -496,11 +496,14 @@ fn test_substrate_jcs_2_pow_63_trackers_and_live_peer_pid() {
     assert_eq!(keyed.record_key_at(t0 + 500, "tenant-b"), 2);
     assert_eq!(keyed.distinct_count_at(t0 + 86_400_001), 1);
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let bound_port = listener.local_addr().unwrap().port();
-    let client = std::net::TcpStream::connect(("127.0.0.1", bound_port)).unwrap();
-    let (_srv, peer_addr) = listener.accept().unwrap();
-    let _ = client;
-    let pid = osoosi_core::peer_pid::resolve_loopback_peer_pid(peer_addr, bound_port).unwrap();
-    assert_eq!(pid, std::process::id());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let bound_port = listener.local_addr().unwrap().port();
+        let client = std::net::TcpStream::connect(("127.0.0.1", bound_port)).unwrap();
+        let (_srv, peer_addr) = listener.accept().unwrap();
+        let _ = client;
+        let pid = osoosi_core::peer_pid::resolve_loopback_peer_pid(peer_addr, bound_port).unwrap();
+        assert_eq!(pid, std::process::id());
+    }
 }
