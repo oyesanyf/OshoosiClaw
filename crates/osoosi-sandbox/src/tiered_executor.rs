@@ -1208,7 +1208,16 @@ pub fn spawn_tier2_appcontainer_command(
     use std::os::unix::process::CommandExt;
     let _ = (agent_id, scratchpad_root, job);
     let mut cmd = std::process::Command::new(&verified_exe.metadata.canonical_path);
-    cmd.args(args);
+    if verified_exe.metadata.normalized_stem == "cmd"
+        && args
+            .first()
+            .map(|s| s.eq_ignore_ascii_case("/c"))
+            .unwrap_or(false)
+    {
+        cmd.arg("-c").arg(args[1..].join(" "));
+    } else {
+        cmd.args(args);
+    }
 
     // Pre-exec isolation: PR_SET_NO_NEW_PRIVS and optional cgroup.procs binding
     unsafe {

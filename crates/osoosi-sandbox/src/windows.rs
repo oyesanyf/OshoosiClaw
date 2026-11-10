@@ -900,10 +900,28 @@ pub fn execute_confined_windows_process(
     policy: &WindowsConfinementPolicy,
 ) -> Result<ConfinementTransitionOutcome, String> {
     verify_windows_confinement_invariants(policy)?;
-    let output = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = if program.eq_ignore_ascii_case("cmd.exe") || program.eq_ignore_ascii_case("cmd") {
+        let remaining_args: Vec<&str> = if let Some(first) = args.first() {
+            if first.eq_ignore_ascii_case("/c") {
+                args[1..].to_vec()
+            } else {
+                args.to_vec()
+            }
+        } else {
+            Vec::new()
+        };
+        let joined = remaining_args.join(" ");
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(joined)
+            .output()
+            .map_err(|e| e.to_string())?
+    } else {
+        std::process::Command::new(program)
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())?
+    };
 
     Ok(ConfinementTransitionOutcome {
         resume_thread_allowed: true,
