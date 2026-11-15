@@ -34,6 +34,7 @@ members = [
     "crates/osoosi-hexpatch",
     "crates/osoosi-owasp-hunting",
     "crates/osoosi-vcdb",
+    "crates/killswitch-kernel-patcher",
 ]
 
 [workspace.package]
@@ -45,6 +46,7 @@ rust-version = "1.75"
 [workspace.dependencies]
 osoosi-owasp-hunting = { path = "crates/osoosi-owasp-hunting" }
 osoosi-vcdb = { path = "crates/osoosi-vcdb" }
+killswitch-kernel-patcher = { path = "crates/killswitch-kernel-patcher" }
 edr-phaselock = { path = "crates/edr-phaselock" }
 agent-thermostat = { path = "crates/agent-thermostat" }
 silicon-shield = { path = "crates/silicon-shield" }

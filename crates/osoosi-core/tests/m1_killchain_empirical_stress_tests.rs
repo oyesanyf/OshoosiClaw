@@ -147,6 +147,25 @@ impl Drop for EmpiricalStressTestGuard {
     }
 }
 
+struct SelfDiagnosticScopeGuard(bool);
+
+impl SelfDiagnosticScopeGuard {
+    fn enable(active: bool) -> Self {
+        if active {
+            osoosi_core::wfp::set_in_process_self_diagnostic(true);
+        }
+        Self(active)
+    }
+}
+
+impl Drop for SelfDiagnosticScopeGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            osoosi_core::wfp::set_in_process_self_diagnostic(false);
+        }
+    }
+}
+
 // =========================================================================
 // TEST 1: HIGH-CONCURRENCY KILLCHAIN ESCALATIONS (STAGES 1-5) STRESS HARNESS
 // =========================================================================
@@ -154,6 +173,7 @@ impl Drop for EmpiricalStressTestGuard {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn test_high_concurrency_killchain_stages_1_to_5_stress() {
     let _guard = EmpiricalStressTestGuard::new();
+    let _diag_guard = SelfDiagnosticScopeGuard::enable(true);
 
     let concurrency = 20;
     let iterations = 10;
@@ -564,6 +584,8 @@ async fn test_loopback_and_webui_3030_tcp_survivability_during_quarantine() {
 #[tokio::test]
 async fn test_netsh_quarantine_rules_cleanly_reverted_upon_disarm() {
     let _guard = EmpiricalStressTestGuard::new();
+    let _diag_guard =
+        SelfDiagnosticScopeGuard::enable(std::env::var("OSOOSI_LIVE_FIREWALL_TEST").is_err());
 
     #[cfg(target_os = "windows")]
     {
