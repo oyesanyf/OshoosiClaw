@@ -54,11 +54,7 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
 
     // Verified cryptographic signature or Windows Security Catalog check
     let p = std::path::Path::new(&normalized);
-    if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
-        return true;
-    }
-
-    false
+    p.is_file() && crate::win_trust::is_trusted_signed_binary(p)
 }
 
 pub fn is_non_killable_persistent_os_or_user_daemon(proc_name_or_path: &str) -> bool {

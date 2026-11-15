@@ -150,9 +150,25 @@ jobs:
 
           # Pre-build dashboard test binary before background execution
           cargo test --no-run -p osoosi-dashboard --test port3030_daemon
+          if ($LASTEXITCODE -ne 0) { throw "Failed to pre-build port3030_daemon test binary" }
 
-          # Locate the pre-compiled test binary for instant launch
-          $daemonBin = (Get-ChildItem -Path "target\debug\deps\port3030_daemon-*.exe" | Where-Object { $_.Name -notmatch '\.d$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          # Locate the pre-compiled test binary (supports Cargo 1.100+ target/debug/build/<pkg>/<hash>/out and legacy deps/)
+          $daemonBin = cargo test --no-run -p osoosi-dashboard --test port3030_daemon --message-format=json |
+            ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'port3030_daemon' -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $daemonBin -or -not (Test-Path $daemonBin)) {
+            $daemonBin = (Get-ChildItem -Path @(
+              "target\debug\build\osoosi-dashboard\*\out\port3030_daemon-*.exe",
+              "target\debug\deps\port3030_daemon-*.exe"
+            ) -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch '\.d$' -and $_.Extension -eq '.exe' } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1).FullName
+          }
+          if (-not $daemonBin -or -not (Test-Path $daemonBin)) {
+            throw "Failed to locate pre-built port3030_daemon executable"
+          }
           Write-Host "Found pre-built daemon binary: $daemonBin"
 
           # Clean any lingering process on port 3030

@@ -26,6 +26,8 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use sysinfo::Networks;
 use tracing::{debug, info, warn};
 
@@ -443,6 +445,44 @@ pub fn get_default_host_binding_manifest_path() -> PathBuf {
         .join("host_binding_manifest.json")
 }
 
+static MACHINE_BINDING_LOCK: Mutex<()> = Mutex::new(());
+static ATOMIC_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generates a unique temporary path inside `target`'s parent directory for atomic writes.
+fn unique_atomic_tmp_path(target: &Path) -> PathBuf {
+    let pid = std::process::id();
+    let seq = ATOMIC_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("manifest");
+    let tmp_name = format!("{file_name}.{pid}.{seq}.tmp");
+    match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(tmp_name),
+        _ => PathBuf::from(tmp_name),
+    }
+}
+
+/// Atomically writes `bytes` to `target` via a unique sibling temp file, cleaning up on error.
+fn write_atomic_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp_path = unique_atomic_tmp_path(target);
+    let write_res = (|| -> std::io::Result<()> {
+        let mut f = File::create(&tmp_path)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(err) = write_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    if let Err(err) = std::fs::rename(&tmp_path, target) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Atomically persists the manifest (and optional DPAPI companion on Windows).
 fn persist_manifest_atomic(
     manifest_path: &Path,
@@ -456,24 +496,13 @@ fn persist_manifest_atomic(
     let json_bytes = serde_json::to_vec_pretty(manifest)
         .map_err(|e| MachineBindingError::Crypto(e.to_string()))?;
 
-    let tmp_path = manifest_path.with_extension("tmp");
-    {
-        let mut f = File::create(&tmp_path)?;
-        f.write_all(&json_bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp_path, manifest_path)?;
+    write_atomic_file(manifest_path, &json_bytes)?;
 
     // On Windows, also write the companion DPAPI wrapped key file
     if let Some(secret) = raw_host_root_secret {
         if let Ok(dpapi_wrapped) = crate::protected_env_backup::dpapi_protect_bytes(secret) {
             let dpapi_path = companion_dpapi_path(manifest_path);
-            let dpapi_tmp = dpapi_path.with_extension("tmp");
-            if let Ok(mut df) = File::create(&dpapi_tmp) {
-                if df.write_all(&dpapi_wrapped).is_ok() && df.sync_all().is_ok() {
-                    let _ = std::fs::rename(&dpapi_tmp, &dpapi_path);
-                }
-            }
+            let _ = write_atomic_file(&dpapi_path, &dpapi_wrapped);
         }
     }
 
@@ -483,6 +512,15 @@ fn persist_manifest_atomic(
 /// Evaluates and verifies the live host against a persistent HostBindingManifest,
 /// automatically adapting for legitimate MAC rotations if non-MAC quorum holds.
 pub fn verify_and_adapt_machine_binding(
+    manifest_path: &Path,
+) -> Result<MachineBindingStatus, MachineBindingError> {
+    let _binding_guard = MACHINE_BINDING_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    verify_and_adapt_machine_binding_locked(manifest_path)
+}
+
+fn verify_and_adapt_machine_binding_locked(
     manifest_path: &Path,
 ) -> Result<MachineBindingStatus, MachineBindingError> {
     let inventory = discover_network_mac_inventory();
@@ -802,8 +840,11 @@ fn unwrap_host_root_secret_resilient(
 /// Ensures `ProtectedEnvBackupVault` remains 100% decryptable across MAC address
 /// rotations on the same computer while failing closed immediately on foreign machines.
 pub fn derive_bound_host_vault_key() -> Result<[u8; 32], MachineBindingError> {
+    let _binding_guard = MACHINE_BINDING_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let manifest_path = get_default_host_binding_manifest_path();
-    let _ = verify_and_adapt_machine_binding(&manifest_path)?;
+    let _ = verify_and_adapt_machine_binding_locked(&manifest_path)?;
 
     let live_os = detect_os_machine_id();
     let live_os_hash = hash_os_machine_id(&live_os);
@@ -965,5 +1006,60 @@ mod tests {
             }
             other => panic!("Expected ForeignHostDetected, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_unique_atomic_tmp_path_and_cleanup_on_error() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("host_binding_manifest.json");
+        let tmp_a = unique_atomic_tmp_path(&target);
+        let tmp_b = unique_atomic_tmp_path(&target);
+        assert_ne!(tmp_a, tmp_b);
+        assert_eq!(tmp_a.parent(), Some(dir.path()));
+        assert_eq!(tmp_b.parent(), Some(dir.path()));
+
+        // Force std::fs::rename failure by making target an existing directory.
+        let blocking_dir = dir.path().join("blocking_target");
+        std::fs::create_dir(&blocking_dir).unwrap();
+        let res = write_atomic_file(&blocking_dir, b"payload");
+        assert!(res.is_err(), "rename onto existing directory must fail");
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "failed atomic write must clean up temp files: {:?}",
+            leftovers
+        );
+    }
+
+    #[test]
+    fn test_concurrent_verify_and_adapt_machine_binding_same_manifest() {
+        let dir = tempdir().unwrap();
+        let manifest_path = dir.path().join("shared_host_binding.json");
+
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| verify_and_adapt_machine_binding(&manifest_path)))
+                .collect();
+            for handle in handles {
+                let status = handle.join().unwrap().unwrap();
+                assert!(status.bound);
+            }
+        });
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "concurrent verify_and_adapt must leave zero temp files: {:?}",
+            leftovers
+        );
     }
 }

@@ -277,11 +277,7 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         .to_string_lossy()
         .replace('/', "\\")
         .to_ascii_lowercase();
-    if !sys_temp.is_empty() && norm.starts_with(&sys_temp) {
-        return true;
-    }
-
-    false
+    !sys_temp.is_empty() && norm.starts_with(&sys_temp)
 }
 
 /// Returns `true` only if `path_str` points to an existing file that is cryptographically trusted

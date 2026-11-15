@@ -307,10 +307,7 @@ impl AgenticToolValidator {
         }
         let b64 = BASE64_STANDARD.encode(canary.as_bytes());
         let b64_trimmed = b64.trim_end_matches('=');
-        if s.contains(&b64) || (!b64_trimmed.is_empty() && s.contains(b64_trimmed)) {
-            return true;
-        }
-        false
+        s.contains(&b64) || (!b64_trimmed.is_empty() && s.contains(b64_trimmed))
     }
 
     /// Inspect a tool call (name and arguments) deterministically.

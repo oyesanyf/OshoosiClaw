@@ -1430,15 +1430,9 @@ pub fn is_valid_technical_indicator(pat: &str) -> bool {
         return false;
     }
     // Reject conversational English phrases (2+ spaces without technical punctuation)
+    const TECH_PUNCT: &[char] = &['/', '-', '=', ':', '.', '+', '_', '<', '>'];
     let space_count = trimmed.chars().filter(|&c| c == ' ').count();
-    if space_count >= 2
-        && !trimmed
-            .chars()
-            .any(|c| matches!(c, '/' | '-' | '=' | ':' | '.' | '+' | '_' | '<' | '>'))
-    {
-        return false;
-    }
-    true
+    space_count < 2 || trimmed.chars().any(|c| TECH_PUNCT.contains(&c))
 }
 
 /// Deterministically synthesizes a tighten-only, defanged read-only Rust enforcement guard.
