@@ -1156,7 +1156,25 @@ fn main() -> anyhow::Result<()> {
         normalized_args[1] = "pentest".to_string();
     }
 
-    let cli = Cli::parse_from(normalized_args);
+    // Parse CLI on a 16 MB stack thread so large subcommand enums cannot overflow
+    // Windows's 1 MB default main-thread stack in unoptimized debug/test builds.
+    let parse_handle = std::thread::Builder::new()
+        .name("osoosi-cli-parse".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || -> Result<Box<Cli>, i32> {
+            match Cli::try_parse_from(normalized_args) {
+                Ok(parsed) => Ok(Box::new(parsed)),
+                Err(err) => {
+                    let _ = err.print();
+                    Err(err.exit_code())
+                }
+            }
+        })?;
+    let cli = match parse_handle.join() {
+        Ok(Ok(parsed)) => parsed,
+        Ok(Err(code)) => std::process::exit(code),
+        Err(_) => return Err(anyhow::anyhow!("CLI parse thread panicked")),
+    };
     if let Some(_uuid_str) = cli.canary_probe.as_ref() {
         return Ok(());
     }
@@ -1226,6 +1244,8 @@ fn main() -> anyhow::Result<()> {
 
     let worker_threads = osoosi_core::tokio_worker_threads();
 
+    let debug_mode = cli.debug;
+
     // Create the runtime, but don't run it on the main thread (which has a small stack).
     // Instead, spawn a dedicated thread with a large stack size (16MB).
     let handle = std::thread::Builder::new()
@@ -1247,8 +1267,8 @@ fn main() -> anyhow::Result<()> {
 
             rt.block_on(async {
                 set_panic_hook();
-                let _guard = init_logging(cli.debug)?;
-                async_main(cli).await
+                let _guard = init_logging(debug_mode)?;
+                async_main(*cli).await
             })
         })?;
 

@@ -2606,15 +2606,11 @@ impl PresidioGlinerPiiZeroGuard {
         let pinned_vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(
             &Self::LAW10_PQC_SIGNING_SEED,
         );
-        if !osoosi_audit::pqc_primitives::hybrid_verify_bytes(
+        osoosi_audit::pqc_primitives::hybrid_verify_bytes(
             expected_commit.as_bytes(),
             &sig_bytes,
             &pinned_vk,
-        ) {
-            return false;
-        }
-
-        true
+        )
     }
 }
 

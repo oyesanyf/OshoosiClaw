@@ -3163,7 +3163,11 @@ pub fn engage_host_hermetic_quarantine() -> Result<Vec<String>> {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                anyhow!("Failed to invoke /sbin/pfctl for anchor '{}': {}", anchor, e)
+                anyhow!(
+                    "Failed to invoke /sbin/pfctl for anchor '{}': {}",
+                    anchor,
+                    e
+                )
             })?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
@@ -3950,9 +3954,9 @@ mod tests {
         assert!(syntax.contains("block drop quick proto tcp from any to any port 1080"));
         assert!(syntax.contains("block drop quick proto tcp from any to any port 445"));
         assert!(syntax.contains("block drop quick proto udp from any to any port 53"));
-        assert!(syntax.contains(
-            "pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port 3030"
-        ));
+        assert!(
+            syntax.contains("pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port 3030")
+        );
         assert!(syntax.contains("pass in quick on lo0 proto tcp from ::1 to ::1 port 3030"));
         assert!(!syntax.contains("to 127.0.0.1 port 8080"));
         assert!(syntax.contains("block drop in quick all"));
