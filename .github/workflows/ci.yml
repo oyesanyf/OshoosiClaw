@@ -72,6 +72,21 @@ jobs:
           OSOOSI_NO_AI: "1"
         run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value -A clippy::useless_format -A clippy::manual_repeat_n -A clippy::doc_overindented_list_items -A clippy::cmp_owned -A clippy::manual_range_contains -A clippy::double_ended_iterator_last -A clippy::chunks_exact_to_as_chunks -A clippy::new_without_default -A clippy::needless_borrows_for_generic_args -A clippy::too_many_arguments -A clippy::type_complexity -A clippy::bool_assert_comparison -A clippy::await_holding_lock
 
+  clippy-status:
+    name: Clippy (zero warnings)
+    needs: [clippy]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify all Clippy matrix jobs succeeded
+        env:
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+        run: |
+          echo "Clippy matrix result: ${CLIPPY_RESULT}"
+          test "${CLIPPY_RESULT}" = "success"
+
   # ── 3. Cross-Platform Tests Matrix (Linux, Windows, macOS) ──────────────────
   test:
     name: Tests (${{ matrix.os }})
@@ -245,6 +260,21 @@ jobs:
           path: |
             logs/adversarial_proof_report.json
             logs/adversarial_proof_report.md
+
+  tests-status:
+    name: Tests
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify all Test matrix jobs succeeded
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          echo "Tests matrix result: ${TEST_RESULT}"
+          test "${TEST_RESULT}" = "success"
 
   # ── 4. Cross-Architecture Target Verification (aarch64 Linux) ───────────────
   cross-arch-linux:
