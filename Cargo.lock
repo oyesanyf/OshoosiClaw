@@ -961,7 +961,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "rustix 1.1.4",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
 ]
 
 [[package]]
@@ -1481,7 +1481,7 @@ dependencies = [
  "regalloc2",
  "rustc-hash 2.1.2",
  "serde",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "wasmtime-internal-core 43.0.2",
 ]
@@ -1509,7 +1509,7 @@ dependencies = [
  "regalloc2",
  "rustc-hash 2.1.2",
  "serde",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "wasmtime-internal-core 44.0.3",
 ]
@@ -1602,7 +1602,7 @@ checksum = "4cbd294abe236e23cc3d907b0936226b6a8342db7636daa9c7c72be1e323420e"
 dependencies = [
  "cranelift-codegen 0.130.2",
  "log",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
 ]
 
@@ -1614,7 +1614,7 @@ checksum = "144f70fa9cd07efb83497c12dc8fb73f360a690cd990c44e8ceebc293d8c13b5"
 dependencies = [
  "cranelift-codegen 0.131.3",
  "log",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
 ]
 
@@ -1923,9 +1923,9 @@ dependencies = [
  "cfg-if",
  "crossbeam-utils",
  "hashbrown 0.14.5",
- "lock_api",
+ "lock_api 0.4.14",
  "once_cell",
- "parking_lot_core",
+ "parking_lot_core 0.9.12",
 ]
 
 [[package]]
@@ -3384,10 +3384,10 @@ dependencies = [
  "moka",
  "ndk-context",
  "once_cell",
- "parking_lot",
+ "parking_lot 0.12.5",
  "rand 0.10.3",
  "resolv-conf",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "system-configuration",
  "thiserror 2.0.18",
  "tokio",
@@ -3528,7 +3528,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tokio",
  "want",
 ]
@@ -3660,7 +3660,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "zerovec",
 ]
 
@@ -3724,7 +3724,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "utf8_iter",
 ]
 
@@ -4144,9 +4144,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.186"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libloading"
@@ -4260,7 +4260,7 @@ dependencies = [
  "multiaddr",
  "multihash",
  "multistream-select",
- "parking_lot",
+ "parking_lot 0.12.5",
  "pin-project",
  "prost",
  "rand 0.10.3",
@@ -4303,8 +4303,8 @@ dependencies = [
  "hickory-resolver",
  "libp2p-core",
  "libp2p-identity",
- "parking_lot",
- "smallvec 1.15.1",
+ "parking_lot 0.12.5",
+ "smallvec 1.16.5",
  "tracing",
 ]
 
@@ -4354,7 +4354,7 @@ dependencies = [
  "libp2p-swarm",
  "prost",
  "prost-codec",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -4397,7 +4397,7 @@ dependencies = [
  "prost-codec",
  "rand 0.10.3",
  "sha2 0.11.1",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "thiserror 2.0.18",
  "tracing",
  "uint",
@@ -4417,7 +4417,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.10.3",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "socket2 0.6.3",
  "tokio",
  "tracing",
@@ -4525,7 +4525,7 @@ dependencies = [
  "libp2p-identity",
  "libp2p-swarm",
  "rand 0.10.3",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tracing",
 ]
 
@@ -4546,7 +4546,7 @@ dependencies = [
  "libp2p-swarm-derive",
  "multistream-select",
  "rand 0.10.3",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tokio",
  "tracing",
  "wasm-bindgen-futures",
@@ -4683,6 +4683,15 @@ name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
 dependencies = [
  "scopeguard",
 ]
@@ -5018,9 +5027,9 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "equivalent",
- "parking_lot",
+ "parking_lot 0.12.5",
  "portable-atomic",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tagptr",
  "uuid",
 ]
@@ -5096,7 +5105,7 @@ dependencies = [
  "bytes",
  "futures",
  "pin-project",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tracing",
  "unsigned-varint",
 ]
@@ -5392,7 +5401,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.6",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "zeroize",
 ]
 
@@ -5739,7 +5748,7 @@ dependencies = [
  "osoosi-telemetry",
  "osoosi-types",
  "osoosi-vcdb",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.8.6",
  "regex",
  "reqwest",
@@ -5950,7 +5959,7 @@ dependencies = [
  "osoosi-types",
  "osoosi-wire",
  "p256",
- "parking_lot",
+ "parking_lot 0.13.0",
  "pelite",
  "rand 0.8.6",
  "rand_distr 0.4.3",
@@ -6059,7 +6068,7 @@ dependencies = [
  "fastrand",
  "hex",
  "osoosi-audit",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -6144,7 +6153,7 @@ dependencies = [
  "ort",
  "osoosi-audit",
  "osoosi-types",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rusqlite",
  "serde",
  "serde_json",
@@ -6200,7 +6209,7 @@ dependencies = [
  "hex",
  "once_cell",
  "osoosi-dp",
- "parking_lot",
+ "parking_lot 0.13.0",
  "regex",
  "reqwest",
  "serde",
@@ -6234,7 +6243,7 @@ dependencies = [
  "osoosi-telemetry",
  "osoosi-types",
  "otx-taxii-rs",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.8.6",
  "rayon",
  "regex",
@@ -6384,7 +6393,7 @@ dependencies = [
  "notify",
  "osoosi-memory",
  "osoosi-types",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rand 0.8.6",
  "regex",
  "reqwest",
@@ -6467,7 +6476,7 @@ dependencies = [
  "hex",
  "once_cell",
  "osoosi-dp",
- "parking_lot",
+ "parking_lot 0.13.0",
  "regex",
  "reqwest",
  "serde",
@@ -6584,8 +6593,18 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
- "lock_api",
- "parking_lot_core",
+ "lock_api 0.4.14",
+ "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -6597,7 +6616,19 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.18",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
+ "windows-link",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.5",
+ "smallvec 1.16.5",
  "windows-link",
 ]
 
@@ -6949,7 +6980,7 @@ checksum = "1784dc11a05f5a8f57c4a62915686be140f24f70301290b997e317241fa9ffc2"
 dependencies = [
  "dtoa",
  "itoa",
- "parking_lot",
+ "parking_lot 0.12.5",
  "prometheus-client-derive-encode",
 ]
 
@@ -7423,6 +7454,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_syscall"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
+dependencies = [
+ "bitflags 2.13.2",
+]
+
+[[package]]
 name = "redox_users"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7455,7 +7495,7 @@ dependencies = [
  "hashbrown 0.17.0",
  "log",
  "rustc-hash 2.1.2",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
 ]
 
 [[package]]
@@ -7591,7 +7631,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "rhai_codegen",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "smartstring",
  "thin-vec",
  "web-time",
@@ -7693,7 +7733,7 @@ dependencies = [
  "hashlink 0.9.1",
  "libsqlite3-sys",
  "serde_json",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
 ]
 
 [[package]]
@@ -8316,9 +8356,9 @@ checksum = "7a3d689654af89bdfeba29a914ab6ac0236d382eb3b764f7454dde052f2821f8"
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 dependencies = [
  "serde",
 ]
@@ -8941,7 +8981,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio 1.2.0",
- "parking_lot",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.3",
@@ -9249,7 +9289,7 @@ checksum = "0a904802a1b902f43638b677ff2a650847e3b4404101b6c586d648e8c1e3e8fe"
 dependencies = [
  "js-sys",
  "opentelemetry",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "tracing",
  "tracing-core",
  "tracing-log",
@@ -9280,7 +9320,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "thread_local",
  "tracing",
  "tracing-core",
@@ -9370,7 +9410,7 @@ version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43f613e4fa046e69818dd287fdc4bc78175ff20331479dab6e1b0f98d57062de"
 dependencies = [
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
 ]
 
 [[package]]
@@ -9681,7 +9721,7 @@ dependencies = [
  "indexmap",
  "log",
  "petgraph",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "wasm-encoder 0.246.2",
  "wasmparser 0.246.2",
  "wat",
@@ -9846,7 +9886,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_derive",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "wasmparser 0.245.1",
  "wasmtime-environ 43.0.2",
@@ -9891,7 +9931,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "tempfile",
  "wasm-compose",
@@ -9932,7 +9972,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2 0.10.9",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "wasm-encoder 0.245.1",
  "wasmparser 0.245.1",
@@ -9962,7 +10002,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2 0.10.9",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "wasm-encoder 0.246.2",
  "wasmparser 0.246.2",
@@ -10052,7 +10092,7 @@ dependencies = [
  "log",
  "object 0.38.1",
  "pulley-interpreter 43.0.2",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "thiserror 2.0.18",
  "wasmparser 0.245.1",
@@ -10079,7 +10119,7 @@ dependencies = [
  "log",
  "object 0.39.1",
  "pulley-interpreter 44.0.3",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "thiserror 2.0.18",
  "wasmparser 0.246.2",
@@ -10488,7 +10528,7 @@ dependencies = [
  "cranelift-codegen 0.131.3",
  "gimli 0.33.0",
  "regalloc2",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "target-lexicon",
  "thiserror 2.0.18",
  "wasmparser 0.246.2",
@@ -11289,7 +11329,7 @@ dependencies = [
  "futures",
  "log",
  "nohash-hasher",
- "parking_lot",
+ "parking_lot 0.12.5",
  "pin-project",
  "static_assertions",
  "web-time",
@@ -11356,7 +11396,7 @@ dependencies = [
  "sha2 0.10.9",
  "simd-adler32",
  "simd_cesu8",
- "smallvec 1.15.1",
+ "smallvec 1.16.5",
  "strum_macros 0.28.0",
  "thiserror 2.0.18",
  "tinyzip",
