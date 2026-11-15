@@ -52,27 +52,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[derive(libp2p::swarm::NetworkBehaviour)]
-#[behaviour(out_event = "BehaviourEvent")]
-struct Behaviour {
-    relay: relay::Behaviour,
-    identify: identify::Behaviour,
-}
+#[allow(unreachable_code)]
+mod behavior_derive {
+    use super::*;
 
-#[derive(Debug)]
-enum BehaviourEvent {
-    Relay(relay::Event),
-    Identify(Box<identify::Event>),
-}
+    #[derive(libp2p::swarm::NetworkBehaviour)]
+    #[behaviour(out_event = "BehaviourEvent")]
+    pub(super) struct Behaviour {
+        pub(super) relay: relay::Behaviour,
+        pub(super) identify: identify::Behaviour,
+    }
 
-impl From<relay::Event> for BehaviourEvent {
-    fn from(event: relay::Event) -> Self {
-        BehaviourEvent::Relay(event)
+    #[derive(Debug)]
+    pub(super) enum BehaviourEvent {
+        Relay(relay::Event),
+        Identify(Box<identify::Event>),
+    }
+
+    impl From<relay::Event> for BehaviourEvent {
+        fn from(event: relay::Event) -> Self {
+            BehaviourEvent::Relay(event)
+        }
+    }
+
+    impl From<identify::Event> for BehaviourEvent {
+        fn from(event: identify::Event) -> Self {
+            BehaviourEvent::Identify(Box::new(event))
+        }
     }
 }
 
-impl From<identify::Event> for BehaviourEvent {
-    fn from(event: identify::Event) -> Self {
-        BehaviourEvent::Identify(Box::new(event))
-    }
-}
+use behavior_derive::{Behaviour, BehaviourEvent};

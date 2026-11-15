@@ -949,11 +949,7 @@ impl PatchEngine {
                 }
             }
 
-            if check_pkg("apk", &["info", "-e", &patch.component]).await {
-                return true;
-            }
-
-            false
+            check_pkg("apk", &["info", "-e", &patch.component]).await
         }
         #[cfg(target_os = "macos")]
         {
