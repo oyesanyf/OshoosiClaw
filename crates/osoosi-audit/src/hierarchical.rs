@@ -611,8 +611,8 @@ impl HierarchicalMerkleRegistry {
         let mut all_chains_verified = true;
         let mut failed_ring = None;
 
-        for ring_idx in 0..4 {
-            let ring_arc = self.rings[ring_idx].clone();
+        for (ring_idx, ring) in self.rings.iter().enumerate() {
+            let ring_arc = ring.clone();
             let chain = ring_arc.lock().unwrap();
             let mut expected_prev = GENESIS_HASH.to_string();
             let ring_id = match ring_idx {
@@ -759,14 +759,14 @@ impl HierarchicalMerkleRegistry {
         let ring_root = {
             let mut ring_hasher = blake3::Hasher::new();
             ring_hasher.update(b"OSOOSI_RING_ROOT_FOLD_V1");
-            for ring_idx in 0..4 {
+            for (ring_idx, ring) in self.rings.iter().enumerate() {
                 let ring_id = match ring_idx {
                     0 => ContainmentRingId::Ring0Kernel,
                     1 => ContainmentRingId::Ring1Sentinel,
                     2 => ContainmentRingId::Ring2PolicyMesh,
                     _ => ContainmentRingId::Ring3SandboxWorker,
                 };
-                let guard = self.rings[ring_idx].lock().unwrap();
+                let guard = ring.lock().unwrap();
                 ring_hasher.update(&[ring_id as u8]);
                 ring_hasher.update(guard.current_head.as_bytes());
             }

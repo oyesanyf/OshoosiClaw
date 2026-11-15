@@ -16,7 +16,8 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::ffi::c_void;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(any(windows, test))]
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
@@ -56,12 +57,16 @@ pub fn is_authorized_self_diagnostic() -> bool {
         || std::env::var("CARGO").is_ok()
         || std::env::var("RUST_TEST_THREADS").is_ok()
         || std::env::var("GITHUB_ACTIONS").is_ok();
-    let explicit_opt_in = std::env::var("OSOOSI_SELF_DIAGNOSTIC")
-        .map(|v| !v.trim().is_empty() && v.trim() != "0" && !v.trim().eq_ignore_ascii_case("false"))
-        .unwrap_or(false)
-        || std::env::var("KILLSWITCH_SELF_DIAGNOSTIC")
-            .map(|v| !v.trim().is_empty() && v.trim() != "0" && !v.trim().eq_ignore_ascii_case("false"))
-            .unwrap_or(false);
+    let is_env_enabled = |var: &str| {
+        std::env::var(var)
+            .map(|v| {
+                let t = v.trim();
+                !t.is_empty() && t != "0" && !t.eq_ignore_ascii_case("false")
+            })
+            .unwrap_or(false)
+    };
+    let explicit_opt_in =
+        is_env_enabled("OSOOSI_SELF_DIAGNOSTIC") || is_env_enabled("KILLSWITCH_SELF_DIAGNOSTIC");
     in_test_or_ci && explicit_opt_in
 }
 
@@ -842,9 +847,8 @@ impl WfpDynamicSession {
             };
             let fn_free_mem: Option<FnFwpmFreeMemory0> =
                 unsafe { get_func(b"FwpmFreeMemory0\0").map(|p| std::mem::transmute(p)) };
-            let fn_get_app_id_from_file_name: Option<FnFwpmGetAppIdFromFileName0> = unsafe {
-                get_func(b"FwpmGetAppIdFromFileName0\0").map(|p| std::mem::transmute(p))
-            };
+            let fn_get_app_id_from_file_name: Option<FnFwpmGetAppIdFromFileName0> =
+                unsafe { get_func(b"FwpmGetAppIdFromFileName0\0").map(|p| std::mem::transmute(p)) };
 
             let mut session_name: Vec<u16> = if session_flags == 0 {
                 "OsoosiEDR-PersistentKillSwitch\0".encode_utf16().collect()
@@ -3100,7 +3104,8 @@ pub fn engage_host_hermetic_quarantine() -> Result<Vec<String>> {
 
     #[cfg(target_os = "linux")]
     {
-        let allowed_ports = sanitize_firewall_preserved_ports(&discover_preserved_management_ports());
+        let allowed_ports =
+            sanitize_firewall_preserved_ports(&discover_preserved_management_ports());
         linux_apply_netlink_blackhole(true)?;
         let mut engines = vec![
             "af_netlink:rtn_blackhole:ipv4".to_string(),
@@ -3157,7 +3162,9 @@ pub fn engage_host_hermetic_quarantine() -> Result<Vec<String>> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| anyhow!("Failed to invoke /sbin/pfctl for anchor '{}': {}", anchor, e))?;
+            .map_err(|e| {
+                anyhow!("Failed to invoke /sbin/pfctl for anchor '{}': {}", anchor, e)
+            })?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(syntax.as_bytes())
@@ -3880,13 +3887,22 @@ mod tests {
     #[test]
     fn test_quarantine_port_blocking_and_sanitization() {
         for &p in QUARANTINE_BLOCKED_LOOPBACK_PROXY_PORTS {
-            assert!(is_blocked_quarantine_port(p), "proxy port {p} must be blocked");
+            assert!(
+                is_blocked_quarantine_port(p),
+                "proxy port {p} must be blocked"
+            );
         }
         for &p in QUARANTINE_BLOCKED_LATERAL_PORTS {
-            assert!(is_blocked_quarantine_port(p), "lateral port {p} must be blocked");
+            assert!(
+                is_blocked_quarantine_port(p),
+                "lateral port {p} must be blocked"
+            );
         }
         for &p in QUARANTINE_BLOCKED_DISCOVERY_PORTS {
-            assert!(is_blocked_quarantine_port(p), "discovery port {p} must be blocked");
+            assert!(
+                is_blocked_quarantine_port(p),
+                "discovery port {p} must be blocked"
+            );
         }
         assert!(is_blocked_quarantine_port(0));
         assert!(is_blocked_quarantine_port(80));
@@ -3934,7 +3950,9 @@ mod tests {
         assert!(syntax.contains("block drop quick proto tcp from any to any port 1080"));
         assert!(syntax.contains("block drop quick proto tcp from any to any port 445"));
         assert!(syntax.contains("block drop quick proto udp from any to any port 53"));
-        assert!(syntax.contains("pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port 3030"));
+        assert!(syntax.contains(
+            "pass in quick on lo0 proto tcp from 127.0.0.1 to 127.0.0.1 port 3030"
+        ));
         assert!(syntax.contains("pass in quick on lo0 proto tcp from ::1 to ::1 port 3030"));
         assert!(!syntax.contains("to 127.0.0.1 port 8080"));
         assert!(syntax.contains("block drop in quick all"));

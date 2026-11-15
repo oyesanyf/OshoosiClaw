@@ -223,7 +223,8 @@ pub fn apply_landlock_sandbox_with_config(config: &LandlockSandboxConfig) -> any
         warn!("PR_SET_NO_NEW_PRIVS failed: {}", err);
     }
 
-    let ret = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF as libc::c_long, ruleset_fd, 0u32) };
+    let ret =
+        unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF as libc::c_long, ruleset_fd, 0u32) };
     unsafe {
         libc::close(ruleset_fd);
     }
@@ -1309,7 +1310,9 @@ table inet osoosi_quarantine {\n\
             .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
             .collect();
         if !clean.is_empty() {
-            s.push_str(&format!("        socket cgroupv2 level 1 \"{clean}\" drop\n"));
+            s.push_str(&format!(
+                "        socket cgroupv2 level 1 \"{clean}\" drop\n"
+            ));
         }
     }
     for &uid in agent_uids {
@@ -1736,11 +1739,17 @@ mod tests {
    2: 0501A8C0:D431 08080808:0035 01 00000000:00000000 00:00000000 00000000  1000        0 1003 1 00000000 20 4 30 10 -1\n";
         let entries = parse_proc_net_content(sample_v4, false);
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].local_addr, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert_eq!(
+            entries[0].local_addr,
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+        );
         assert_eq!(entries[0].local_port, 3030);
         assert!(is_exact_localhost_ip(entries[0].local_addr));
         assert!(!is_exact_localhost_ip(entries[1].local_addr));
-        assert_eq!(entries[2].remote_addr, IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+        assert_eq!(
+            entries[2].remote_addr,
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))
+        );
         assert_eq!(entries[2].remote_port, 53);
 
         let v6_loop = parse_linux_ipv6_hex("00000000000000000000000001000000").unwrap();

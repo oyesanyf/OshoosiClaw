@@ -235,7 +235,5 @@ fn print_human_vulnerabilities(vulns: &[KernelVulnerability]) {
             println!("   Description:        {}", v.description);
         }
     }
-    println!(
-        "--------------------------------------------------------------------------------\n"
-    );
+    println!("--------------------------------------------------------------------------------\n");
 }

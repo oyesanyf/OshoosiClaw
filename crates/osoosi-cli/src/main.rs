@@ -4046,15 +4046,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             execute,
             json,
         }) => {
-            patch_kernel::handle_patch_kernel(
-                cpe,
-                min_cvss,
-                kev_only,
-                timeout_secs,
-                execute,
-                json,
-            )
-            .await?;
+            patch_kernel::handle_patch_kernel(cpe, min_cvss, kev_only, timeout_secs, execute, json)
+                .await?;
         }
         None => {
             if !cli.grant_access {
