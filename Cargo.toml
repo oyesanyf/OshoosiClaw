@@ -34,6 +34,7 @@ members = [
     "crates/osoosi-hexpatch",
     "crates/osoosi-owasp-hunting",
     "crates/osoosi-vcdb",
+    "crates/killswitch-kernel-patcher",
 ]
 
 [workspace.package]
@@ -45,6 +46,7 @@ rust-version = "1.75"
 [workspace.dependencies]
 osoosi-owasp-hunting = { path = "crates/osoosi-owasp-hunting" }
 osoosi-vcdb = { path = "crates/osoosi-vcdb" }
+killswitch-kernel-patcher = { path = "crates/killswitch-kernel-patcher" }
 edr-phaselock = { path = "crates/edr-phaselock" }
 agent-thermostat = { path = "crates/agent-thermostat" }
 silicon-shield = { path = "crates/silicon-shield" }
@@ -105,7 +107,7 @@ quick-xml = { version = "0.28.2", features = ["serialize"] }
 sysinfo = "0.30"
 goblin = "0.9"
 magika = "1"
-ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "download-binaries", "copy-dylibs"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "download-binaries"] }
 axum = { version = "0.7", features = ["macros"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }

@@ -61,19 +61,26 @@ pub async fn detect_public_ip() -> String {
     final_ip
 }
 
-/// Custom network behavior for OpenỌ̀ṣọ́ọ̀sì Mesh.
-#[derive(NetworkBehaviour)]
-pub struct OsoosiBehavior {
-    pub gossipsub: gossipsub::Behaviour,
-    pub mdns: mdns::tokio::Behaviour,
-    pub identify: identify::Behaviour,
-    pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
-    pub autonat: autonat::Behaviour,
-    pub upnp: upnp::tokio::Behaviour,
-    pub relay_client: libp2p::relay::client::Behaviour,
-    pub relay_server: libp2p::relay::Behaviour,
-    pub dcutr: libp2p::dcutr::Behaviour,
+#[allow(unreachable_code)]
+mod behavior_derive {
+    use super::*;
+
+    /// Custom network behavior for OpenỌ̀ṣọ́ọ̀sì Mesh.
+    #[derive(NetworkBehaviour)]
+    pub struct OsoosiBehavior {
+        pub gossipsub: gossipsub::Behaviour,
+        pub mdns: mdns::tokio::Behaviour,
+        pub identify: identify::Behaviour,
+        pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
+        pub autonat: autonat::Behaviour,
+        pub upnp: upnp::tokio::Behaviour,
+        pub relay_client: libp2p::relay::client::Behaviour,
+        pub relay_server: libp2p::relay::Behaviour,
+        pub dcutr: libp2p::dcutr::Behaviour,
+    }
 }
+
+pub use behavior_derive::{OsoosiBehavior, OsoosiBehaviorEvent};
 
 /// Global or per-node split-plane wire frame validator closure.
 pub type WireFrameValidator = Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;

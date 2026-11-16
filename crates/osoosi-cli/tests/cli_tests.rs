@@ -8,8 +8,15 @@ fn test_cli_stop_help_output() {
         .output()
         .expect("execute osoosi stop --help");
 
-    assert!(output.status.success(), "stop --help must succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stop --help must succeed (status: {:?})\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        stdout,
+        stderr
+    );
     assert!(stdout.contains("Stop the OpenỌ̀ṣọ́ọ̀sì security agent daemon"));
     assert!(stdout.contains("--force") || stdout.contains("-f"));
 }
@@ -22,7 +29,14 @@ fn test_cli_down_alias_help_output() {
         .output()
         .expect("execute osoosi down --help");
 
-    assert!(output.status.success(), "down --help must succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "down --help must succeed (status: {:?})\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        stdout,
+        stderr
+    );
     assert!(stdout.contains("Stop the OpenỌ̀ṣọ́ọ̀sì security agent daemon"));
 }

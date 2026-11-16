@@ -40,13 +40,20 @@ struct PeerAnnounce {
     membership_proof: Option<String>,
 }
 
-#[derive(NetworkBehaviour)]
-struct TestPeerBehavior {
-    gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
-    identify: identify::Behaviour,
-    kademlia: kad::Behaviour<kad::store::MemoryStore>,
+#[allow(unreachable_code)]
+mod behavior_derive {
+    use super::*;
+
+    #[derive(NetworkBehaviour)]
+    pub(super) struct TestPeerBehavior {
+        pub(super) gossipsub: gossipsub::Behaviour,
+        pub(super) mdns: mdns::tokio::Behaviour,
+        pub(super) identify: identify::Behaviour,
+        pub(super) kademlia: kad::Behaviour<kad::store::MemoryStore>,
+    }
 }
+
+use behavior_derive::{TestPeerBehavior, TestPeerBehaviorEvent};
 
 #[derive(Deserialize)]
 struct WireConfig {

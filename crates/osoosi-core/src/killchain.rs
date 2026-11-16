@@ -541,17 +541,23 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
     let now = Utc::now().to_rfc3339();
 
     // 1. Remove network quarantine
+    let requires_kernel_flush =
+        guard.status.network_isolated || crate::wfp::has_live_active_wfp_filters();
     if let Err(e) = remove_network_hermetic_quarantine() {
-        error!(
-            "❌ [KILLCHAIN] Error removing network quarantine rules: {}",
-            e
-        );
-        if !crate::wfp::is_cargo_test_simulation_mode() {
+        if !crate::wfp::is_cargo_test_simulation_mode() && requires_kernel_flush {
+            error!(
+                "❌ [KILLCHAIN] Error removing network quarantine rules: {}",
+                e
+            );
             return Err(anyhow!(
                 "Failed to flush kernel network quarantine (Administrator privileges required): {}",
                 e
             ));
         }
+        warn!(
+            "⚠️ [KILLCHAIN] Best-effort network cleanup skipped (no active isolation): {}",
+            e
+        );
     } else {
         info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
     }

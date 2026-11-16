@@ -737,16 +737,11 @@ impl OwaspHuntingEngine {
 
         // Check common cloud metadata strings and localhost aliases
         let lower = host.to_ascii_lowercase();
-        if lower == "localhost"
+        lower == "localhost"
             || lower.ends_with(".localhost")
             || lower == "169.254.169.254"
             || lower == "instance-data"
             || lower.contains("metadata.google.internal")
-        {
-            return true;
-        }
-
-        false
     }
 
     /// Mathematical IP address validation against disallowed ranges.

@@ -7,7 +7,7 @@ use osoosi_policy::ThreatFeedFetcher;
 use osoosi_types::extract_zip;
 use osoosi_types::SecuredExecutor;
 
-pub use osoosi_cli::{hook_cli, service, verify};
+pub use osoosi_cli::{hook_cli, patch_kernel, service, verify};
 
 use hf_hub::api::tokio::ApiBuilder;
 pub use osoosi_core::console_defense as console_hardening;
@@ -519,6 +519,29 @@ enum Commands {
         /// Arguments to pass to the child command
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Scan host OS kernel against NIST NVD 2.0 / CISA KEV and orchestrate OS-native patching.
+    /// Reads optional NVD_API_KEY strictly from the environment (never CLI arguments).
+    #[command(name = "patch-kernel")]
+    PatchKernel {
+        /// Override auto-detected host kernel CPE 2.3 string
+        #[arg(long)]
+        cpe: Option<String>,
+        /// Minimum CVSS v3.1 base score threshold (0.0 - 10.0)
+        #[arg(long)]
+        min_cvss: Option<f32>,
+        /// Only display vulnerabilities listed in CISA KEV
+        #[arg(long)]
+        kev_only: bool,
+        /// NVD API request timeout in seconds
+        #[arg(long, default_value_t = 30)]
+        timeout_secs: u64,
+        /// Execute the OS-native patch command (defaults to safe dry-run simulation)
+        #[arg(long)]
+        execute: bool,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1133,7 +1156,25 @@ fn main() -> anyhow::Result<()> {
         normalized_args[1] = "pentest".to_string();
     }
 
-    let cli = Cli::parse_from(normalized_args);
+    // Parse CLI on a 16 MB stack thread so large subcommand enums cannot overflow
+    // Windows's 1 MB default main-thread stack in unoptimized debug/test builds.
+    let parse_handle = std::thread::Builder::new()
+        .name("osoosi-cli-parse".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || -> Result<Box<Cli>, i32> {
+            match Cli::try_parse_from(normalized_args) {
+                Ok(parsed) => Ok(Box::new(parsed)),
+                Err(err) => {
+                    let _ = err.print();
+                    Err(err.exit_code())
+                }
+            }
+        })?;
+    let cli = match parse_handle.join() {
+        Ok(Ok(parsed)) => parsed,
+        Ok(Err(code)) => std::process::exit(code),
+        Err(_) => return Err(anyhow::anyhow!("CLI parse thread panicked")),
+    };
     if let Some(_uuid_str) = cli.canary_probe.as_ref() {
         return Ok(());
     }
@@ -1203,6 +1244,8 @@ fn main() -> anyhow::Result<()> {
 
     let worker_threads = osoosi_core::tokio_worker_threads();
 
+    let debug_mode = cli.debug;
+
     // Create the runtime, but don't run it on the main thread (which has a small stack).
     // Instead, spawn a dedicated thread with a large stack size (16MB).
     let handle = std::thread::Builder::new()
@@ -1224,8 +1267,8 @@ fn main() -> anyhow::Result<()> {
 
             rt.block_on(async {
                 set_panic_hook();
-                let _guard = init_logging(cli.debug)?;
-                async_main(cli).await
+                let _guard = init_logging(debug_mode)?;
+                async_main(*cli).await
             })
         })?;
 
@@ -4014,6 +4057,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         },
         Some(Commands::McpProxy { command, args }) => {
             crate::hook_cli::handle_mcp_proxy(command, args)?;
+        }
+        Some(Commands::PatchKernel {
+            cpe,
+            min_cvss,
+            kev_only,
+            timeout_secs,
+            execute,
+            json,
+        }) => {
+            patch_kernel::handle_patch_kernel(cpe, min_cvss, kev_only, timeout_secs, execute, json)
+                .await?;
         }
         None => {
             if !cli.grant_access {
@@ -10790,5 +10844,87 @@ mod tests {
             }
             _ => panic!("Expected McpProxy subcommand"),
         }
+    }
+
+    #[test]
+    fn test_patch_kernel_cli_parsing_and_secret_hygiene() {
+        // Default dry-run invocation
+        let default_cli = Cli::try_parse_from(["osoosi", "patch-kernel"]).unwrap();
+        match default_cli.command {
+            Some(Commands::PatchKernel {
+                cpe,
+                min_cvss,
+                kev_only,
+                timeout_secs,
+                execute,
+                json,
+            }) => {
+                assert!(cpe.is_none());
+                assert!(min_cvss.is_none());
+                assert!(!kev_only);
+                assert_eq!(timeout_secs, 30);
+                assert!(!execute);
+                assert!(!json);
+            }
+            _ => panic!("Expected PatchKernel subcommand"),
+        }
+
+        // Full flags invocation
+        let full_cli = Cli::try_parse_from([
+            "osoosi",
+            "patch-kernel",
+            "--cpe",
+            "cpe:2.3:o:linux:linux_kernel:6.8.0:*:*:*:*:*:*:*",
+            "--min-cvss",
+            "7.5",
+            "--kev-only",
+            "--timeout-secs",
+            "15",
+            "--execute",
+            "--json",
+        ])
+        .unwrap();
+        match full_cli.command {
+            Some(Commands::PatchKernel {
+                cpe,
+                min_cvss,
+                kev_only,
+                timeout_secs,
+                execute,
+                json,
+            }) => {
+                assert_eq!(
+                    cpe.as_deref(),
+                    Some("cpe:2.3:o:linux:linux_kernel:6.8.0:*:*:*:*:*:*:*")
+                );
+                assert_eq!(min_cvss, Some(7.5));
+                assert!(kev_only);
+                assert_eq!(timeout_secs, 15);
+                assert!(execute);
+                assert!(json);
+            }
+            _ => panic!("Expected PatchKernel subcommand"),
+        }
+
+        // Secret hygiene invariant: CLI must reject --api-key and --nvd-api-key
+        assert!(
+            Cli::try_parse_from(["osoosi", "patch-kernel", "--api-key", "secret"]).is_err(),
+            "patch-kernel must NEVER accept --api-key via CLI"
+        );
+        assert!(
+            Cli::try_parse_from(["osoosi", "patch-kernel", "--nvd-api-key", "secret"]).is_err(),
+            "patch-kernel must NEVER accept --nvd-api-key via CLI"
+        );
+
+        // Ensure Rollback subcommand remains intact
+        let rollback_cli =
+            Cli::try_parse_from(["osoosi", "rollback", "--last", "--patch", "KB1234567"]).unwrap();
+        assert!(matches!(
+            rollback_cli.command,
+            Some(Commands::Rollback {
+                last: true,
+                patch: Some(_)
+            })
+        ));
     }
 }

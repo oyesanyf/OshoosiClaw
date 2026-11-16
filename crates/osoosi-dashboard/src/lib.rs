@@ -101,6 +101,16 @@ pub fn api_error_json(
     }))
 }
 
+/// Summary of the latest background OS kernel vulnerability scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KernelScanSummary {
+    pub scanned_at: chrono::DateTime<chrono::Utc>,
+    pub host_kernel: killswitch_kernel_patcher::HostKernelInfo,
+    pub vulnerability_count: usize,
+    pub cisa_kev_count: usize,
+    pub vulnerabilities: Vec<killswitch_kernel_patcher::KernelVulnerability>,
+}
+
 /// Shared state for dashboard routes. When backend is set, uses real data.
 #[derive(Clone)]
 pub struct DashboardState {
@@ -112,6 +122,7 @@ pub struct DashboardState {
     pub embedding_engine: Arc<osoosi_behavioral::EmbeddingGemma2Engine>,
     pub cage: Arc<crate::routes::cage::CageServerState>,
     pub cage_substrate: Arc<crate::routes::cage_substrate::CageSubstrateState>,
+    pub latest_kernel_scan: Arc<tokio::sync::RwLock<Option<KernelScanSummary>>>,
 }
 
 impl DashboardState {
@@ -139,6 +150,7 @@ impl DashboardState {
             )),
             cage: Arc::new(crate::routes::cage::CageServerState::new()),
             cage_substrate: Arc::new(crate::routes::cage_substrate::CageSubstrateState::new()),
+            latest_kernel_scan: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 }
@@ -636,6 +648,15 @@ async fn get_openapi_spec() -> Json<Value> {
                         "401": { "description": "Unauthorized" }
                     }
                 }
+            },
+            "/api/kernel-patcher/status": {
+                "get": {
+                    "operationId": "getKernelPatcherStatus",
+                    "responses": {
+                        "200": { "description": "Kernel vulnerability scanner and patcher status" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
             }
         }
     }))
@@ -655,6 +676,7 @@ pub fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/openapi.json", get(get_openapi_spec))
         .route("/openapi.json", get(get_openapi_spec))
         .route("/api/status", get(get_status))
+        .route("/api/kernel-patcher/status", get(get_kernel_patcher_status))
         .route("/api/threats", get(get_threats))
         .route("/api/repair-status", get(get_repair_status))
         .route("/api/backup-status", get(get_backup_status))
@@ -1945,6 +1967,7 @@ pub async fn spawn_dashboard_with_backend(
     crate::routes::workflow_guard::start_workflow_guard_self_healing_watchdog();
 
     let _ = state.cage_substrate.journal.recover_and_re_enforce().await;
+    let kernel_scan_state = state.latest_kernel_scan.clone();
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -1982,6 +2005,8 @@ pub async fn spawn_dashboard_with_backend(
                 }
             };
             rt.block_on(async move {
+                let kernel_scan_handle =
+                    tokio::spawn(run_periodic_kernel_scanner(kernel_scan_state));
                 match tokio::net::TcpListener::from_std(std_listener) {
                     Ok(listener) => {
                         if let Err(e) = axum::serve(
@@ -1997,6 +2022,7 @@ pub async fn spawn_dashboard_with_backend(
                         tracing::error!("Failed to convert std TcpListener for dashboard: {}", e);
                     }
                 }
+                kernel_scan_handle.abort();
             });
         })?;
 
@@ -3157,6 +3183,7 @@ pub async fn start_dashboard_with_backend(
     }
 
     let _ = state.cage_substrate.journal.recover_and_re_enforce().await;
+    let kernel_scan_state = state.latest_kernel_scan.clone();
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -3171,14 +3198,194 @@ pub async fn start_dashboard_with_backend(
         addr, port
     );
 
+    let kernel_scan_handle = tokio::spawn(run_periodic_kernel_scanner(kernel_scan_state));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
+    let serve_res = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .await;
+    kernel_scan_handle.abort();
+    serve_res?;
 
     Ok(())
+}
+
+fn kernel_scan_env_var(primary: &str, fallback: &str) -> Option<String> {
+    std::env::var(primary)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            std::env::var(fallback)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+}
+
+fn is_kernel_scan_disabled() -> bool {
+    match kernel_scan_env_var(
+        "OSOOSI_DISABLE_KERNEL_SCAN",
+        "KILLSWITCH_DISABLE_KERNEL_SCAN",
+    ) {
+        Some(v) => v != "0" && !v.eq_ignore_ascii_case("false") && !v.eq_ignore_ascii_case("no"),
+        None => false,
+    }
+}
+
+fn resolve_kernel_scan_initial_delay_secs() -> u64 {
+    kernel_scan_env_var(
+        "OSOOSI_KERNEL_SCAN_INITIAL_DELAY_SECS",
+        "KILLSWITCH_KERNEL_SCAN_INITIAL_DELAY_SECS",
+    )
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(5)
+}
+
+fn resolve_kernel_scan_interval_secs() -> u64 {
+    kernel_scan_env_var(
+        "OSOOSI_KERNEL_SCAN_INTERVAL_SECS",
+        "KILLSWITCH_KERNEL_SCAN_INTERVAL_SECS",
+    )
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(3600)
+    .max(10)
+}
+
+/// Executes a single background OS kernel vulnerability scan cycle and updates `latest_kernel_scan`.
+pub async fn run_periodic_kernel_scan_cycle(
+    latest_kernel_scan: &Arc<tokio::sync::RwLock<Option<KernelScanSummary>>>,
+) -> Result<usize, killswitch_kernel_patcher::PatcherError> {
+    run_periodic_kernel_scan_cycle_with_base_url(latest_kernel_scan, None).await
+}
+
+async fn run_periodic_kernel_scan_cycle_with_base_url(
+    latest_kernel_scan: &Arc<tokio::sync::RwLock<Option<KernelScanSummary>>>,
+    base_url_override: Option<&str>,
+) -> Result<usize, killswitch_kernel_patcher::PatcherError> {
+    let host_kernel =
+        tokio::task::spawn_blocking(killswitch_kernel_patcher::HostKernelInfo::detect_host_kernel)
+            .await
+            .map_err(|e| {
+                killswitch_kernel_patcher::PatcherError::DetectionFailed(e.to_string())
+            })??;
+
+    let options = killswitch_kernel_patcher::ScanOptions {
+        cpe: Some(host_kernel.cpe23.clone()),
+        min_cvss_score: None,
+        kev_only: false,
+        // Leave None so KernelPatcher resolves trimmed NVD_API_KEY solely from env.
+        api_key: None,
+        timeout_secs: 30,
+    };
+
+    let patcher = match base_url_override {
+        Some(url) => killswitch_kernel_patcher::KernelPatcher::with_base_url(url),
+        None => killswitch_kernel_patcher::KernelPatcher::new(),
+    };
+    let findings = patcher.scan_kernel_vulnerabilities(&options).await?;
+
+    let cisa_kev_count = findings.iter().filter(|v| v.is_cisa_kev).count();
+    let vulnerability_count = findings.len();
+
+    let summary = KernelScanSummary {
+        scanned_at: chrono::Utc::now(),
+        host_kernel,
+        vulnerability_count,
+        cisa_kev_count,
+        vulnerabilities: findings,
+    };
+
+    // Strict tokio::sync::RwLock discipline: write quickly without holding across .await.
+    *latest_kernel_scan.write().await = Some(summary);
+
+    Ok(vulnerability_count)
+}
+
+/// Background periodic NVD / CISA KEV scanner loop for `DashboardState::latest_kernel_scan`.
+pub async fn run_periodic_kernel_scanner(
+    latest_kernel_scan: Arc<tokio::sync::RwLock<Option<KernelScanSummary>>>,
+) {
+    if is_kernel_scan_disabled() {
+        info!("[KERNEL-SCANNER] Periodic kernel vulnerability scanning disabled via environment");
+        return;
+    }
+
+    let initial_delay_secs = resolve_kernel_scan_initial_delay_secs();
+    let interval_secs = resolve_kernel_scan_interval_secs();
+
+    info!(
+        "[KERNEL-SCANNER] Starting periodic NVD/KEV kernel scanner (initial_delay={}s, interval={}s)",
+        initial_delay_secs, interval_secs
+    );
+
+    if initial_delay_secs > 0 {
+        tokio::time::sleep(Duration::from_secs(initial_delay_secs)).await;
+    }
+
+    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        match run_periodic_kernel_scan_cycle(&latest_kernel_scan).await {
+            Ok(count) => {
+                info!(
+                    "[KERNEL-SCANNER] Periodic kernel scan finished: {} vulnerabilities detected",
+                    count
+                );
+            }
+            Err(killswitch_kernel_patcher::PatcherError::RateLimited) => {
+                warn!(
+                    "[KERNEL-SCANNER] NVD API rate-limit reached; deferring until next scheduled interval"
+                );
+            }
+            Err(e) => {
+                warn!("[KERNEL-SCANNER] Periodic kernel scan error: {}", e);
+            }
+        }
+        interval.tick().await;
+    }
+}
+
+/// Read-only HTTP endpoint exposing cached background kernel scan status and metadata.
+async fn get_kernel_patcher_status(State(state): State<DashboardState>) -> Json<Value> {
+    // Drop read guard immediately before constructing response.
+    let latest_scan = state.latest_kernel_scan.read().await.clone();
+    let scan_enabled = !is_kernel_scan_disabled();
+    let initial_delay_secs = resolve_kernel_scan_initial_delay_secs();
+    let interval_secs = resolve_kernel_scan_interval_secs();
+    let nvd_api_key_configured = std::env::var("NVD_API_KEY")
+        .ok()
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false);
+
+    match latest_scan {
+        Some(summary) => Json(json!({
+            "scanned": true,
+            "scan_enabled": scan_enabled,
+            "initial_delay_secs": initial_delay_secs,
+            "interval_secs": interval_secs,
+            "nvd_api_key_configured": nvd_api_key_configured,
+            "scanned_at": summary.scanned_at,
+            "host_kernel": summary.host_kernel,
+            "vulnerability_count": summary.vulnerability_count,
+            "cisa_kev_count": summary.cisa_kev_count,
+            "vulnerabilities": summary.vulnerabilities,
+            "latest_scan": summary,
+        })),
+        None => Json(json!({
+            "scanned": false,
+            "scan_enabled": scan_enabled,
+            "initial_delay_secs": initial_delay_secs,
+            "interval_secs": interval_secs,
+            "nvd_api_key_configured": nvd_api_key_configured,
+            "vulnerability_count": 0,
+            "cisa_kev_count": 0,
+            "vulnerabilities": [],
+            "latest_scan": null,
+        })),
+    }
 }
 
 async fn get_status(State(state): State<DashboardState>) -> Json<Value> {
@@ -16215,5 +16422,186 @@ mod f27_f28_tests {
         );
         drop(progress);
         MODEL_PULL_TRACKER.remove(&test_model);
+    }
+
+    static KERNEL_SCAN_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct KernelEnvGuard {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl KernelEnvGuard {
+        fn new(vars: &[(&'static str, Option<&str>)]) -> Self {
+            let mut saved = Vec::with_capacity(vars.len());
+            for &(k, v) in vars {
+                saved.push((k, std::env::var(k).ok()));
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+            Self { saved }
+        }
+    }
+
+    impl Drop for KernelEnvGuard {
+        fn drop(&mut self) {
+            for (k, prev) in &self.saved {
+                match prev {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_kernel_scan_env_vars_and_killswitch_fallback() {
+        let _lock = KERNEL_SCAN_ENV_MUTEX.lock().unwrap();
+
+        {
+            let _g = KernelEnvGuard::new(&[
+                ("OSOOSI_DISABLE_KERNEL_SCAN", None),
+                ("KILLSWITCH_DISABLE_KERNEL_SCAN", Some("1")),
+                ("OSOOSI_KERNEL_SCAN_INITIAL_DELAY_SECS", None),
+                ("KILLSWITCH_KERNEL_SCAN_INITIAL_DELAY_SECS", Some("12")),
+                ("OSOOSI_KERNEL_SCAN_INTERVAL_SECS", None),
+                ("KILLSWITCH_KERNEL_SCAN_INTERVAL_SECS", Some("4")),
+            ]);
+            assert!(is_kernel_scan_disabled());
+            assert_eq!(resolve_kernel_scan_initial_delay_secs(), 12);
+            // Minimum interval clamp is 10s
+            assert_eq!(resolve_kernel_scan_interval_secs(), 10);
+        }
+
+        {
+            let _g = KernelEnvGuard::new(&[
+                ("OSOOSI_DISABLE_KERNEL_SCAN", Some("0")),
+                ("KILLSWITCH_DISABLE_KERNEL_SCAN", Some("1")),
+                ("OSOOSI_KERNEL_SCAN_INITIAL_DELAY_SECS", Some("3")),
+                ("KILLSWITCH_KERNEL_SCAN_INITIAL_DELAY_SECS", Some("99")),
+                ("OSOOSI_KERNEL_SCAN_INTERVAL_SECS", Some("120")),
+                ("KILLSWITCH_KERNEL_SCAN_INTERVAL_SECS", Some("999")),
+            ]);
+            assert!(!is_kernel_scan_disabled());
+            assert_eq!(resolve_kernel_scan_initial_delay_secs(), 3);
+            assert_eq!(resolve_kernel_scan_interval_secs(), 120);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kernel_patcher_status_endpoint_and_openapi_spec() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let fixture_json = r#"{
+            "resultsPerPage": 1,
+            "startIndex": 0,
+            "totalResults": 1,
+            "format": "NVD_CVE",
+            "version": "2.0",
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2024-21338",
+                    "descriptions": [{"lang": "en", "value": "Windows Kernel EoP"}],
+                    "metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": 7.8, "baseSeverity": "HIGH"}}]},
+                    "cisaExploitAdd": "2024-02-29"
+                }
+            }]
+        }"#;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Bind mock NVD socket");
+        let addr = listener.local_addr().unwrap();
+        let mock_url = format!("http://{}/rest/json/cves/2.0", addr);
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    fixture_json.len(),
+                    fixture_json
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let state = DashboardState::new(None, None);
+        let router = dashboard_router(state.clone(), PathBuf::from("."));
+
+        // 1. Before any scan completes, GET /api/kernel-patcher/status returns scanned = false cleanly
+        let resp_before = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/kernel-patcher/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_before.status(), StatusCode::OK);
+        let bytes_before = axum::body::to_bytes(resp_before.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let json_before: Value = serde_json::from_slice(&bytes_before).unwrap();
+        assert_eq!(json_before["scanned"], Value::Bool(false));
+        assert!(json_before["latest_scan"].is_null());
+
+        // 2. Run a scan cycle against local 127.0.0.1 mock server and verify populated state
+        let count = run_periodic_kernel_scan_cycle_with_base_url(
+            &state.latest_kernel_scan,
+            Some(&mock_url),
+        )
+        .await
+        .expect("Mock kernel scan cycle must succeed");
+        assert_eq!(count, 1);
+
+        let resp_after = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/kernel-patcher/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_after.status(), StatusCode::OK);
+        let bytes_after = axum::body::to_bytes(resp_after.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let json_after: Value = serde_json::from_slice(&bytes_after).unwrap();
+        assert_eq!(json_after["scanned"], Value::Bool(true));
+        assert_eq!(json_after["vulnerability_count"], json!(1));
+        assert_eq!(json_after["cisa_kev_count"], json!(1));
+        assert_eq!(
+            json_after["vulnerabilities"][0]["cve_id"],
+            json!("CVE-2024-21338")
+        );
+
+        // 3. Verify OpenAPI spec advertises /api/kernel-patcher/status for Schemathesis
+        let resp_openapi = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_openapi.status(), StatusCode::OK);
+        let bytes_openapi = axum::body::to_bytes(resp_openapi.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let openapi: Value = serde_json::from_slice(&bytes_openapi).unwrap();
+        assert!(
+            openapi["paths"]["/api/kernel-patcher/status"]["get"].is_object(),
+            "OpenAPI spec must include GET /api/kernel-patcher/status"
+        );
+
+        let _ = server_task.await;
     }
 }

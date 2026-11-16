@@ -1008,13 +1008,9 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
             }
             // 3. If ValidTrusted and located in protected OS/Program Files folders, trust it
             let lower = normalized.to_lowercase().replace('/', "\\");
-            if lower.starts_with("c:\\program files\\")
+            lower.starts_with("c:\\program files\\")
                 || lower.starts_with("c:\\program files (x86)\\")
                 || lower.starts_with("c:\\windows\\")
-            {
-                return true;
-            }
-            false
         }
         AuthenticodeStatus::UntrustedRoot => {
             let cert_thumbprints = extract_certificate_thumbprints(&normalized);

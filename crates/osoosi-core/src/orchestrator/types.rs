@@ -795,11 +795,7 @@ pub(crate) fn is_critical_security_attack(
         return false;
     }
 
-    if sig.confidence >= 0.75 && (tech_id.starts_with('T') || tech_id.starts_with("AML.T")) {
-        return true;
-    }
-
-    false
+    sig.confidence >= 0.75 && (tech_id.starts_with('T') || tech_id.starts_with("AML.T"))
 }
 
 /// Helper to determine if a detected threat signature matches any cataloged attack pattern.

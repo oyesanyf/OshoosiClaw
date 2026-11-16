@@ -1,6 +1,6 @@
-//! # 7-Phase OpenỌ̀ṣọ́ọ̀sì Subsystem Self-Diagnostics (`osoosi.exe --verify` / `start.exe --verify`)
+//! # 8-Phase OpenỌ̀ṣọ́ọ̀sì Subsystem Self-Diagnostics (`osoosi.exe --verify` / `start.exe --verify`)
 //!
-//! Executes rigorous, genuine in-memory verification across all 7 core subsystem layers:
+//! Executes rigorous, genuine in-memory verification across all 8 core subsystem layers:
 //! - Phase 1: Core Containment & BLAKE3 State Ledger Integrity (`osoosi_core::killchain`)
 //! - Phase 2: Adjudication, WinTrust & Depth-5 Ancestry Immunity (`osoosi_core::immunity`, `osoosi_core::win_trust`)
 //! - Phase 3: Telemetry, EDR PhaseLock & DLP Lineage Fan-In (`osoosi_core::dlp_lineage`, `edr_phaselock`)
@@ -8,6 +8,7 @@
 //! - Phase 5: Axum HTTP Control Router & Loopback Binding (`osoosi_dashboard::dashboard_router`)
 //! - Phase 6: Native OS Service Lifecycle & Zero-Subprocess Compliance (`osoosi_cli::service`)
 //! - Phase 7: Multi-Source Conformal Sequential Jailbreak Verification (`osoosi_behavioral::conformal_jailbreak`)
+//! - Phase 8: Offline Host-Kernel Discovery & CPE 2.3 Canonicalization (`killswitch_kernel_patcher`)
 
 use anyhow::{bail, Result};
 use axum::body::Body;
@@ -187,6 +188,17 @@ impl SubsystemVerifier {
                 "Proposition 4.4 finite memory horizon B=12 & conformal p-value calibration verified".to_string()
             }),
             duration_ms: p7_start.elapsed().as_millis(),
+        });
+
+        // Phase 8: Offline Host-Kernel Discovery & CPE 2.3 Canonicalization
+        let p8_start = Instant::now();
+        let p8_res = Self::verify_phase_8_kernel_cpe().await;
+        phases.push(PhaseReport {
+            phase_number: 8,
+            name: "Offline Host-Kernel Discovery & CPE 2.3 Canonicalization".to_string(),
+            passed: p8_res.is_ok(),
+            details: p8_res.unwrap_or_else(|e| e.to_string()),
+            duration_ms: p8_start.elapsed().as_millis(),
         });
 
         let all_passed = phases.iter().all(|p| p.passed);
@@ -579,6 +591,49 @@ impl SubsystemVerifier {
 
         Ok(())
     }
+
+    async fn verify_phase_8_kernel_cpe() -> Result<String> {
+        let info = tokio::task::spawn_blocking(
+            killswitch_kernel_patcher::HostKernelInfo::detect_host_kernel,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Kernel detection task panicked: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Offline host kernel detection failed: {}", e))?;
+
+        if info.kernel_release.trim().is_empty() {
+            bail!("Detected host kernel release string is empty");
+        }
+        if info.architecture.trim().is_empty() {
+            bail!("Detected host architecture string is empty");
+        }
+        if !info.cpe23.starts_with("cpe:2.3:o:") {
+            bail!(
+                "Host kernel CPE 2.3 must start with 'cpe:2.3:o:', got '{}'",
+                info.cpe23
+            );
+        }
+        let fields = killswitch_kernel_patcher::cpe::split_unescaped_colons(&info.cpe23);
+        if fields.len() != 13 {
+            bail!(
+                "Host kernel CPE 2.3 must have 13 colon-separated fields, got {} in '{}'",
+                fields.len(),
+                info.cpe23
+            );
+        }
+
+        let patch_plan = killswitch_kernel_patcher::KernelPatcher::new()
+            .apply_os_kernel_patch(true)
+            .await
+            .map_err(|e| anyhow::anyhow!("Kernel patcher dry-run planning failed: {}", e))?;
+        if !patch_plan.dry_run || !patch_plan.success || patch_plan.command.is_empty() {
+            bail!("Kernel patcher dry-run planning produced invalid result");
+        }
+
+        Ok(format!(
+            "Offline kernel CPE verified: os={} release={} arch={} cpe={}",
+            info.os_family, info.kernel_release, info.architecture, info.cpe23
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -589,8 +644,8 @@ mod tests {
     async fn test_subsystem_verification_all_phases() {
         let report = SubsystemVerifier::run_all()
             .await
-            .expect("All 7 phases must pass");
-        assert_eq!(report.phases.len(), 7);
+            .expect("All 8 phases must pass");
+        assert_eq!(report.phases.len(), 8);
         assert!(report.all_passed);
         for p in &report.phases {
             assert!(p.passed, "Phase {} failed: {}", p.phase_number, p.details);

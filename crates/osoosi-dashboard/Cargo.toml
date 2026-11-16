@@ -7,6 +7,7 @@ edition.workspace = true
 osoosi-types = { path = "../osoosi-types" }
 osoosi-model = { path = "../osoosi-model" }
 osoosi-core = { path = "../osoosi-core" }
+killswitch-kernel-patcher = { path = "../killswitch-kernel-patcher" }
 osoosi-runtime = { path = "../osoosi-runtime" }
 osoosi-policy = { path = "../osoosi-policy" }
 osoosi-wire = { path = "../osoosi-wire" }

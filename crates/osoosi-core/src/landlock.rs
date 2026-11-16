@@ -1,24 +1,85 @@
-//! Landlock-based Filesystem Sandboxing for OpenỌ̀ṣọ́ọ̀sì.
+//! Landlock-based Filesystem & Network Port Sandboxing, Seccomp-BPF Confinement,
+//! `nftables` Containment, and Raw `AF_NETLINK` Route / `SOCK_DESTROY` Control for OpenỌ̀ṣọ́ọ̀sì.
 //!
-//! Uses the Linux Landlock LSM (Linux Security Module) to enforce
-//! mandatory filesystem access controls at the kernel level. Once
-//! applied, even root cannot bypass these restrictions.
-//!
-//! This provides a "jail" around the agent that prevents:
-//! - YARA rules/ML models from being tampered with (read-only)
-//! - Quarantine escape (write-only to quarantine dir)
-//! - Arbitrary filesystem traversal by compromised WASM scripts
-//!
-//! # Platform Support
-//! - **Linux 5.13+**: Full Landlock support
-//! - **Linux < 5.13**: Graceful degradation (warning only)
-//! - **Windows/macOS**: Not supported (uses OpenShell instead)
+//! # Phase 3 Linux Kernel Containment Surface
+//! - **Landlock LSM (ABI v1–v4)**: Filesystem read/write path jails (`LANDLOCK_RULE_PATH_BENEATH`)
+//!   plus ABI v4 TCP bind/connect port confinement (`LANDLOCK_RULE_NET_PORT`).
+//! - **Seccomp-BPF (`x86_64` / `aarch64`)**: Rejects wrong-arch syscall ABIs, blocks container/namespace
+//!   escape & kernel-surface syscalls (`ptrace`, `mount`, `setns`, `unshare`, `bpf`, `io_uring_setup`,
+//!   `kexec_load`, `userfaultfd`, `keyctl`), and optionally restricts `socket`/`socketpair` to `AF_UNIX`.
+//! - **`nftables` Containment**: Generates & atomically applies default-drop `table inet osoosi_quarantine`
+//!   blocking `127.0.0.2+`, IMDS (`169.254.0.0/16` / `fe80::/10`), DNS/DHCP/DoT/QUIC, loopback proxies,
+//!   and lateral ports while permitting exact `127.0.0.1` / `::1` TCP on sanitized control ports.
+//! - **Raw `AF_NETLINK`**: Installs/removes `RTN_BLACKHOLE` routes (`RTM_NEWROUTE`/`RTM_DELROUTE`)
+//!   and sweeps non-localhost `/proc/net/{tcp,tcp6,udp,udp6,raw,raw6}` + blocked proxy sockets
+//!   via `NETLINK_INET_DIAG` `SOCK_DESTROY` (`IPPROTO_TCP=6`, `IPPROTO_UDP=17`, `IPPROTO_RAW=255`).
 
+use anyhow::anyhow;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(target_os = "linux")]
+use std::path::Path;
 use std::path::PathBuf;
 #[allow(unused_imports)]
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
-/// Landlock sandbox configuration.
+use crate::wfp::{
+    sanitize_firewall_preserved_ports, QUARANTINE_BLOCKED_DISCOVERY_PORTS,
+    QUARANTINE_BLOCKED_LATERAL_PORTS, QUARANTINE_BLOCKED_LOOPBACK_PROXY_PORTS,
+};
+
+// ---------------------------------------------------------------------------
+// 1. Landlock ABI Constants & Structures (Linux 5.13+ .. 6.7+ ABI v4)
+// ---------------------------------------------------------------------------
+
+pub const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
+pub const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
+pub const LANDLOCK_RULE_NET_PORT: u32 = 2;
+
+pub const SYS_LANDLOCK_CREATE_RULESET: i64 = 444;
+pub const SYS_LANDLOCK_ADD_RULE: i64 = 445;
+pub const SYS_LANDLOCK_RESTRICT_SELF: i64 = 446;
+
+pub const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
+pub const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1 << 1;
+pub const LANDLOCK_ACCESS_FS_READ_FILE: u64 = 1 << 2;
+pub const LANDLOCK_ACCESS_FS_READ_DIR: u64 = 1 << 3;
+pub const LANDLOCK_ACCESS_FS_REMOVE_DIR: u64 = 1 << 4;
+pub const LANDLOCK_ACCESS_FS_REMOVE_FILE: u64 = 1 << 5;
+pub const LANDLOCK_ACCESS_FS_MAKE_CHAR: u64 = 1 << 6;
+pub const LANDLOCK_ACCESS_FS_MAKE_DIR: u64 = 1 << 7;
+pub const LANDLOCK_ACCESS_FS_MAKE_REG: u64 = 1 << 8;
+pub const LANDLOCK_ACCESS_FS_MAKE_SOCK: u64 = 1 << 9;
+pub const LANDLOCK_ACCESS_FS_MAKE_FIFO: u64 = 1 << 10;
+pub const LANDLOCK_ACCESS_FS_MAKE_BLOCK: u64 = 1 << 11;
+pub const LANDLOCK_ACCESS_FS_MAKE_SYM: u64 = 1 << 12;
+pub const LANDLOCK_ACCESS_FS_REFER: u64 = 1 << 13; // ABI >= 2
+pub const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1 << 14; // ABI >= 3
+
+pub const LANDLOCK_ACCESS_NET_BIND_TCP: u64 = 1 << 0; // ABI >= 4
+pub const LANDLOCK_ACCESS_NET_CONNECT_TCP: u64 = 1 << 1; // ABI >= 4
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LandlockRulesetAttr {
+    pub handled_access_fs: u64,
+    pub handled_access_net: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct LandlockPathBeneathAttr {
+    pub allowed_access: u64,
+    pub parent_fd: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LandlockNetPortAttr {
+    pub allowed_access: u64,
+    pub port: u64,
+}
+
+/// Landlock sandbox configuration (preserved public API).
 #[derive(Debug, Clone)]
 pub struct LandlockConfig {
     /// Paths that can only be read (YARA rules, models, config).
@@ -53,86 +114,124 @@ impl Default for LandlockConfig {
     }
 }
 
-/// Apply the Landlock sandbox to the current process.
-///
-/// After calling this function, the process can ONLY access the paths
-/// specified in the config. All other filesystem access is denied by
-/// the kernel — even for root.
+/// Extended Landlock filesystem & TCP network port sandbox configuration (ABI v1–v4).
+#[derive(Debug, Clone)]
+pub struct LandlockSandboxConfig {
+    pub read_only_paths: Vec<PathBuf>,
+    pub read_write_paths: Vec<PathBuf>,
+    pub allowed_tcp_ports: Vec<u16>,
+    pub strict: bool,
+}
+
+impl Default for LandlockSandboxConfig {
+    fn default() -> Self {
+        Self {
+            read_only_paths: vec![
+                PathBuf::from("/usr"),
+                PathBuf::from("/lib"),
+                PathBuf::from("/lib64"),
+                PathBuf::from("/etc"),
+            ],
+            read_write_paths: vec![PathBuf::from("/tmp")],
+            allowed_tcp_ports: vec![3030],
+            strict: false,
+        }
+    }
+}
+
+impl From<&LandlockConfig> for LandlockSandboxConfig {
+    fn from(cfg: &LandlockConfig) -> Self {
+        Self {
+            read_only_paths: cfg.read_only_paths.clone(),
+            read_write_paths: cfg.writable_paths.clone(),
+            allowed_tcp_ports: sanitize_firewall_preserved_ports(&[]),
+            strict: cfg.strict_mode,
+        }
+    }
+}
+
+/// Returns the supported Linux Landlock ABI version, or `None` if unsupported.
+#[cfg(target_os = "linux")]
+pub fn get_landlock_abi_version() -> Option<u32> {
+    let ret = unsafe {
+        libc::syscall(
+            SYS_LANDLOCK_CREATE_RULESET as libc::c_long,
+            std::ptr::null::<u8>(),
+            0usize,
+            LANDLOCK_CREATE_RULESET_VERSION,
+        )
+    };
+    if ret >= 0 {
+        Some(ret as u32)
+    } else {
+        None
+    }
+}
+
+/// Returns `None` on non-Linux platforms where Landlock LSM is unavailable.
+#[cfg(not(target_os = "linux"))]
+pub fn get_landlock_abi_version() -> Option<u32> {
+    None
+}
+
+/// Apply the Landlock filesystem & ABI v4 TCP port sandbox to the current process.
 #[cfg(target_os = "linux")]
 pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
-    // Check Landlock availability
-    let abi = match landlock_abi_version() {
+    let extended = LandlockSandboxConfig::from(config);
+    apply_landlock_sandbox_with_config(&extended)
+}
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
+    warn!("Landlock sandboxing is Linux-only. Using host containment on this platform.");
+    let _ = config;
+    Ok(())
+}
+
+/// Applies the full Landlock ABI v1–v4 filesystem + TCP port sandbox to the current process.
+#[cfg(target_os = "linux")]
+pub fn apply_landlock_sandbox_with_config(config: &LandlockSandboxConfig) -> anyhow::Result<()> {
+    let abi = match get_landlock_abi_version() {
         Some(v) => v,
         None => {
-            if config.strict_mode {
+            if config.strict {
                 anyhow::bail!("Landlock not supported on this kernel. Upgrade to Linux 5.13+");
             }
-            warn!("Landlock not supported on this kernel. Filesystem sandbox disabled.");
-            warn!("Consider upgrading to Linux 5.13+ or using OpenShell containerization.");
+            warn!("Landlock not supported on this kernel. Sandbox disabled.");
             return Ok(());
         }
     };
 
-    info!("Applying Landlock filesystem sandbox (ABI v{})...", abi);
+    info!("Applying Landlock kernel sandbox (ABI v{})...", abi);
 
-    // Create the ruleset
-    let ruleset_fd = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            &landlock_ruleset_attr(abi) as *const _,
-            std::mem::size_of::<LandlockRulesetAttr>(),
-            0u32,
-        )
+    let enforce_net = !config.allowed_tcp_ports.is_empty();
+    let ruleset_fd = match build_landlock_ruleset_fd(config, enforce_net)? {
+        Some(fd) => fd,
+        None => return Ok(()),
     };
 
-    if ruleset_fd < 0 {
+    let prctl_ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    if prctl_ret != 0 {
         let err = std::io::Error::last_os_error();
-        if config.strict_mode {
-            anyhow::bail!("Failed to create Landlock ruleset: {}", err);
-        }
-        warn!(
-            "Failed to create Landlock ruleset: {}. Continuing without sandbox.",
-            err
-        );
-        return Ok(());
-    }
-
-    let ruleset_fd = ruleset_fd as i32;
-
-    // Add read-only rules
-    for path in &config.read_only_paths {
-        if path.exists() {
-            if let Err(e) = add_landlock_path_rule(ruleset_fd, path, false) {
-                warn!("Could not add read-only rule for {:?}: {}", path, e);
+        if config.strict {
+            unsafe {
+                libc::close(ruleset_fd);
             }
+            anyhow::bail!("PR_SET_NO_NEW_PRIVS failed: {}", err);
         }
-    }
-
-    // Add writable rules
-    for path in &config.writable_paths {
-        if path.exists() {
-            if let Err(e) = add_landlock_path_rule(ruleset_fd, path, true) {
-                warn!("Could not add writable rule for {:?}: {}", path, e);
-            }
-        }
-    }
-
-    // Restrict self — this is irreversible!
-    let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
         warn!("PR_SET_NO_NEW_PRIVS failed: {}", err);
     }
 
-    let ret = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0u32) };
-
+    let ret =
+        unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF as libc::c_long, ruleset_fd, 0u32) };
     unsafe {
         libc::close(ruleset_fd);
     }
 
     if ret < 0 {
         let err = std::io::Error::last_os_error();
-        if config.strict_mode {
+        if config.strict {
             anyhow::bail!("Failed to apply Landlock restriction: {}", err);
         }
         warn!(
@@ -143,124 +242,1519 @@ pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
     }
 
     info!(
-        "Landlock filesystem sandbox ACTIVE. {} read-only, {} writable paths.",
+        "Landlock sandbox ACTIVE (ABI v{}). {} read-only, {} writable paths, {} TCP control ports.",
+        abi,
         config.read_only_paths.len(),
-        config.writable_paths.len()
+        config.read_write_paths.len(),
+        config.allowed_tcp_ports.len()
     );
     Ok(())
 }
 
-/// Stub for non-Linux platforms.
+/// Non-Linux stub for `apply_landlock_sandbox_with_config`.
 #[cfg(not(target_os = "linux"))]
-pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
-    warn!("Landlock sandboxing is Linux-only. Using OpenShell for containment on this platform.");
+pub fn apply_landlock_sandbox_with_config(config: &LandlockSandboxConfig) -> anyhow::Result<()> {
     let _ = config;
     Ok(())
 }
 
-// --- Landlock syscall helpers ---
-
 #[cfg(target_os = "linux")]
-#[repr(C)]
-struct LandlockRulesetAttr {
-    handled_access_fs: u64,
-}
+fn build_landlock_ruleset_fd(
+    config: &LandlockSandboxConfig,
+    enforce_net: bool,
+) -> anyhow::Result<Option<i32>> {
+    let abi = match get_landlock_abi_version() {
+        Some(v) => v,
+        None => {
+            if config.strict {
+                anyhow::bail!("Landlock not supported on this kernel");
+            }
+            return Ok(None);
+        }
+    };
 
-#[cfg(target_os = "linux")]
-fn landlock_ruleset_attr(abi: u32) -> LandlockRulesetAttr {
-    // ABI v1 access flags
-    let mut flags: u64 = (1 << 0)  | // EXECUTE
-        (1 << 1)  | // WRITE_FILE
-        (1 << 2)  | // READ_FILE
-        (1 << 3)  | // READ_DIR
-        (1 << 4)  | // REMOVE_DIR
-        (1 << 5)  | // REMOVE_FILE
-        (1 << 6)  | // MAKE_CHAR
-        (1 << 7)  | // MAKE_DIR
-        (1 << 8)  | // MAKE_REG
-        (1 << 9)  | // MAKE_SOCK
-        (1 << 10) | // MAKE_FIFO
-        (1 << 11) | // MAKE_BLOCK
-        (1 << 12); // MAKE_SYM
+    let mut fs_flags = LANDLOCK_ACCESS_FS_EXECUTE
+        | LANDLOCK_ACCESS_FS_WRITE_FILE
+        | LANDLOCK_ACCESS_FS_READ_FILE
+        | LANDLOCK_ACCESS_FS_READ_DIR
+        | LANDLOCK_ACCESS_FS_REMOVE_DIR
+        | LANDLOCK_ACCESS_FS_REMOVE_FILE
+        | LANDLOCK_ACCESS_FS_MAKE_CHAR
+        | LANDLOCK_ACCESS_FS_MAKE_DIR
+        | LANDLOCK_ACCESS_FS_MAKE_REG
+        | LANDLOCK_ACCESS_FS_MAKE_SOCK
+        | LANDLOCK_ACCESS_FS_MAKE_FIFO
+        | LANDLOCK_ACCESS_FS_MAKE_BLOCK
+        | LANDLOCK_ACCESS_FS_MAKE_SYM;
 
     if abi >= 2 {
-        flags |= 1 << 13; // REFER (move/rename across dirs)
+        fs_flags |= LANDLOCK_ACCESS_FS_REFER;
     }
     if abi >= 3 {
-        flags |= 1 << 14; // TRUNCATE
+        fs_flags |= LANDLOCK_ACCESS_FS_TRUNCATE;
     }
 
-    LandlockRulesetAttr {
-        handled_access_fs: flags,
-    }
-}
+    let net_flags = if abi >= 4 && enforce_net {
+        LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP
+    } else {
+        0
+    };
 
-#[cfg(target_os = "linux")]
-fn landlock_abi_version() -> Option<u32> {
-    // SYS_landlock_create_ruleset with NULL attr and size 0 returns the ABI version
-    let ret = unsafe {
+    let attr = LandlockRulesetAttr {
+        handled_access_fs: fs_flags,
+        handled_access_net: net_flags,
+    };
+
+    // ABI < 4 kernels reject structs larger than u64 (8 bytes) with EINVAL/E2BIG.
+    let attr_size = if abi >= 4 {
+        std::mem::size_of::<LandlockRulesetAttr>()
+    } else {
+        std::mem::size_of::<u64>()
+    };
+
+    let ruleset_fd = unsafe {
         libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            std::ptr::null::<u8>(),
-            0usize,
-            1u32, // LANDLOCK_CREATE_RULESET_VERSION
+            SYS_LANDLOCK_CREATE_RULESET as libc::c_long,
+            &attr as *const _ as *const libc::c_void,
+            attr_size,
+            0u32,
         )
     };
-    if ret >= 0 {
-        Some(ret as u32)
-    } else {
-        None
-    }
-}
 
-#[cfg(target_os = "linux")]
-#[repr(C)]
-struct LandlockPathBeneathAttr {
-    allowed_access: u64,
-    parent_fd: i32,
+    if ruleset_fd < 0 {
+        let err = std::io::Error::last_os_error();
+        if config.strict {
+            anyhow::bail!("Failed to create Landlock ruleset: {}", err);
+        }
+        warn!(
+            "Failed to create Landlock ruleset: {}. Continuing without sandbox.",
+            err
+        );
+        return Ok(None);
+    }
+
+    let fd = ruleset_fd as i32;
+
+    for path in &config.read_only_paths {
+        if path.exists() {
+            if let Err(e) = add_landlock_path_rule(fd, path, false, abi) {
+                if config.strict {
+                    unsafe {
+                        libc::close(fd);
+                    }
+                    return Err(e);
+                }
+                warn!("Could not add read-only rule for {:?}: {}", path, e);
+            }
+        }
+    }
+
+    for path in &config.read_write_paths {
+        if path.exists() {
+            if let Err(e) = add_landlock_path_rule(fd, path, true, abi) {
+                if config.strict {
+                    unsafe {
+                        libc::close(fd);
+                    }
+                    return Err(e);
+                }
+                warn!("Could not add writable rule for {:?}: {}", path, e);
+            }
+        }
+    }
+
+    if abi >= 4 && enforce_net {
+        let sanitized_ports = sanitize_firewall_preserved_ports(&config.allowed_tcp_ports);
+        for &port in &sanitized_ports {
+            let net_attr = LandlockNetPortAttr {
+                allowed_access: LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP,
+                port: port as u64,
+            };
+            let ret = unsafe {
+                libc::syscall(
+                    SYS_LANDLOCK_ADD_RULE as libc::c_long,
+                    fd,
+                    LANDLOCK_RULE_NET_PORT,
+                    &net_attr as *const _ as *const libc::c_void,
+                    0u32,
+                )
+            };
+            if ret < 0 {
+                let err = std::io::Error::last_os_error();
+                if config.strict {
+                    unsafe {
+                        libc::close(fd);
+                    }
+                    anyhow::bail!("landlock_add_rule(NET_PORT={}) failed: {}", port, err);
+                }
+                warn!("Could not add Landlock NET_PORT rule for {}: {}", port, err);
+            }
+        }
+    }
+
+    Ok(Some(fd))
 }
 
 #[cfg(target_os = "linux")]
 fn add_landlock_path_rule(
     ruleset_fd: i32,
-    path: &std::path::Path,
+    path: &Path,
     writable: bool,
+    abi: u32,
 ) -> anyhow::Result<()> {
     use std::os::unix::io::AsRawFd;
 
-    let fd = std::fs::File::open(path)?;
-    let parent_fd = fd.as_raw_fd();
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata().ok();
+    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+    let is_regular_file = meta.as_ref().is_some_and(|m| m.is_file());
 
-    let read_access: u64 = (1 << 2) | (1 << 3); // READ_FILE | READ_DIR
-    let write_access: u64 = (1 << 1) | (1 << 4) | (1 << 5) | (1 << 8); // WRITE_FILE | REMOVE_DIR | REMOVE_FILE | MAKE_REG
-
-    let allowed_access = if writable {
-        read_access | write_access
+    let allowed_access = if is_dir {
+        let mut dir_access =
+            LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE;
+        if writable {
+            dir_access |= LANDLOCK_ACCESS_FS_WRITE_FILE
+                | LANDLOCK_ACCESS_FS_REMOVE_DIR
+                | LANDLOCK_ACCESS_FS_REMOVE_FILE
+                | LANDLOCK_ACCESS_FS_MAKE_REG
+                | LANDLOCK_ACCESS_FS_MAKE_DIR
+                | LANDLOCK_ACCESS_FS_MAKE_SYM;
+            if abi >= 2 {
+                dir_access |= LANDLOCK_ACCESS_FS_REFER;
+            }
+            if abi >= 3 {
+                dir_access |= LANDLOCK_ACCESS_FS_TRUNCATE;
+            }
+        }
+        dir_access
     } else {
-        read_access
+        // Directory flags trigger EINVAL on non-directory descriptors in Landlock.
+        let mut file_access = LANDLOCK_ACCESS_FS_READ_FILE;
+        if is_regular_file {
+            file_access |= LANDLOCK_ACCESS_FS_EXECUTE;
+        }
+        if writable {
+            file_access |= LANDLOCK_ACCESS_FS_WRITE_FILE;
+            if abi >= 3 {
+                file_access |= LANDLOCK_ACCESS_FS_TRUNCATE;
+            }
+        }
+        file_access
     };
 
     let attr = LandlockPathBeneathAttr {
         allowed_access,
-        parent_fd,
+        parent_fd: file.as_raw_fd(),
     };
 
     let ret = unsafe {
         libc::syscall(
-            libc::SYS_landlock_add_rule,
+            SYS_LANDLOCK_ADD_RULE as libc::c_long,
             ruleset_fd,
-            1u32, // LANDLOCK_RULE_PATH_BENEATH
-            &attr as *const _,
+            LANDLOCK_RULE_PATH_BENEATH,
+            &attr as *const _ as *const libc::c_void,
             0u32,
         )
     };
 
     if ret < 0 {
-        Err(anyhow::anyhow!(
+        Err(anyhow!(
             "landlock_add_rule failed: {}",
             std::io::Error::last_os_error()
         ))
     } else {
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Pre-Fork Async-Signal-Safe Landlock + Seccomp-BPF Confinement
+// ---------------------------------------------------------------------------
+
+pub const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
+pub const AUDIT_ARCH_AARCH64: u32 = 0xC000_00B7;
+
+pub const BPF_LD_W_ABS: u16 = 0x20;
+pub const BPF_JMP_JEQ_K: u16 = 0x15;
+pub const BPF_RET_K: u16 = 0x06;
+
+pub const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+pub const SECCOMP_RET_ERRNO_EPERM: u32 = 0x0005_0001;
+pub const SECCOMP_RET_ALLOW: u32 = 0x7FFF_0000;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SockFilter {
+    pub code: u16,
+    pub jt: u8,
+    pub jf: u8,
+    pub k: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SockFprog {
+    pub len: u16,
+    pub filter: *const SockFilter,
+}
+
+#[inline]
+const fn bpf_stmt(code: u16, k: u32) -> SockFilter {
+    SockFilter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
+}
+
+#[inline]
+const fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
+    SockFilter { code, jt, jf, k }
+}
+
+/// Builds a classical cBPF seccomp filter blocking container/namespace escape syscalls and,
+/// when `allow_network == false`, blocking non-`AF_UNIX` `socket()` and `socketpair()` calls
+/// across Linux `x86_64` and `aarch64`.
+pub fn build_agent_seccomp_bpf(allow_network: bool) -> Vec<SockFilter> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let (expected_arch, blocked_syscalls, socket_nr, socketpair_nr) = (
+        AUDIT_ARCH_X86_64,
+        [
+            libc::SYS_ptrace as u32,
+            libc::SYS_process_vm_readv as u32,
+            libc::SYS_process_vm_writev as u32,
+            libc::SYS_kexec_load as u32,
+            libc::SYS_init_module as u32,
+            libc::SYS_finit_module as u32,
+            libc::SYS_delete_module as u32,
+            libc::SYS_mount as u32,
+            libc::SYS_umount2 as u32,
+            libc::SYS_pivot_root as u32,
+            libc::SYS_chroot as u32,
+            libc::SYS_setns as u32,
+            libc::SYS_unshare as u32,
+            libc::SYS_bpf as u32,
+            libc::SYS_perf_event_open as u32,
+            libc::SYS_io_uring_setup as u32,
+            libc::SYS_userfaultfd as u32,
+            libc::SYS_keyctl as u32,
+            libc::SYS_add_key as u32,
+            libc::SYS_request_key as u32,
+        ]
+        .as_slice(),
+        libc::SYS_socket as u32,
+        libc::SYS_socketpair as u32,
+    );
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    let (expected_arch, blocked_syscalls, socket_nr, socketpair_nr) = (
+        AUDIT_ARCH_AARCH64,
+        [
+            libc::SYS_ptrace as u32,
+            libc::SYS_process_vm_readv as u32,
+            libc::SYS_process_vm_writev as u32,
+            libc::SYS_kexec_load as u32,
+            libc::SYS_init_module as u32,
+            libc::SYS_finit_module as u32,
+            libc::SYS_delete_module as u32,
+            libc::SYS_mount as u32,
+            libc::SYS_umount2 as u32,
+            libc::SYS_pivot_root as u32,
+            libc::SYS_chroot as u32,
+            libc::SYS_setns as u32,
+            libc::SYS_unshare as u32,
+            libc::SYS_bpf as u32,
+            libc::SYS_perf_event_open as u32,
+            libc::SYS_io_uring_setup as u32,
+            libc::SYS_userfaultfd as u32,
+            libc::SYS_keyctl as u32,
+            libc::SYS_add_key as u32,
+            libc::SYS_request_key as u32,
+        ]
+        .as_slice(),
+        libc::SYS_socket as u32,
+        libc::SYS_socketpair as u32,
+    );
+
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let (expected_arch, blocked_syscalls, socket_nr, socketpair_nr) = (
+        AUDIT_ARCH_X86_64,
+        [
+            101u32, 310, 311, 246, 175, 313, 176, 165, 166, 155, 161, 308, 272, 321, 298, 425, 323,
+            250, 248, 249,
+        ]
+        .as_slice(),
+        41u32,
+        53u32,
+    );
+
+    let mut prog = Vec::with_capacity(blocked_syscalls.len() + 14);
+    prog.push(bpf_stmt(BPF_LD_W_ABS, 4));
+    prog.push(bpf_jump(BPF_JMP_JEQ_K, expected_arch, 1, 0));
+    prog.push(bpf_stmt(BPF_RET_K, SECCOMP_RET_KILL_PROCESS));
+
+    prog.push(bpf_stmt(BPF_LD_W_ABS, 0));
+
+    let mut deny_jump_indices = Vec::with_capacity(blocked_syscalls.len());
+    for &sys_nr in blocked_syscalls {
+        deny_jump_indices.push(prog.len());
+        prog.push(bpf_jump(BPF_JMP_JEQ_K, sys_nr, 0, 0));
+    }
+
+    if !allow_network {
+        prog.push(bpf_jump(BPF_JMP_JEQ_K, socket_nr, 1, 0));
+        prog.push(bpf_jump(BPF_JMP_JEQ_K, socketpair_nr, 0, 3));
+        prog.push(bpf_stmt(BPF_LD_W_ABS, 16));
+        prog.push(bpf_jump(BPF_JMP_JEQ_K, 1, 1, 0)); // AF_UNIX == 1
+        prog.push(bpf_stmt(BPF_RET_K, SECCOMP_RET_ERRNO_EPERM));
+    }
+
+    prog.push(bpf_stmt(BPF_RET_K, SECCOMP_RET_ALLOW));
+    let deny_idx = prog.len();
+    prog.push(bpf_stmt(BPF_RET_K, SECCOMP_RET_ERRNO_EPERM));
+
+    for idx in deny_jump_indices {
+        let offset = (deny_idx - idx - 1) as u8;
+        prog[idx].jt = offset;
+    }
+
+    prog
+}
+
+/// Async-signal-safe prepared Landlock + seccomp-bpf confinement bundle created before `fork()`.
+#[cfg(target_os = "linux")]
+pub struct PreparedLinuxSandbox {
+    ruleset_fd: Option<i32>,
+    seccomp_prog: Vec<SockFilter>,
+    strict: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl PreparedLinuxSandbox {
+    pub fn prepare(config: &LandlockSandboxConfig, allow_network: bool) -> anyhow::Result<Self> {
+        let enforce_net = !allow_network || !config.allowed_tcp_ports.is_empty();
+        let ruleset_fd = build_landlock_ruleset_fd(config, enforce_net)?;
+        if let Some(fd) = ruleset_fd {
+            unsafe {
+                let _ = libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+        Ok(Self {
+            ruleset_fd,
+            seccomp_prog: build_agent_seccomp_bpf(allow_network),
+            strict: config.strict,
+        })
+    }
+
+    pub fn prepare_seccomp_only(allow_network: bool, strict: bool) -> Self {
+        Self {
+            ruleset_fd: None,
+            seccomp_prog: build_agent_seccomp_bpf(allow_network),
+            strict,
+        }
+    }
+
+    /// Invoked in the child process between `fork()` and `exec()` via `CommandExt::pre_exec`.
+    ///
+    /// # Safety
+    /// Caller must execute in a single-threaded async-signal-safe `pre_exec` context while `self`
+    /// remains alive until `execve` completes.
+    pub unsafe fn apply_in_pre_exec(&self) -> std::io::Result<()> {
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if let Some(fd) = self.ruleset_fd {
+            let ret = libc::syscall(SYS_LANDLOCK_RESTRICT_SELF as libc::c_long, fd, 0u32);
+            let saved_err = std::io::Error::last_os_error();
+            let _ = libc::close(fd);
+            if ret < 0 && self.strict {
+                return Err(saved_err);
+            }
+        }
+        if !self.seccomp_prog.is_empty() {
+            let fprog = SockFprog {
+                len: self.seccomp_prog.len() as u16,
+                filter: self.seccomp_prog.as_ptr(),
+            };
+            if libc::prctl(libc::PR_SET_SECCOMP, 2, &fprog as *const SockFprog) != 0 {
+                let err = std::io::Error::last_os_error();
+                if self.strict {
+                    return Err(err);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PreparedLinuxSandbox {
+    fn drop(&mut self) {
+        if let Some(fd) = self.ruleset_fd.take() {
+            unsafe {
+                let _ = libc::close(fd);
+            }
+        }
+    }
+}
+
+/// Applies `PR_SET_NO_NEW_PRIVS` + agent `seccomp-bpf` directly to the current Linux process.
+pub fn apply_agent_seccomp_bpf(allow_network: bool) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let prog = build_agent_seccomp_bpf(allow_network);
+        let fprog = SockFprog {
+            len: prog.len() as u16,
+            filter: prog.as_ptr(),
+        };
+        unsafe {
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                return Err(anyhow!(
+                    "prctl(PR_SET_NO_NEW_PRIVS) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            if libc::prctl(libc::PR_SET_SECCOMP, 2, &fprog as *const SockFprog) != 0 {
+                return Err(anyhow!(
+                    "prctl(PR_SET_SECCOMP) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = allow_network;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Raw Netlink (`AF_NETLINK`) Route Blackhole & Multi-Protocol `SOCK_DESTROY`
+// ---------------------------------------------------------------------------
+
+pub const RTM_NEWROUTE: u16 = 24;
+pub const RTM_DELROUTE: u16 = 25;
+pub const RTM_GETROUTE: u16 = 26;
+
+pub const NLM_F_REQUEST: u16 = 0x01;
+pub const NLM_F_ACK: u16 = 0x04;
+pub const NLM_F_CREATE: u16 = 0x400;
+pub const NLM_F_EXCL: u16 = 0x200;
+pub const NLM_F_REPLACE: u16 = 0x100;
+
+pub const RTN_UNSPEC: u8 = 0;
+pub const RTN_UNICAST: u8 = 1;
+pub const RTN_LOCAL: u8 = 2;
+pub const RTN_BLACKHOLE: u8 = 6;
+pub const RTN_UNREACHABLE: u8 = 7;
+pub const RTN_PROHIBIT: u8 = 8;
+
+pub const RT_TABLE_MAIN: u8 = 254;
+pub const RT_TABLE_LOCAL: u8 = 255;
+
+pub const RTPROT_BOOT: u8 = 3;
+pub const RTPROT_STATIC: u8 = 4;
+
+pub const RT_SCOPE_UNIVERSE: u8 = 0;
+pub const RT_SCOPE_NOWHERE: u8 = 255;
+
+pub const RTA_DST: u16 = 1;
+pub const RTA_PRIORITY: u16 = 6;
+pub const RTA_TABLE: u16 = 15;
+
+pub const NETLINK_INET_DIAG: i32 = 4;
+pub const SOCK_DIAG_BY_FAMILY: u16 = 20;
+pub const SOCK_DESTROY: u16 = 21;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NlMsgHdr {
+    pub nlmsg_len: u32,
+    pub nlmsg_type: u16,
+    pub nlmsg_flags: u16,
+    pub nlmsg_seq: u32,
+    pub nlmsg_pid: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RtMsg {
+    pub rtm_family: u8,
+    pub rtm_dst_len: u8,
+    pub rtm_src_len: u8,
+    pub rtm_tos: u8,
+    pub rtm_table: u8,
+    pub rtm_protocol: u8,
+    pub rtm_scope: u8,
+    pub rtm_type: u8,
+    pub rtm_flags: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RtAttr {
+    pub rta_len: u16,
+    pub rta_type: u16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SockAddrNl {
+    pub nl_family: u16,
+    pub nl_pad: u16,
+    pub nl_pid: u32,
+    pub nl_groups: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InetDiagSockId {
+    pub idiag_sport: u16,
+    pub idiag_dport: u16,
+    pub idiag_src: [u32; 4],
+    pub idiag_dst: [u32; 4],
+    pub idiag_if: u32,
+    pub idiag_cookie: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InetDiagReqV2 {
+    pub sdiag_family: u8,
+    pub sdiag_protocol: u8,
+    pub idiag_ext: u8,
+    pub pad: u8,
+    pub idiag_states: u32,
+    pub id: InetDiagSockId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpState {
+    Established = 1,
+    SynSent = 2,
+    SynRecv = 3,
+    FinWait1 = 4,
+    FinWait2 = 5,
+    TimeWait = 6,
+    Close = 7,
+    CloseWait = 8,
+    LastAck = 9,
+    Listen = 10,
+    Closing = 11,
+    Unknown = 0,
+}
+
+impl From<u8> for TcpState {
+    fn from(val: u8) -> Self {
+        match val {
+            1 => TcpState::Established,
+            2 => TcpState::SynSent,
+            3 => TcpState::SynRecv,
+            4 => TcpState::FinWait1,
+            5 => TcpState::FinWait2,
+            6 => TcpState::TimeWait,
+            7 => TcpState::Close,
+            8 => TcpState::CloseWait,
+            9 => TcpState::LastAck,
+            10 => TcpState::Listen,
+            11 => TcpState::Closing,
+            _ => TcpState::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxSocketEntry {
+    pub slot: usize,
+    pub local_addr: IpAddr,
+    pub local_port: u16,
+    pub remote_addr: IpAddr,
+    pub remote_port: u16,
+    pub state: TcpState,
+    pub inode: u64,
+    pub is_ipv6: bool,
+}
+
+/// Builds a binary Netlink `RTN_BLACKHOLE` route message for IPv4 (`0.0.0.0/0`) or IPv6 (`::/0`).
+pub fn build_blackhole_route_msg(is_v6: bool, is_delete: bool, priority: u32) -> Vec<u8> {
+    let family = if is_v6 {
+        #[cfg(target_os = "linux")]
+        {
+            libc::AF_INET6 as u8
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            10u8
+        }
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            libc::AF_INET as u8
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            2u8
+        }
+    };
+
+    let rta_attr_len = std::mem::size_of::<RtAttr>() + std::mem::size_of::<u32>();
+    let total_len = std::mem::size_of::<NlMsgHdr>() + std::mem::size_of::<RtMsg>() + rta_attr_len;
+
+    let nlmsg_type = if is_delete {
+        RTM_DELROUTE
+    } else {
+        RTM_NEWROUTE
+    };
+    let nlmsg_flags = if is_delete {
+        NLM_F_REQUEST | NLM_F_ACK
+    } else {
+        NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE
+    };
+
+    let hdr = NlMsgHdr {
+        nlmsg_len: total_len as u32,
+        nlmsg_type,
+        nlmsg_flags,
+        nlmsg_seq: 1,
+        nlmsg_pid: 0,
+    };
+
+    let rt = RtMsg {
+        rtm_family: family,
+        rtm_dst_len: 0,
+        rtm_src_len: 0,
+        rtm_tos: 0,
+        rtm_table: RT_TABLE_MAIN,
+        rtm_protocol: RTPROT_STATIC,
+        rtm_scope: RT_SCOPE_UNIVERSE,
+        rtm_type: RTN_BLACKHOLE,
+        rtm_flags: 0,
+    };
+
+    let rta = RtAttr {
+        rta_len: rta_attr_len as u16,
+        rta_type: RTA_PRIORITY,
+    };
+
+    let mut buf = Vec::with_capacity(total_len);
+    unsafe {
+        buf.extend_from_slice(std::slice::from_raw_parts(
+            &hdr as *const _ as *const u8,
+            std::mem::size_of::<NlMsgHdr>(),
+        ));
+        buf.extend_from_slice(std::slice::from_raw_parts(
+            &rt as *const _ as *const u8,
+            std::mem::size_of::<RtMsg>(),
+        ));
+        buf.extend_from_slice(std::slice::from_raw_parts(
+            &rta as *const _ as *const u8,
+            std::mem::size_of::<RtAttr>(),
+        ));
+        buf.extend_from_slice(&priority.to_ne_bytes());
+    }
+    buf
+}
+
+/// Builds a binary Netlink `NETLINK_INET_DIAG` `SOCK_DESTROY` request for protocol
+/// `6` (`TCP`), `17` (`UDP`), or `255` (`RAW`).
+pub fn build_sock_destroy_msg_for_proto(entry: &LinuxSocketEntry, protocol: u8) -> Vec<u8> {
+    let family = if entry.is_ipv6 {
+        #[cfg(target_os = "linux")]
+        {
+            libc::AF_INET6 as u8
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            10u8
+        }
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            libc::AF_INET as u8
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            2u8
+        }
+    };
+
+    let total_len = std::mem::size_of::<NlMsgHdr>() + std::mem::size_of::<InetDiagReqV2>();
+    let hdr = NlMsgHdr {
+        nlmsg_len: total_len as u32,
+        nlmsg_type: SOCK_DESTROY,
+        nlmsg_flags: NLM_F_REQUEST | NLM_F_ACK,
+        nlmsg_seq: 2,
+        nlmsg_pid: 0,
+    };
+
+    let mut sock_id = InetDiagSockId {
+        idiag_sport: entry.local_port.to_be(),
+        idiag_dport: entry.remote_port.to_be(),
+        idiag_src: [0u32; 4],
+        idiag_dst: [0u32; 4],
+        idiag_if: 0,
+        idiag_cookie: [0xFFFF_FFFF, 0xFFFF_FFFF],
+    };
+
+    match entry.local_addr {
+        IpAddr::V4(v4) => {
+            sock_id.idiag_src[0] = u32::from_ne_bytes(v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            sock_id.idiag_src[0] = u32::from_ne_bytes([o[0], o[1], o[2], o[3]]);
+            sock_id.idiag_src[1] = u32::from_ne_bytes([o[4], o[5], o[6], o[7]]);
+            sock_id.idiag_src[2] = u32::from_ne_bytes([o[8], o[9], o[10], o[11]]);
+            sock_id.idiag_src[3] = u32::from_ne_bytes([o[12], o[13], o[14], o[15]]);
+        }
+    }
+
+    match entry.remote_addr {
+        IpAddr::V4(v4) => {
+            sock_id.idiag_dst[0] = u32::from_ne_bytes(v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            sock_id.idiag_dst[0] = u32::from_ne_bytes([o[0], o[1], o[2], o[3]]);
+            sock_id.idiag_dst[1] = u32::from_ne_bytes([o[4], o[5], o[6], o[7]]);
+            sock_id.idiag_dst[2] = u32::from_ne_bytes([o[8], o[9], o[10], o[11]]);
+            sock_id.idiag_dst[3] = u32::from_ne_bytes([o[12], o[13], o[14], o[15]]);
+        }
+    }
+
+    let req = InetDiagReqV2 {
+        sdiag_family: family,
+        sdiag_protocol: protocol,
+        idiag_ext: 0,
+        pad: 0,
+        idiag_states: 0xFFFF_FFFF,
+        id: sock_id,
+    };
+
+    let mut buf = Vec::with_capacity(total_len);
+    unsafe {
+        buf.extend_from_slice(std::slice::from_raw_parts(
+            &hdr as *const _ as *const u8,
+            std::mem::size_of::<NlMsgHdr>(),
+        ));
+        buf.extend_from_slice(std::slice::from_raw_parts(
+            &req as *const _ as *const u8,
+            std::mem::size_of::<InetDiagReqV2>(),
+        ));
+    }
+    buf
+}
+
+/// Builds a binary Netlink `SOCK_DESTROY` message for TCP (`IPPROTO_TCP = 6`).
+pub fn build_sock_destroy_msg(entry: &LinuxSocketEntry) -> Vec<u8> {
+    build_sock_destroy_msg_for_proto(entry, 6)
+}
+
+#[cfg(target_os = "linux")]
+fn terminate_linux_socket_netlink_proto(
+    entry: &LinuxSocketEntry,
+    protocol: u8,
+) -> anyhow::Result<()> {
+    let msg = build_sock_destroy_msg_for_proto(entry, protocol);
+    unsafe {
+        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, NETLINK_INET_DIAG);
+        if fd < 0 {
+            return Err(anyhow!(
+                "socket(AF_NETLINK, NETLINK_INET_DIAG) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut sa: libc::sockaddr_nl = std::mem::zeroed();
+        sa.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+        sa.nl_pid = 0;
+        sa.nl_groups = 0;
+
+        let ret = libc::sendto(
+            fd,
+            msg.as_ptr() as *const libc::c_void,
+            msg.len(),
+            0,
+            &sa as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+        );
+        libc::close(fd);
+
+        if ret < 0 {
+            return Err(anyhow!(
+                "Netlink SOCK_DESTROY proto={} failed for {}:{} -> {}:{}: {}",
+                protocol,
+                entry.local_addr,
+                entry.local_port,
+                entry.remote_addr,
+                entry.remote_port,
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Immediately terminates all non-localhost `/proc/net/{tcp,tcp6,udp,udp6,raw,raw6}` sockets
+/// plus blocked loopback proxy tunnels via Netlink `SOCK_DESTROY`.
+pub fn terminate_all_non_loopback_linux_sockets() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        let mut count = 0usize;
+        let mut tcp_targets = get_active_non_loopback_connections().unwrap_or_default();
+        for sock in read_and_parse_proc_net_tcp()
+            .into_iter()
+            .flatten()
+            .chain(read_and_parse_proc_net_tcp6().into_iter().flatten())
+        {
+            if (QUARANTINE_BLOCKED_LOOPBACK_PROXY_PORTS.contains(&sock.remote_port)
+                || QUARANTINE_BLOCKED_LOOPBACK_PROXY_PORTS.contains(&sock.local_port))
+                && matches!(
+                    sock.state,
+                    TcpState::Established
+                        | TcpState::SynSent
+                        | TcpState::SynRecv
+                        | TcpState::CloseWait
+                )
+            {
+                tcp_targets.push(sock);
+            }
+        }
+        for entry in &tcp_targets {
+            if terminate_linux_socket_netlink_proto(entry, 6).is_ok() {
+                count += 1;
+            }
+        }
+        if let Ok(udp_raw) = get_active_non_loopback_udp_and_raw_sockets() {
+            for (proto, entry) in &udp_raw {
+                if terminate_linux_socket_netlink_proto(entry, *proto).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+        debug!(
+            "Linux Netlink SOCK_DESTROY sweep terminated {} sockets across tcp/tcp6/udp/udp6/raw/raw6.",
+            count
+        );
+        count
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn send_netlink_route_message(msg: &[u8]) -> anyhow::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE);
+        if fd < 0 {
+            return Err(anyhow!(
+                "socket(AF_NETLINK, NETLINK_ROUTE) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut sa: libc::sockaddr_nl = std::mem::zeroed();
+        sa.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+        sa.nl_pid = 0;
+        sa.nl_groups = 0;
+
+        let ret = libc::sendto(
+            fd,
+            msg.as_ptr() as *const libc::c_void,
+            msg.len(),
+            0,
+            &sa as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+        );
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            libc::close(fd);
+            return Err(anyhow!("Netlink route sendto failed: {}", err));
+        }
+
+        let mut resp_buf = [0u8; 1024];
+        let recv_len = libc::recv(
+            fd,
+            resp_buf.as_mut_ptr() as *mut libc::c_void,
+            resp_buf.len(),
+            0,
+        );
+        libc::close(fd);
+
+        if recv_len >= std::mem::size_of::<NlMsgHdr>() as isize {
+            let hdr = *(resp_buf.as_ptr() as *const NlMsgHdr);
+            if hdr.nlmsg_type == 2 {
+                let err_offset = std::mem::size_of::<NlMsgHdr>();
+                if recv_len >= (err_offset + 4) as isize {
+                    let err_code = i32::from_ne_bytes([
+                        resp_buf[err_offset],
+                        resp_buf[err_offset + 1],
+                        resp_buf[err_offset + 2],
+                        resp_buf[err_offset + 3],
+                    ]);
+                    if err_code != 0 && err_code != -libc::EEXIST && err_code != -libc::ESRCH {
+                        return Err(anyhow!("Kernel Netlink route ACK error: {}", err_code));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Installs IPv4 (`0.0.0.0/0`) and IPv6 (`::/0`) `RTN_BLACKHOLE` routes via `NETLINK_ROUTE`.
+pub fn install_netlink_blackhole_routes() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let v4_msg = build_blackhole_route_msg(false, false, 10);
+        send_netlink_route_message(&v4_msg)?;
+        let v6_msg = build_blackhole_route_msg(true, false, 10);
+        send_netlink_route_message(&v6_msg)?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
+/// Removes IPv4 (`0.0.0.0/0`) and IPv6 (`::/0`) `RTN_BLACKHOLE` routes via `NETLINK_ROUTE`.
+pub fn remove_netlink_blackhole_routes() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let v4_msg = build_blackhole_route_msg(false, true, 10);
+        let r4 = send_netlink_route_message(&v4_msg);
+        let v6_msg = build_blackhole_route_msg(true, true, 10);
+        let r6 = send_netlink_route_message(&v6_msg);
+        r4?;
+        r6?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4. `nftables` Containment Generator, Installer & Readback Verifier
+// ---------------------------------------------------------------------------
+
+/// Generates a default-drop `nftables` `table inet osoosi_quarantine` script blocking
+/// `127.0.0.2+`, IMDS (`169.254.0.0/16` / `fe80::/10`), DNS/DHCP/DoT/QUIC, loopback proxy
+/// ports (`1080/3128/8080/8888/9050`), and lateral ports (`135/445/5985/5986`), permitting
+/// ONLY exact `127.0.0.1 <-> 127.0.0.1` / `::1 <-> ::1` TCP on sanitized control ports.
+pub fn generate_linux_nftables_quarantine_script(
+    preserved_ports: &[u16],
+    cgroup_paths: &[&str],
+    agent_uids: &[u32],
+) -> String {
+    let ports = sanitize_firewall_preserved_ports(preserved_ports);
+    let discovery_csv = QUARANTINE_BLOCKED_DISCOVERY_PORTS
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let proxy_csv = QUARANTINE_BLOCKED_LOOPBACK_PROXY_PORTS
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lateral_csv = QUARANTINE_BLOCKED_LATERAL_PORTS
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut s = String::from(
+        "table inet osoosi_quarantine\n\
+delete table inet osoosi_quarantine\n\
+table inet osoosi_quarantine {\n\
+    chain input {\n\
+        type filter hook input priority -150; policy drop;\n\
+        ip saddr != 127.0.0.1 ip daddr 127.0.0.0/8 drop\n\
+        ip daddr != 127.0.0.1 ip saddr 127.0.0.0/8 drop\n\
+        ip daddr 169.254.0.0/16 drop\n\
+        ip6 daddr fe80::/10 drop\n",
+    );
+    s.push_str(&format!(
+        "        tcp dport {{ {discovery_csv} }} drop\n\
+        udp dport {{ {discovery_csv}, 443 }} drop\n\
+        tcp dport {{ {proxy_csv} }} drop\n\
+        tcp dport {{ {lateral_csv} }} drop\n"
+    ));
+    for &port in &ports {
+        s.push_str(&format!(
+            "        iifname \"lo\" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport {port} accept\n\
+        iifname \"lo\" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport {port} accept\n\
+        iifname \"lo\" ip6 saddr ::1 ip6 daddr ::1 tcp dport {port} accept\n\
+        iifname \"lo\" ip6 saddr ::1 ip6 daddr ::1 tcp sport {port} accept\n"
+        ));
+    }
+    s.push_str(
+        "    }\n\
+    chain output {\n\
+        type filter hook output priority -150; policy drop;\n",
+    );
+    for cg in cgroup_paths {
+        let clean: String = cg
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
+            .collect();
+        if !clean.is_empty() {
+            s.push_str(&format!(
+                "        socket cgroupv2 level 1 \"{clean}\" drop\n"
+            ));
+        }
+    }
+    for &uid in agent_uids {
+        s.push_str(&format!("        meta skuid {uid} drop\n"));
+    }
+    s.push_str(&format!(
+        "        ip saddr != 127.0.0.1 ip daddr 127.0.0.0/8 drop\n\
+        ip daddr != 127.0.0.1 ip saddr 127.0.0.0/8 drop\n\
+        ip daddr 169.254.0.0/16 drop\n\
+        ip6 daddr fe80::/10 drop\n\
+        tcp dport {{ {discovery_csv} }} drop\n\
+        udp dport {{ {discovery_csv}, 443 }} drop\n\
+        tcp dport {{ {proxy_csv} }} drop\n\
+        tcp dport {{ {lateral_csv} }} drop\n"
+    ));
+    for &port in &ports {
+        s.push_str(&format!(
+            "        oifname \"lo\" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport {port} accept\n\
+        oifname \"lo\" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport {port} accept\n\
+        oifname \"lo\" ip6 saddr ::1 ip6 daddr ::1 tcp dport {port} accept\n\
+        oifname \"lo\" ip6 saddr ::1 ip6 daddr ::1 tcp sport {port} accept\n"
+        ));
+    }
+    s.push_str("    }\n}\n");
+    s
+}
+
+#[cfg(target_os = "linux")]
+fn find_nft_binary() -> Option<&'static str> {
+    ["/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft", "nft"]
+        .into_iter()
+        .find(|&candidate| candidate == "nft" || Path::new(candidate).exists())
+}
+
+/// Atomically installs `table inet osoosi_quarantine` via `nft -f -` and performs
+/// mandatory readback verification via `nft list table inet osoosi_quarantine`.
+pub fn install_linux_nftables_quarantine(
+    preserved_ports: &[u16],
+    cgroup_paths: &[&str],
+    agent_uids: &[u32],
+) -> anyhow::Result<String> {
+    let script =
+        generate_linux_nftables_quarantine_script(preserved_ports, cgroup_paths, agent_uids);
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let nft_bin = find_nft_binary()
+            .ok_or_else(|| anyhow!("nftables binary (nft) not found on Linux host"))?;
+        let mut child = Command::new(nft_bin)
+            .args(["-f", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow!("Failed to invoke {nft_bin}: {e}"))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(script.as_bytes())
+                .map_err(|e| anyhow!("Failed writing nftables script to stdin: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| anyhow!("Failed waiting on nft -f -: {e}"))?;
+        if !out.status.success() {
+            return Err(anyhow!(
+                "nft -f - failed with status {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+
+        let readback = Command::new(nft_bin)
+            .args(["list", "table", "inet", "osoosi_quarantine"])
+            .output()
+            .map_err(|e| anyhow!("nft readback check failed: {e}"))?;
+        let body = String::from_utf8_lossy(&readback.stdout);
+        if !readback.status.success()
+            || !body.contains("chain input")
+            || !body.contains("chain output")
+        {
+            return Err(anyhow!(
+                "nftables readback verification failed for inet osoosi_quarantine: {}",
+                String::from_utf8_lossy(&readback.stderr).trim()
+            ));
+        }
+    }
+    Ok(script)
+}
+
+/// Removes `table inet osoosi_quarantine` without modifying unrelated host nftables tables.
+pub fn remove_linux_nftables_quarantine() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        if let Some(nft_bin) = find_nft_binary() {
+            let out = Command::new(nft_bin)
+                .args(["delete", "table", "inet", "osoosi_quarantine"])
+                .output()
+                .map_err(|e| anyhow!("nft delete table failed: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stderr.contains("No such file or directory") {
+                    return Err(anyhow!("nft delete table failed: {}", stderr.trim()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 5. `/proc/net/{tcp,tcp6,udp,udp6,raw,raw6}` Parsers
+// ---------------------------------------------------------------------------
+
+/// Parses an 8-character little-endian IPv4 hex string from Linux `/proc/net/*` tables.
+pub fn parse_linux_ipv4_hex(hex_str: &str) -> Option<Ipv4Addr> {
+    if hex_str.len() != 8 {
+        return None;
+    }
+    let num = u32::from_str_radix(hex_str, 16).ok()?;
+    let octets = [
+        (num & 0xFF) as u8,
+        ((num >> 8) & 0xFF) as u8,
+        ((num >> 16) & 0xFF) as u8,
+        ((num >> 24) & 0xFF) as u8,
+    ];
+    Some(Ipv4Addr::from(octets))
+}
+
+/// Parses a 32-character little-endian IPv6 hex string from Linux `/proc/net/*` tables.
+pub fn parse_linux_ipv6_hex(hex_str: &str) -> Option<Ipv6Addr> {
+    if hex_str.len() != 32 {
+        return None;
+    }
+    let mut octets = [0u8; 16];
+    for i in 0..4 {
+        let chunk = &hex_str[i * 8..(i + 1) * 8];
+        let num = u32::from_str_radix(chunk, 16).ok()?;
+        octets[i * 4] = (num & 0xFF) as u8;
+        octets[i * 4 + 1] = ((num >> 8) & 0xFF) as u8;
+        octets[i * 4 + 2] = ((num >> 16) & 0xFF) as u8;
+        octets[i * 4 + 3] = ((num >> 24) & 0xFF) as u8;
+    }
+    Some(Ipv6Addr::from(octets))
+}
+
+/// Parses a single socket entry line from `/proc/net/{tcp,tcp6,udp,udp6,raw,raw6}`.
+pub fn parse_tcp_line(line: &str, is_v6: bool) -> anyhow::Result<LinuxSocketEntry> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 10 {
+        return Err(anyhow!("Malformed /proc/net line: {}", line));
+    }
+
+    let slot = parts[0].trim_end_matches(':').parse::<usize>().unwrap_or(0);
+
+    let (local_ip_hex, local_port_hex) = parts[1]
+        .split_once(':')
+        .ok_or_else(|| anyhow!("Missing local addr:port in {}", line))?;
+    let local_port = u16::from_str_radix(local_port_hex, 16)?;
+    let local_addr = if is_v6 {
+        IpAddr::V6(
+            parse_linux_ipv6_hex(local_ip_hex)
+                .ok_or_else(|| anyhow!("Invalid IPv6 hex {}", local_ip_hex))?,
+        )
+    } else {
+        IpAddr::V4(
+            parse_linux_ipv4_hex(local_ip_hex)
+                .ok_or_else(|| anyhow!("Invalid IPv4 hex {}", local_ip_hex))?,
+        )
+    };
+
+    let (remote_ip_hex, remote_port_hex) = parts[2]
+        .split_once(':')
+        .ok_or_else(|| anyhow!("Missing remote addr:port in {}", line))?;
+    let remote_port = u16::from_str_radix(remote_port_hex, 16)?;
+    let remote_addr = if is_v6 {
+        IpAddr::V6(
+            parse_linux_ipv6_hex(remote_ip_hex)
+                .ok_or_else(|| anyhow!("Invalid IPv6 hex {}", remote_ip_hex))?,
+        )
+    } else {
+        IpAddr::V4(
+            parse_linux_ipv4_hex(remote_ip_hex)
+                .ok_or_else(|| anyhow!("Invalid IPv4 hex {}", remote_ip_hex))?,
+        )
+    };
+
+    let state_byte = u8::from_str_radix(parts[3], 16).unwrap_or(0);
+    let state = TcpState::from(state_byte);
+    let inode = parts[9].parse::<u64>().unwrap_or(0);
+
+    Ok(LinuxSocketEntry {
+        slot,
+        local_addr,
+        local_port,
+        remote_addr,
+        remote_port,
+        state,
+        inode,
+        is_ipv6: is_v6,
+    })
+}
+
+/// Parses the full contents of `/proc/net/{tcp,tcp6,udp,udp6,raw,raw6}`.
+pub fn parse_proc_net_content(content: &str, is_v6: bool) -> Vec<LinuxSocketEntry> {
+    content
+        .lines()
+        .skip(1)
+        .filter_map(|line| parse_tcp_line(line, is_v6).ok())
+        .collect()
+}
+
+fn read_and_parse_proc_net_file(path: &str, is_v6: bool) -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    let content = std::fs::read_to_string(path)?;
+    Ok(parse_proc_net_content(&content, is_v6))
+}
+
+#[inline]
+pub fn is_exact_localhost_ip(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => v4 == Ipv4Addr::LOCALHOST,
+        IpAddr::V6(v6) => {
+            v6 == Ipv6Addr::LOCALHOST || v6.to_ipv4_mapped() == Some(Ipv4Addr::LOCALHOST)
+        }
+    }
+}
+
+#[inline]
+pub fn is_unspecified_ip(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => v4.is_unspecified(),
+        IpAddr::V6(v6) => {
+            v6.is_unspecified() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_unspecified())
+        }
+    }
+}
+
+pub fn read_and_parse_proc_net_tcp() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/tcp", false)
+}
+
+pub fn read_and_parse_proc_net_tcp6() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/tcp6", true)
+}
+
+pub fn read_and_parse_proc_net_udp() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/udp", false)
+}
+
+pub fn read_and_parse_proc_net_udp6() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/udp6", true)
+}
+
+pub fn read_and_parse_proc_net_raw() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/raw", false)
+}
+
+pub fn read_and_parse_proc_net_raw6() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    read_and_parse_proc_net_file("/proc/net/raw6", true)
+}
+
+/// Enumerates active non-localhost TCP connections (including `127.0.0.2+` loopback aliases).
+pub fn get_active_non_loopback_connections() -> anyhow::Result<Vec<LinuxSocketEntry>> {
+    let mut entries = Vec::new();
+    if let Ok(v4) = read_and_parse_proc_net_tcp() {
+        entries.extend(v4);
+    }
+    if let Ok(v6) = read_and_parse_proc_net_tcp6() {
+        entries.extend(v6);
+    }
+
+    Ok(entries
+        .into_iter()
+        .filter(|e| {
+            !is_exact_localhost_ip(e.remote_addr)
+                && !is_unspecified_ip(e.remote_addr)
+                && matches!(
+                    e.state,
+                    TcpState::Established
+                        | TcpState::SynSent
+                        | TcpState::SynRecv
+                        | TcpState::CloseWait
+                )
+        })
+        .collect())
+}
+
+/// Enumerates active non-localhost UDP (`17`) and RAW (`255`) sockets for `SOCK_DESTROY`.
+pub fn get_active_non_loopback_udp_and_raw_sockets() -> anyhow::Result<Vec<(u8, LinuxSocketEntry)>>
+{
+    let mut out = Vec::new();
+    for entry in read_and_parse_proc_net_udp()
+        .into_iter()
+        .flatten()
+        .chain(read_and_parse_proc_net_udp6().into_iter().flatten())
+    {
+        if !is_exact_localhost_ip(entry.local_addr)
+            || (!is_unspecified_ip(entry.remote_addr) && !is_exact_localhost_ip(entry.remote_addr))
+        {
+            out.push((17u8, entry));
+        }
+    }
+    for entry in read_and_parse_proc_net_raw()
+        .into_iter()
+        .flatten()
+        .chain(read_and_parse_proc_net_raw6().into_iter().flatten())
+    {
+        if !is_exact_localhost_ip(entry.local_addr)
+            || (!is_unspecified_ip(entry.remote_addr) && !is_exact_localhost_ip(entry.remote_addr))
+        {
+            out.push((255u8, entry));
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_landlock_abi_v4_struct_sizes_and_defaults() {
+        assert_eq!(std::mem::size_of::<LandlockRulesetAttr>(), 16);
+        assert_eq!(std::mem::size_of::<LandlockNetPortAttr>(), 16);
+        assert_eq!(LANDLOCK_RULE_NET_PORT, 2);
+        assert_eq!(LANDLOCK_ACCESS_NET_BIND_TCP, 1);
+        assert_eq!(LANDLOCK_ACCESS_NET_CONNECT_TCP, 2);
+
+        let base = LandlockConfig::default();
+        let extended = LandlockSandboxConfig::from(&base);
+        assert_eq!(extended.read_only_paths, base.read_only_paths);
+        assert_eq!(extended.read_write_paths, base.writable_paths);
+        assert!(extended.allowed_tcp_ports.contains(&3030));
+    }
+
+    #[test]
+    fn test_linux_nftables_quarantine_script_hardening_and_sanitization() {
+        let script = generate_linux_nftables_quarantine_script(
+            &[8080, 1080, 9050, 53, 445, 3030, 3456],
+            &["/osoosi/agent-1"],
+            &[1001],
+        );
+        assert!(script.contains("policy drop;"));
+        assert!(script.contains("ip saddr != 127.0.0.1 ip daddr 127.0.0.0/8 drop"));
+        assert!(script.contains("ip daddr 169.254.0.0/16 drop"));
+        assert!(script.contains("ip6 daddr fe80::/10 drop"));
+        assert!(script.contains("udp dport { 53, 67, 68, 546, 547, 853, 443 } drop"));
+        assert!(script.contains("tcp dport { 1080, 3128, 8080, 8888, 9050 } drop"));
+        assert!(script.contains("tcp dport { 135, 445, 5985, 5986 } drop"));
+        assert!(script.contains("socket cgroupv2 level 1 \"/osoosi/agent-1\" drop"));
+        assert!(script.contains("meta skuid 1001 drop"));
+        assert!(script.contains("ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport 3030 accept"));
+        assert!(script.contains("ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport 3456 accept"));
+        assert!(!script.contains("tcp dport 8080 accept"));
+        assert!(!script.contains("tcp dport 53 accept"));
+    }
+
+    #[test]
+    fn test_agent_seccomp_bpf_filter_layout() {
+        let no_net = build_agent_seccomp_bpf(false);
+        assert!(!no_net.is_empty());
+        assert_eq!(no_net[0].code, BPF_LD_W_ABS);
+        assert_eq!(no_net[0].k, 4);
+        assert_eq!(no_net[2].k, SECCOMP_RET_KILL_PROCESS);
+        assert!(no_net.iter().any(|ins| ins.k == SECCOMP_RET_ERRNO_EPERM));
+        assert!(no_net.iter().any(|ins| ins.k == SECCOMP_RET_ALLOW));
+
+        let with_net = build_agent_seccomp_bpf(true);
+        assert!(no_net.len() > with_net.len());
+    }
+
+    #[test]
+    fn test_netlink_blackhole_and_multiprotocol_sock_destroy_layouts() {
+        let v4_msg = build_blackhole_route_msg(false, false, 10);
+        assert_eq!(v4_msg.len(), 36);
+        let hdr = unsafe { std::ptr::read_unaligned(v4_msg.as_ptr() as *const NlMsgHdr) };
+        assert_eq!(hdr.nlmsg_len, 36);
+        assert_eq!(hdr.nlmsg_type, RTM_NEWROUTE);
+
+        let rt = unsafe { std::ptr::read_unaligned(v4_msg.as_ptr().add(16) as *const RtMsg) };
+        assert_eq!(rt.rtm_dst_len, 0);
+        assert_eq!(rt.rtm_table, RT_TABLE_MAIN);
+        assert_eq!(rt.rtm_type, RTN_BLACKHOLE);
+
+        let entry = LinuxSocketEntry {
+            slot: 1,
+            local_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            local_port: 54321,
+            remote_addr: IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            remote_port: 53,
+            state: TcpState::Established,
+            inode: 12345,
+            is_ipv6: false,
+        };
+
+        let tcp_msg = build_sock_destroy_msg(&entry);
+        assert_eq!(tcp_msg.len(), 72);
+        let tcp_req =
+            unsafe { std::ptr::read_unaligned(tcp_msg.as_ptr().add(16) as *const InetDiagReqV2) };
+        assert_eq!(tcp_req.sdiag_protocol, 6);
+        assert_eq!(tcp_req.id.idiag_sport, 54321u16.to_be());
+        assert_eq!(tcp_req.id.idiag_dport, 53u16.to_be());
+
+        let udp_msg = build_sock_destroy_msg_for_proto(&entry, 17);
+        let udp_req =
+            unsafe { std::ptr::read_unaligned(udp_msg.as_ptr().add(16) as *const InetDiagReqV2) };
+        assert_eq!(udp_req.sdiag_protocol, 17);
+
+        let raw_msg = build_sock_destroy_msg_for_proto(&entry, 255);
+        let raw_req =
+            unsafe { std::ptr::read_unaligned(raw_msg.as_ptr().add(16) as *const InetDiagReqV2) };
+        assert_eq!(raw_req.sdiag_protocol, 255);
+    }
+
+    #[test]
+    fn test_proc_net_ipv4_ipv6_parsing_and_exact_localhost() {
+        let sample_v4 = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:0BD6 0100007F:C350 01 00000000:00000000 00:00000000 00000000  1000        0 1001 1 00000000 20 4 30 10 -1\n\
+   1: 0200007F:1F90 0200007F:C351 01 00000000:00000000 00:00000000 00000000  1000        0 1002 1 00000000 20 4 30 10 -1\n\
+   2: 0501A8C0:D431 08080808:0035 01 00000000:00000000 00:00000000 00000000  1000        0 1003 1 00000000 20 4 30 10 -1\n";
+        let entries = parse_proc_net_content(sample_v4, false);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(
+            entries[0].local_addr,
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+        );
+        assert_eq!(entries[0].local_port, 3030);
+        assert!(is_exact_localhost_ip(entries[0].local_addr));
+        assert!(!is_exact_localhost_ip(entries[1].local_addr));
+        assert_eq!(
+            entries[2].remote_addr,
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))
+        );
+        assert_eq!(entries[2].remote_port, 53);
+
+        let v6_loop = parse_linux_ipv6_hex("00000000000000000000000001000000").unwrap();
+        assert_eq!(v6_loop, Ipv6Addr::LOCALHOST);
+        assert!(is_exact_localhost_ip(IpAddr::V6(v6_loop)));
+        assert!(is_unspecified_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
     }
 }

@@ -170,9 +170,9 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
     let mut controller = RLAdaptiveController::new();
 
     // Initial state: Q-table is all 0.0
-    for s in 0..8 {
-        for a in 0..4 {
-            assert_eq!(controller.q_table[s][a], 0.0);
+    for row in &controller.q_table {
+        for &val in row {
+            assert_eq!(val, 0.0);
         }
     }
 
@@ -271,10 +271,8 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
     }
 
     // Adversarial test: set Q-table to extreme negative values
-    for s in 0..8 {
-        for a in 0..4 {
-            controller.q_table[s][a] = -100_000.0;
-        }
+    for row in &mut controller.q_table {
+        row.fill(-100_000.0);
     }
     let negative_nudges = controller.nudge_voter_weights();
     for (voter, &w) in &negative_nudges {

@@ -391,11 +391,10 @@ impl FaultInjectionMesh {
         }
 
         // Fanout forwarding across the rest of the honest mesh
-        for i in 0..n {
+        for (i, node_i) in self.nodes.iter().enumerate().take(n) {
             if i == sender_idx {
                 continue;
             }
-            let node_i = &self.nodes[i];
             if is_partitioned && sender.zone != node_i.zone {
                 continue;
             }

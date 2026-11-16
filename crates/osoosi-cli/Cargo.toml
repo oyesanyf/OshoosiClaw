@@ -22,6 +22,7 @@ path = "src/lib.rs"
 osoosi-core = { path = "../osoosi-core" }
 osoosi-memory = { path = "../osoosi-memory" }
 osoosi-dashboard = { path = "../osoosi-dashboard" }
+killswitch-kernel-patcher = { path = "../killswitch-kernel-patcher" }
 osoosi-types = { path = "../osoosi-types" }
 osoosi-model = { path = "../osoosi-model" }
 osoosi-wire = { path = "../osoosi-wire" }
@@ -37,6 +38,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 chrono = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 uuid = { workspace = true }

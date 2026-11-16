@@ -5,6 +5,7 @@
 pub use osoosi_core::console_defense as console_hardening;
 
 pub mod hook_cli;
+pub mod patch_kernel;
 pub mod service;
 pub mod verify;
 
