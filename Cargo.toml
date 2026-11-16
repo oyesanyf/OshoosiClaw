@@ -136,7 +136,7 @@ smoltcp = { version = "0.11", features = ["std", "log", "medium-ethernet", "prot
 wintun = "0.4"
 managed = "0.8"
 ndarray = "0.16"
-parking_lot = "0.12"
+parking_lot = "0.13"
 wmi = "0.13"
 tokenizers = "0.19"
 tempfile = "3"
