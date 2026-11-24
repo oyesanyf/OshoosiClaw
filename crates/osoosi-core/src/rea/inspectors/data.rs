@@ -689,7 +689,9 @@ pub fn inspect_firmware_or_apk(
         if let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(bytes)) {
             for i in 0..archive.len().min(200) {
                 if let Ok(file) = archive.by_index(i) {
-                    apk_entries.push(file.name().to_string());
+                    if let Ok(name) = file.name() {
+                        apk_entries.push(name.into_owned());
+                    }
                 }
             }
         }
