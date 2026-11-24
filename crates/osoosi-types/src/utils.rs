@@ -35,7 +35,7 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
             None => continue,
         };
 
-        if file.name().ends_with('/') {
+        if file.name()?.ends_with('/') {
             std::fs::create_dir_all(&outpath)?;
         } else {
             if let Some(p) = outpath.parent() {
