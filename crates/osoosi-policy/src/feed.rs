@@ -1042,9 +1042,13 @@ impl ThreatFeedFetcher {
 
             for i in 0..archive.len() {
                 let mut file = archive.by_index(i)?;
-                let outpath = target_dir.join(file.name());
+                let is_dir = file.name()?.ends_with('/');
+                let Some(enclosed) = file.enclosed_name() else {
+                    continue;
+                };
+                let outpath = target_dir.join(enclosed);
 
-                if (*file.name()).ends_with('/') {
+                if is_dir {
                     let _ = std::fs::create_dir_all(&outpath);
                 } else {
                     if let Some(p) = outpath.parent() {
@@ -1583,8 +1587,12 @@ impl ThreatFeedFetcher {
                     let mut db = None;
                     for i in 0..zip.len() {
                         let mut entry = zip.by_index(i)?;
-                        let out = dest_clone.join(entry.name());
-                        if entry.name().ends_with('/') {
+                        let is_dir = entry.name()?.ends_with('/');
+                        let Some(enclosed) = entry.enclosed_name() else {
+                            continue;
+                        };
+                        let out = dest_clone.join(enclosed);
+                        if is_dir {
                             let _ = std::fs::create_dir_all(&out);
                         } else {
                             if let Some(p) = out.parent() {

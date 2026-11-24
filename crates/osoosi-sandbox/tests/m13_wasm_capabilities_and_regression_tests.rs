@@ -16,11 +16,20 @@
 use osoosi_sandbox::host_capability_gate::{
     GateError, HardenedSealedGrant, HostCapabilityGate, ZeroizingLockedSecret,
 };
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use wasmtime::{
     Config, Engine, InstanceAllocationStrategy, InstancePre, Linker, Module,
     PoolingAllocationConfig, Store, StoreLimits, StoreLimitsBuilder,
 };
+
+/// Process-wide test synchronization gate.
+///
+/// Tests that measure process-wide physical RSS (`/proc/self/statm`,
+/// `K32GetProcessMemoryInfo`) or microsecond p99 latency acquire a write lock
+/// so sibling tests cannot allocate Wasmtime engines, Cranelift buffers, or
+/// Tokio runtimes concurrently during the measurement window.
+static PROCESS_METRICS_LOCK: RwLock<()> = RwLock::new(());
 
 /// Helper: returns physical RSS in bytes.
 fn get_process_rss_bytes() -> usize {
@@ -77,6 +86,9 @@ fn get_process_rss_bytes() -> usize {
 
 #[test]
 fn test_m13_warm_pooled_instantiation_latency_p99_under_50us() {
+    let _exclusive_guard = PROCESS_METRICS_LOCK
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
     let engine = osoosi_sandbox::wasm_supervisor::build_zero_overhead_engine()
         .expect("Engine initialization with pooling allocator");
 
@@ -151,6 +163,9 @@ fn test_m13_warm_pooled_instantiation_latency_p99_under_50us() {
 
 #[test]
 fn test_m13_zero_physical_rss_leaks_over_1000_instantiations() {
+    let _exclusive_guard = PROCESS_METRICS_LOCK
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
     let mut pool = PoolingAllocationConfig::new();
     pool.total_core_instances(64)
         .total_memories(64)
@@ -224,6 +239,9 @@ fn test_m13_zero_physical_rss_leaks_over_1000_instantiations() {
 
 #[test]
 fn test_m13_epoch_preemption_infinite_loop_trapped_without_fuel() {
+    let _shared_guard = PROCESS_METRICS_LOCK
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
     let mut config = Config::new();
     config.epoch_interruption(true);
     config.consume_fuel(false); // STRICTLY 0 fuel metering overhead!
@@ -287,6 +305,9 @@ fn test_m13_epoch_preemption_infinite_loop_trapped_without_fuel() {
 
 #[test]
 fn test_m13_64mib_linear_memory_cap_and_fuel_budget_trapping() {
+    let _shared_guard = PROCESS_METRICS_LOCK
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
     // Part A: 64 MiB Cap via StoreLimits
     let mut config = Config::new();
     config.epoch_interruption(true);
@@ -371,106 +392,115 @@ fn test_m13_64mib_linear_memory_cap_and_fuel_budget_trapping() {
 // 5. Host Capability SSRF & Credential Isolation (Zero Secret Bytes in RAM)
 // =========================================================================
 
-#[tokio::test]
-async fn test_m13_host_capability_gate_ssrf_and_zero_secret_bytes_in_guest_ram() {
-    let gate = HostCapabilityGate::new(false, std::process::id());
+#[test]
+fn test_m13_host_capability_gate_ssrf_and_zero_secret_bytes_in_guest_ram() {
+    let _shared_guard = PROCESS_METRICS_LOCK
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Tokio runtime");
+    rt.block_on(async {
+        let gate = HostCapabilityGate::new(false, std::process::id());
 
-    // Register a test grant with a secret
-    let real_secret = b"sk-proj-SUPER_SECRET_ENTROPY_KEY_ABCD_9999";
-    let standin = "OSHOOSI_STANDIN_GITHUB_TOKEN_0123456789ABCDEF";
-    let grant = HardenedSealedGrant::new(
-        "GITHUB_TOKEN",
-        standin,
-        [0u8; 32], // Test binary hash
-        None,
-        "api.github.com",
-        ZeroizingLockedSecret::new(real_secret),
-    );
-    gate.register_grant(grant);
-
-    // 1. SSRF target rejections
-    let ssrf_targets = [
-        "http://169.254.169.254/latest/meta-data/",
-        "http://[::ffff:127.0.0.1]:8080/admin",
-        "http://10.0.0.1/network",
-        "http://192.168.1.1/setup",
-        "http://[fc00::1]/db",
-        "http://[fe80::1]/link",
-        "http://100.64.0.1/cgnat",
-        "https://unauthorized-evil-domain.com/data",
-        "https://arxiv.org.attacker.com/fake",
-    ];
-
-    for target in ssrf_targets {
-        let res = gate.dispatch_request("GET", target, &[], None).await;
-        assert!(
-            res.is_err(),
-            "Malicious or unauthorized target '{}' must be rejected",
-            target
+        // Register a test grant with a secret
+        let real_secret = b"sk-proj-SUPER_SECRET_ENTROPY_KEY_ABCD_9999";
+        let standin = "OSHOOSI_STANDIN_GITHUB_TOKEN_0123456789ABCDEF";
+        let grant = HardenedSealedGrant::new(
+            "GITHUB_TOKEN",
+            standin,
+            [0u8; 32], // Test binary hash
+            None,
+            "api.github.com",
+            ZeroizingLockedSecret::new(real_secret),
         );
-        match res.unwrap_err() {
-            GateError::DomainDenied(_)
-            | GateError::SsrfBlocked(_)
-            | GateError::DnsRebindingBlocked(_) => {}
-            other => panic!("Unexpected error type for target '{}': {:?}", target, other),
+        gate.register_grant(grant);
+
+        // 1. SSRF target rejections
+        let ssrf_targets = [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::ffff:127.0.0.1]:8080/admin",
+            "http://10.0.0.1/network",
+            "http://192.168.1.1/setup",
+            "http://[fc00::1]/db",
+            "http://[fe80::1]/link",
+            "http://100.64.0.1/cgnat",
+            "https://unauthorized-evil-domain.com/data",
+            "https://arxiv.org.attacker.com/fake",
+        ];
+
+        for target in ssrf_targets {
+            let res = gate.dispatch_request("GET", target, &[], None).await;
+            assert!(
+                res.is_err(),
+                "Malicious or unauthorized target '{}' must be rejected",
+                target
+            );
+            match res.unwrap_err() {
+                GateError::DomainDenied(_)
+                | GateError::SsrfBlocked(_)
+                | GateError::DnsRebindingBlocked(_) => {}
+                other => panic!("Unexpected error type for target '{}': {:?}", target, other),
+            }
         }
-    }
 
-    // 2. Ollama bridge gate
-    let ollama_url = "http://127.0.0.1:11434/api/tags";
-    // Disabled gate must reject
-    assert!(
-        gate.dispatch_request("GET", ollama_url, &[], None)
-            .await
-            .is_err(),
-        "Ollama endpoint must be rejected when ollama_bridge_enabled is false"
-    );
+        // 2. Ollama bridge gate
+        let ollama_url = "http://127.0.0.1:11434/api/tags";
+        // Disabled gate must reject
+        assert!(
+            gate.dispatch_request("GET", ollama_url, &[], None)
+                .await
+                .is_err(),
+            "Ollama endpoint must be rejected when ollama_bridge_enabled is false"
+        );
 
-    // Enabled gate permits Ollama domain in allowlist
-    let enabled_gate = HostCapabilityGate::new(true, std::process::id());
-    assert!(
-        enabled_gate
-            .verify_domain_allowlist("127.0.0.1", 11434)
-            .is_ok(),
-        "Domain allowlist must permit 127.0.0.1:11434 when Ollama bridge is enabled"
-    );
+        // Enabled gate permits Ollama domain in allowlist
+        let enabled_gate = HostCapabilityGate::new(true, std::process::id());
+        assert!(
+            enabled_gate
+                .verify_domain_allowlist("127.0.0.1", 11434)
+                .is_ok(),
+            "Domain allowlist must permit 127.0.0.1:11434 when Ollama bridge is enabled"
+        );
 
-    // 3. Credential Isolation & Guest Linear Memory Inspection
-    let config = Config::new();
-    let engine = Engine::new(&config).expect("Engine init");
-    let wat = r#"
+        // 3. Credential Isolation & Guest Linear Memory Inspection
+        let config = Config::new();
+        let engine = Engine::new(&config).expect("Engine init");
+        let wat = r#"
     (module
         (memory (export "memory") 1)
         (data (i32.const 0) "Authorization: Bearer OSHOOSI_STANDIN_GITHUB_TOKEN_0123456789ABCDEF")
     )
     "#;
-    let module = Module::new(&engine, wat).expect("Compile WAT");
-    let linker: Linker<()> = Linker::new(&engine);
-    let mut store = Store::new(&engine, ());
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .expect("Instantiate");
+        let module = Module::new(&engine, wat).expect("Compile WAT");
+        let linker: Linker<()> = Linker::new(&engine);
+        let mut store = Store::new(&engine, ());
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("Instantiate");
 
-    // Read guest RAM
-    let memory = instance
-        .get_memory(&mut store, "memory")
-        .expect("Get memory");
-    let guest_ram = memory.data(&store);
+        // Read guest RAM
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .expect("Get memory");
+        let guest_ram = memory.data(&store);
 
-    // Assert: Standin token exists in guest memory
-    let standin_bytes = standin.as_bytes();
-    assert!(
-        guest_ram
-            .windows(standin_bytes.len())
-            .any(|w| w == standin_bytes),
-        "Guest RAM must contain standin token"
-    );
+        // Assert: Standin token exists in guest memory
+        let standin_bytes = standin.as_bytes();
+        assert!(
+            guest_ram
+                .windows(standin_bytes.len())
+                .any(|w| w == standin_bytes),
+            "Guest RAM must contain standin token"
+        );
 
-    // Assert: Real secret has ZERO raw bytes in guest RAM
-    assert!(
-        !guest_ram
-            .windows(real_secret.len())
-            .any(|w| w == real_secret),
-        "FAIL-CLOSED INVARIANT VIOLATION: Real API secret bytes found in guest linear memory!"
-    );
+        // Assert: Real secret has ZERO raw bytes in guest RAM
+        assert!(
+            !guest_ram
+                .windows(real_secret.len())
+                .any(|w| w == real_secret),
+            "FAIL-CLOSED INVARIANT VIOLATION: Real API secret bytes found in guest linear memory!"
+        );
+    });
 }

@@ -700,8 +700,7 @@ impl SandboxExecutor {
                 wasi_builder.preopened_dir(
                     &config.workspace_dir,
                     ".",
-                    wasmtime_wasi::DirPerms::all(),
-                    wasmtime_wasi::FilePerms::all(),
+                    wasmtime_wasi::FsPerms::ReadWrite,
                 )?;
             }
         }

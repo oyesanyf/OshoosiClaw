@@ -81,13 +81,13 @@ ml-dsa = "0.1.1"
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 # nexus-shield = { version = "0.4.4", default-features = false }
 dotscope = "0.1"
-wasmtime = "44.0"
+wasmtime = "48.0.10"
 iced-x86 = "1"
 rand = "0.8"
 rand_distr = "0.4"
 fastrand = "2"
 zeroize = { version = "1", features = ["derive"] }
-wasmtime-wasi = "44.0"
+wasmtime-wasi = "48.0.10"
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 bytes = "1"
@@ -119,11 +119,11 @@ tracing-opentelemetry = "0.34"
 rayon = "1.10"
 tfhe = { version = "0.6", features = ["integer", "boolean", "shortint"] }
 bincode = "1"
-zip = "2"
+zip = "9.8"
 sevenz-rust = { version = "0.6", features = ["aes256"] }
-candle-core = "0.9.1"
-candle-nn = "0.9.1"
-candle-transformers = "0.9.1"
+candle-core = "0.11.1"
+candle-nn = "0.11.1"
+candle-transformers = "0.11.1"
 hf-hub = { version = "0.4", default-features = false, features = ["tokio", "rustls-tls"] }
 openssl = { version = "0.10", features = ["vendored"] }
 aya = "0.13"
@@ -131,7 +131,7 @@ evalexpr = "13.1.0"
 ipnetwork = "0.21.1"
 bloomfilter = "1.0.9"
 libloading = "0.8"
-yara-x = "1.19.0"
+yara-x = "1.24.0"
 smoltcp = { version = "0.11", features = ["std", "log", "medium-ethernet", "proto-ipv4", "socket-tcp", "socket-udp", "socket-icmp"] }
 wintun = "0.4"
 managed = "0.8"
