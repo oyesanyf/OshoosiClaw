@@ -10,6 +10,7 @@
 //!    and return Ok(false) rather than blocking HTTP endpoints or deadlocking.
 
 use osoosi_memory::MemoryStore;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -89,14 +90,23 @@ fn challenge_memory_store_lock_non_blocking_under_contention() {
     let mem = Arc::new(MemoryStore::new(":memory:").expect("Create in-memory store"));
 
     // Spawn a background thread that executes a long-running SQLite query holding `conn.lock()`
+    let bg_started = Arc::new(AtomicBool::new(false));
+    let bg_finished = Arc::new(AtomicBool::new(false));
     let mem_bg = Arc::clone(&mem);
+    let bg_started_clone = Arc::clone(&bg_started);
+    let bg_finished_clone = Arc::clone(&bg_finished);
     let bg_thread = std::thread::spawn(move || {
-        let slow_query = "SELECT count(*) FROM (WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 2000000) SELECT x FROM cnt)";
+        bg_started_clone.store(true, Ordering::Release);
+        let slow_query = "SELECT count(*) FROM (WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 4000000) SELECT x FROM cnt)";
         let res = mem_bg.query_json(slow_query, &[]);
+        bg_finished_clone.store(true, Ordering::Release);
         assert!(res.is_ok(), "Slow query must succeed, got {:?}", res.err());
     });
 
-    // Give background thread 20ms to acquire the lock
+    // Wait until the background thread starts, then give it 20ms to acquire the SQLite lock
+    while !bg_started.load(Ordering::Acquire) {
+        std::thread::yield_now();
+    }
     std::thread::sleep(Duration::from_millis(20));
 
     // 1. Empty strings: must return Ok(false) immediately (< 1ms) because it checks BEFORE acquiring lock
@@ -146,8 +156,13 @@ fn challenge_memory_store_lock_non_blocking_under_contention() {
     );
     println!("Slow path duration under lock contention: {:?}", dur_slow);
     assert!(
-        dur_slow < Duration::from_millis(50),
-        "Slow path with lock contention must return within ~5-50ms (took {:?}), NOT block indefinitely",
+        !bg_finished.load(Ordering::Acquire),
+        "Slow path must return while background query still holds the SQLite lock (took {:?})",
+        dur_slow
+    );
+    assert!(
+        dur_slow < Duration::from_millis(150),
+        "Slow path with lock contention must return within ~5-150ms (took {:?}), NOT block indefinitely",
         dur_slow
     );
     assert!(
